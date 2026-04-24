@@ -37,10 +37,15 @@ class AddMemberSerializer(serializers.Serializer):
     """
     Добавление участника в кабинет.
     POST /api/v1/workspaces/{id}/members/
+    Принимает email (ищет юзера) или user_id (UUID) для обратной совместимости.
     """
+    email = serializers.EmailField(
+        required=False,
+        help_text="Email пользователя для добавления в кабинет",
+    )
     user_id = serializers.UUIDField(
-        required=True,
-        help_text="UUID пользователя для добавления в кабинет",
+        required=False,
+        help_text="UUID пользователя (альтернатива email)",
     )
     role = serializers.ChoiceField(
         choices=WorkspaceMember.Role.choices,
@@ -54,10 +59,29 @@ class AddMemberSerializer(serializers.Serializer):
         help_text="Порядок шага в workflow (опционально)",
     )
 
-    def validate_user_id(self, value):
-        if not User.objects.filter(pk=value, is_active=True).exists():
-            raise serializers.ValidationError("Пользователь не найден или неактивен.")
-        return value
+    def validate(self, attrs):
+        email = attrs.get("email")
+        user_id = attrs.get("user_id")
+
+        if not email and not user_id:
+            raise serializers.ValidationError("Укажите email или user_id.")
+
+        if email:
+            user = User.objects.filter(email=email.lower(), is_active=True).first()
+            if not user:
+                raise serializers.ValidationError(
+                    {"email": f"Пользователь с email {email} не найден или неактивен."}
+                )
+            attrs["resolved_user"] = user
+        else:
+            user = User.objects.filter(pk=user_id, is_active=True).first()
+            if not user:
+                raise serializers.ValidationError(
+                    {"user_id": "Пользователь не найден или неактивен."}
+                )
+            attrs["resolved_user"] = user
+
+        return attrs
 
 
 class WorkspaceSerializer(serializers.ModelSerializer):

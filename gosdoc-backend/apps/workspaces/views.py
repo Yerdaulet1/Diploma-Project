@@ -165,7 +165,7 @@ class WorkspaceMemberListCreateView(APIView):
         serializer = AddMemberSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = get_object_or_404(User, pk=serializer.validated_data["user_id"])
+        user = serializer.validated_data["resolved_user"]
 
         # Проверяем лимит для индивидуального кабинета (раздел 2.1 ТЗ: до 20 пользователей)
         if workspace.type == Workspace.WorkspaceType.INDIVIDUAL:

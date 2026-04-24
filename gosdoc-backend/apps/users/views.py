@@ -291,9 +291,10 @@ class UserListView(generics.ListAPIView):
     search_fields = ["email", "full_name"]
 
 
-class UserMeView(generics.RetrieveUpdateAPIView):
+class UserMeView(generics.RetrieveUpdateDestroyAPIView):
     """
     GET/PATCH /api/v1/users/me/
+    DELETE    /api/v1/users/me/ — мягкое самоудаление (is_active=False)
     JWT — текущий пользователь.
     """
 
@@ -306,6 +307,13 @@ class UserMeView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+    def destroy(self, request, *args, **kwargs):
+        user = self.get_object()
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+        logger.info("Пользователь %s деактивировал свой аккаунт", user.email)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):

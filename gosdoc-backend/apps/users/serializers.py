@@ -55,10 +55,16 @@ class RegisterSerializer(serializers.ModelSerializer):
         required=True,
         style={"input_type": "password"},
     )
+    org_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        write_only=True,
+        help_text="Название организации (опционально — создаётся автоматически)",
+    )
 
     class Meta:
         model = User
-        fields = ["email", "full_name", "phone", "password", "password_confirm"]
+        fields = ["email", "full_name", "phone", "password", "password_confirm", "org_name"]
 
     def validate(self, attrs):
         if attrs["password"] != attrs["password_confirm"]:
@@ -66,8 +72,22 @@ class RegisterSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        from apps.organizations.models import Organization
+
         validated_data.pop("password_confirm")
+        org_name = validated_data.pop("org_name", "").strip()
+
         user = User.objects.create_user(**validated_data)
+
+        if org_name:
+            org = Organization.objects.create(
+                name=org_name,
+                type=Organization.OrgType.INDIVIDUAL,
+                owner=user,
+            )
+            user.organization = org
+            user.save(update_fields=["organization"])
+
         return user
 
 
