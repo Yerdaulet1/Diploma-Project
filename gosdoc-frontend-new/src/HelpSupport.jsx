@@ -1,14 +1,18 @@
 import { useState, useRef, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import ProfileController, { ProfileMenu } from "./Profile";
+import useAuthStore from "./store/authStore";
+import { getFaqs, sendHelpChat } from "./api/help";
 import logoImg from "./assets/Group 2.svg";
 
 /* ══════════════════════════════════════════════════════════
-   DATA
+   TOPIC METADATA (icons/descs stay in frontend)
 ══════════════════════════════════════════════════════════ */
 const TOPICS = [
   {
     id: "platform",
     title: "About Platform",
+    subtitle: "Here you can find answers to questions about using the platform.",
     desc: "Get an overview of the platform and understand what it provides and how it can help you.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" width="22" height="22">
@@ -20,6 +24,7 @@ const TOPICS = [
   {
     id: "tasks",
     title: "Task Management",
+    subtitle: "Find out how to create, assign, and track tasks across your team.",
     desc: "Find out how to create, assign, and track tasks across your team.",
     icon: (
       <svg viewBox="0 0 24 24" fill="#fff" width="22" height="22">
@@ -31,6 +36,7 @@ const TOPICS = [
   {
     id: "orgs",
     title: "Organization & Projects",
+    subtitle: "Learn how to manage organizations, teams, and projects effectively.",
     desc: "Understand how to set up organizations and manage your projects efficiently.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" width="22" height="22">
@@ -44,39 +50,6 @@ const TOPICS = [
     color: "#2563EB",
   },
 ];
-
-const FAQ_BY_TOPIC = {
-  platform: {
-    title: "About Platform",
-    subtitle: "Here you can find answers to questions about using the platform.",
-    items: Array.from({length:5}, (_,i) => ({
-      q: "What usage limits apply when using this platform?",
-      a: "You can use the platform and its features with limited access depending on your plan or usage level. Free users may have daily or monthly limits on certain tools and actions.\nWe may show a notification when you are approaching your usage limit and inform you once the limit has been reached.\nTo continue using all features without interruption, you can upgrade your access or continue using the platform in the next available period.",
-    })),
-  },
-  tasks: {
-    title: "Task Management",
-    subtitle: "Find out how to create, assign, and track tasks across your team.",
-    items: [
-      { q: "How do I create a new task?", a: "Go to a project and click 'Add Document' or '+ New Task' to create a new task. Fill in the title, description, deadline, and assign it to a team member." },
-      { q: "How do I assign a task to someone?", a: "Open the task, click on the Assignees field, and select a team member from the dropdown list." },
-      { q: "How do I track task progress?", a: "Each task has a progress bar and status indicator. You can also view all tasks in Table or Timeline view from the project page." },
-      { q: "Can I add subtasks?", a: "Yes. Open any task and scroll to the Subtasks section. Click the blue Enter button to add a new subtask and assign it to a team member." },
-      { q: "How do I set a deadline?", a: "In the task detail panel, click the 'Due date' field and select a date from the calendar." },
-    ],
-  },
-  orgs: {
-    title: "Organization & Projects",
-    subtitle: "Learn how to manage organizations, teams, and projects effectively.",
-    items: [
-      { q: "How do I create a new organization?", a: "During sign-up, you can create an organization. Later you can invite team members from the Projects page." },
-      { q: "How do I create a new project?", a: "Click '+ New project' in the sidebar, fill in project details, upload a document, and invite team members." },
-      { q: "How do I invite members to a project?", a: "When creating a project, step 2 asks you to enter member emails and roles. You can add 1–7 members." },
-      { q: "Can I archive completed projects?", a: "Yes. Completed projects appear in the Archived tab on the Projects page." },
-      { q: "How many projects can I have?", a: "There's no hard limit on the number of projects per organization on standard plans." },
-    ],
-  },
-};
 
 /* ══════════════════════════════════════════════════════════
    CSS
@@ -356,20 +329,33 @@ const NAV = [
    AI ASSISTANT PILL + MODAL
 ══════════════════════════════════════════════════════════ */
 function AIAssistant() {
+  const { user } = useAuthStore();
   const [pillVisible, setPillVisible] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const messagesEndRef = useRef(null);
 
-  const send = () => {
-    if (!input.trim()) return;
-    const userMsg = input.trim();
-    setMessages(m => [...m, { role: "user", text: userMsg }]);
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    setMessages(m => [...m, { role: "user", text }]);
     setInput("");
-    setTimeout(() => {
-      setMessages(m => [...m, { role: "bot", text: "Thanks for your question! I'm a demo assistant. In production I would give you a helpful answer about the platform." }]);
-    }, 600);
+    setSending(true);
+    try {
+      const { reply } = await sendHelpChat(text);
+      setMessages(m => [...m, { role: "bot", text: reply }]);
+    } catch {
+      setMessages(m => [...m, { role: "bot", text: "Sorry, I couldn't get a response right now. Please try again." }]);
+    } finally {
+      setSending(false);
+    }
   };
 
   if (modalOpen) {
@@ -389,7 +375,7 @@ function AIAssistant() {
 
         {messages.length === 0 ? (
           <div className="hs-ai-body">
-            <div className="hs-ai-greeting">Hi, Erik!</div>
+            <div className="hs-ai-greeting">Hi, {user?.full_name?.split(" ")[0] || "there"}!</div>
             <div className="hs-ai-helptext">
               I'm your assistant to help you navigate and use this platform.<br/>
               How can I help you today?
@@ -400,6 +386,10 @@ function AIAssistant() {
             {messages.map((m, i) => (
               <div key={i} className={`hs-ai-msg ${m.role}`}>{m.text}</div>
             ))}
+            {sending && (
+              <div className="hs-ai-msg bot" style={{ opacity: 0.6 }}>…</div>
+            )}
+            <div ref={messagesEndRef}/>
           </div>
         )}
 
@@ -407,7 +397,7 @@ function AIAssistant() {
           <textarea className="hs-ai-input" placeholder="✦ Ask anything"
             value={input} onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); } }}
-            rows={1}/>
+            rows={1} disabled={sending}/>
           <div className="hs-ai-actions">
             <button className="hs-ai-action">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="14" height="14"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
@@ -416,7 +406,7 @@ function AIAssistant() {
             <button className="hs-ai-mic" title="Voice">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="13" height="13"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
             </button>
-            <button className="hs-ai-send" onClick={send} title="Send">
+            <button className="hs-ai-send" onClick={send} title="Send" disabled={sending} style={{ opacity: sending ? 0.6 : 1 }}>
               <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="13" height="13"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
           </div>
@@ -516,23 +506,45 @@ function HelpCenter({ onSelectTopic }) {
    TOPIC DETAIL (FAQ accordion)
 ══════════════════════════════════════════════════════════ */
 function TopicDetail({ topicId }) {
-  const topic = FAQ_BY_TOPIC[topicId];
-  if (!topic) return null;
+  const meta = TOPICS.find(t => t.id === topicId);
+  const [search, setSearch] = useState("");
+
+  const { data: faqs = [], isLoading } = useQuery({
+    queryKey: ["faqs", topicId],
+    queryFn: () => getFaqs(topicId),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const filtered = search.trim()
+    ? faqs.filter(f =>
+        f.question.toLowerCase().includes(search.toLowerCase()) ||
+        f.answer.toLowerCase().includes(search.toLowerCase())
+      )
+    : faqs;
+
+  if (!meta) return null;
   return (
     <>
       <div className="hs-detail-search">
         <div className="hs-search">
           <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="15" height="15"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input placeholder="Search for articles..."/>
+          <input placeholder="Search for articles..." value={search} onChange={e=>setSearch(e.target.value)}/>
         </div>
       </div>
       <div style={{ maxWidth:820, margin:"0 auto" }}>
-        <h2 className="hs-detail-title">{topic.title}</h2>
-        <p className="hs-detail-sub">{topic.subtitle}</p>
+        <h2 className="hs-detail-title">{meta.title}</h2>
+        <p className="hs-detail-sub">{meta.subtitle}</p>
       </div>
-      <div className="hs-faq-list">
-        {topic.items.map((item, i) => <FaqItem key={i} q={item.q} a={item.a}/>)}
-      </div>
+      {isLoading ? (
+        <div style={{ textAlign:"center", color:"#9CA3AF", fontSize:13, padding:40 }}>Loading…</div>
+      ) : (
+        <div className="hs-faq-list">
+          {filtered.length === 0
+            ? <div style={{ textAlign:"center", color:"#9CA3AF", fontSize:13, padding:40 }}>No results found.</div>
+            : filtered.map(faq => <FaqItem key={faq.id} q={faq.question} a={faq.answer}/>)
+          }
+        </div>
+      )}
     </>
   );
 }
@@ -541,12 +553,13 @@ function TopicDetail({ topicId }) {
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
 export default function HelpSupport({ onGoToAuth, onNavigate }) {
+  const { user } = useAuthStore();
   const [selectedTopic, setSelectedTopic] = useState(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
   const [sbOpen, setSbOpen] = useState(true);
 
-  const topicTitle = selectedTopic ? FAQ_BY_TOPIC[selectedTopic]?.title : null;
+  const topicTitle = selectedTopic ? TOPICS.find(t => t.id === selectedTopic)?.title : null;
 
   return (
     <div className="hs-page">
@@ -611,8 +624,8 @@ export default function HelpSupport({ onGoToAuth, onNavigate }) {
             </div>
           </div>
           <div className="hs-profile-info">
-            <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>Erik Serikov</div>
-            <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>220103351@stu.sdu.edu.kz</div>
+            <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{user?.full_name || "—"}</div>
+            <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>{user?.email || ""}</div>
           </div>
           <div className="hs-org">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>

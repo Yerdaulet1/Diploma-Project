@@ -23,6 +23,7 @@ urlpatterns = [
     path("api/v1/notifications/", include("apps.notifications.urls")),
     path("api/v1/reports/", include("apps.reports.urls")),
     path("api/v1/ai/", include("apps.ai.urls")),
+    path("api/v1/help/", include("apps.core.urls")),
 
     # ---- OpenAPI / Swagger (раздел 9 ТЗ: /api/schema/swagger-ui/) ----
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),

@@ -8,3 +8,6 @@ export const markRead = (id) =>
 
 export const markAllRead = () =>
   api.post("/notifications/read-all/").then((r) => r.data);
+
+export const bulkDeleteNotifications = (ids) =>
+  api.delete("/notifications/bulk-delete/", { data: { ids } }).then((r) => r.data);

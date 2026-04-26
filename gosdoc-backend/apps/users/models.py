@@ -84,6 +84,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         verbose_name="Организация",
         db_index=True,
     )
+    avatar_key = models.TextField(null=True, blank=True, verbose_name="Ключ аватара S3")
+    avatar_url = models.TextField(null=True, blank=True, verbose_name="URL аватара")
     is_active = models.BooleanField(default=True, verbose_name="Активен")
     is_staff = models.BooleanField(default=False, verbose_name="Сотрудник")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
@@ -122,6 +124,7 @@ class EmailVerificationCode(models.Model):
     class Purpose(models.TextChoices):
         REGISTRATION = "registration", "Регистрация"
         PASSWORD_RESET = "password_reset", "Сброс пароля"
+        EMAIL_CHANGE = "email_change", "Смена email"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(db_index=True)
@@ -152,3 +155,30 @@ class EmailVerificationCode(models.Model):
 
     def __str__(self) -> str:
         return f"{self.email} [{self.purpose}] — {self.code}"
+
+
+class UserSettings(models.Model):
+    """
+    Настройки пользователя (1:1 с User).
+    Создаётся автоматически при первом обращении к GET /users/me/settings/.
+    """
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="settings",
+        verbose_name="Пользователь",
+    )
+    notification_email = models.BooleanField(default=True, verbose_name="Email-уведомления")
+    notification_push = models.BooleanField(default=True, verbose_name="Push-уведомления")
+    language = models.CharField(max_length=10, default="ru", verbose_name="Язык интерфейса")
+    theme = models.CharField(max_length=20, default="light", verbose_name="Тема")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Обновлено")
+
+    class Meta:
+        verbose_name = "Настройки пользователя"
+        verbose_name_plural = "Настройки пользователей"
+        db_table = "user_settings"
+
+    def __str__(self) -> str:
+        return f"Настройки {self.user}"

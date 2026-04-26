@@ -11,7 +11,21 @@
       "Bash(python:*)",
       "WebFetch(domain:googleapis.github.io)",
       "Bash(npm install *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(DATABASE_URL=\"postgres://gosdoc_user:gosdoc_pass@localhost:5432/gosdoc\" python manage.py makemigrations documents --name \"phase3_priority_subtasks_attachments\")",
+      "Bash(DATABASE_URL=\"sqlite:///tmp_makemig.db\" python manage.py makemigrations documents --name \"phase3_priority_subtasks_attachments\")",
+      "Bash(del \"C:\\\\Users\\\\user\\\\Diploma-Project\\\\gosdoc-backend\\\\tmp_makemig.db\")",
+      "Bash(DATABASE_URL=\"postgres://gosdoc_user:gosdoc_pass@localhost:5432/gosdoc\" python manage.py migrate)",
+      "Bash(DATABASE_URL=\"postgres://gosdoc_user:gosdoc_pass@localhost:5432/gosdoc\" python manage.py migrate users 0001_email_verification_code --fake)",
+      "Bash(psql postgresql://gosdoc_user:gosdoc_pass@localhost:5432/gosdoc -c \"INSERT INTO django_migrations \\(app, name, applied\\) VALUES \\('users', '0001_email_verification_code', NOW\\(\\)\\) ON CONFLICT DO NOTHING;\")",
+      "Bash(where psql *)",
+      "Read(//c/Program Files/PostgreSQL//**)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Bash(/c/Program Files/PostgreSQL/16/bin/psql *)",
+      "Bash(DATABASE_URL=\"postgres://gosdoc_user:gosdoc_pass@localhost:5432/gosdoc\" python manage.py migrate ai --fake)",
+      "Bash(DATABASE_URL=\"postgres://gosdoc_user:gosdoc_pass@localhost:5432/gosdoc\" python *)",
+      "Bash(node --input-type=module --eval ' *)",
+      "Bash(xargs -I{} basename {})"
     ]
   }
 }

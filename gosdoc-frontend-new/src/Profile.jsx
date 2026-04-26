@@ -1,4 +1,13 @@
 import { useState, useRef, useEffect } from "react";
+import { toast } from "sonner";
+import useAuthStore from "./store/authStore";
+import {
+  updateProfile, changePassword, deleteAccount,
+  requestAvatarUpload, confirmAvatarUpload,
+  getSettings, updateSettings,
+  requestEmailChange, confirmEmailChange,
+} from "./api/users";
+import { uploadFileToS3 } from "./api/documents";
 
 /* ══════════════════════════════════════════════════════════
    CSS
@@ -248,9 +257,59 @@ export function ProfileMenu({ onProfile, onSettings, onLogOut, onClose }) {
    PROFILE MODAL
 ══════════════════════════════════════════════════════════ */
 export function ProfileModal({ onClose, onChangePassword, onChangeEmail }) {
-  const [name,    setName]    = useState("Gakku");
-  const [surname, setSurname] = useState("Bekzhankyzy");
-  const [showDelete, setShowDelete] = useState(false);
+  const { user, setUser } = useAuthStore();
+  const [fullName,    setFullName]    = useState(user?.full_name || "");
+  const [phone,       setPhone]       = useState(user?.phone || "");
+  const [avatarSrc,   setAvatarSrc]   = useState(user?.avatar_url || null);
+  const [saving,      setSaving]      = useState(false);
+  const [avatarLoading, setAvatarLoading] = useState(false);
+  const [showDelete,  setShowDelete]  = useState(false);
+  const [deleting,    setDeleting]    = useState(false);
+  const avatarInputRef = useRef(null);
+  const { logout } = useAuthStore();
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const updated = await updateProfile({ full_name: fullName, phone: phone || null });
+      setUser({ ...user, full_name: updated.full_name, phone: updated.phone });
+      toast.success("Profile updated");
+      onClose();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAvatarChange = async (file) => {
+    if (!file) return;
+    setAvatarLoading(true);
+    try {
+      const presigned = await requestAvatarUpload({ file_name: file.name, file_size: file.size });
+      await uploadFileToS3(presigned, file);
+      const result = await confirmAvatarUpload({ storage_key: presigned.storage_key });
+      setAvatarSrc(result.avatar_url);
+      setUser({ ...user, avatar_url: result.avatar_url });
+      toast.success("Avatar updated");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to upload avatar");
+    } finally {
+      setAvatarLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await deleteAccount();
+      logout();
+      onClose();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to delete account");
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="pf-overlay" onClick={onClose}>
@@ -265,17 +324,19 @@ export function ProfileModal({ onClose, onChangePassword, onChangeEmail }) {
           </button>
           <div className="pf-avatar-wrap">
             <div className="pf-avatar">
-              <svg viewBox="0 0 90 90" fill="none" width="90" height="90">
-                <rect width="90" height="90" fill="#CBD5E1"/>
-                <circle cx="45" cy="34" r="16" fill="#94A3B8"/>
-                <ellipse cx="45" cy="78" rx="28" ry="18" fill="#94A3B8"/>
-              </svg>
+              {avatarSrc
+                ? <img src={avatarSrc} alt="avatar" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
+                : <svg viewBox="0 0 90 90" fill="none" width="90" height="90"><rect width="90" height="90" fill="#CBD5E1"/><circle cx="45" cy="34" r="16" fill="#94A3B8"/><ellipse cx="45" cy="78" rx="28" ry="18" fill="#94A3B8"/></svg>
+              }
             </div>
-            <button className="pf-avatar-edit" title="Change photo">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-              </svg>
+            <input ref={avatarInputRef} type="file" accept="image/*" style={{ display:"none" }}
+              onChange={e => handleAvatarChange(e.target.files?.[0])}/>
+            <button className="pf-avatar-edit" title="Change photo" disabled={avatarLoading}
+              onClick={() => avatarInputRef.current?.click()}>
+              {avatarLoading
+                ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><circle cx="12" cy="12" r="10"/></svg>
+                : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              }
             </button>
           </div>
         </div>
@@ -284,17 +345,27 @@ export function ProfileModal({ onClose, onChangePassword, onChangeEmail }) {
           {/* Personal Info */}
           <div className="pf-section">
             <div className="pf-section-title">Personal Information</div>
-            <div className="pf-field-row">
-              <div>
-                <label className="pf-label">Name</label>
-                <input className="pf-input" value={name} onChange={e=>setName(e.target.value)}/>
-              </div>
-              <div>
-                <label className="pf-label">Surname</label>
-                <input className="pf-input" value={surname} onChange={e=>setSurname(e.target.value)}/>
+            <div style={{ marginBottom:14 }}>
+              <label className="pf-label">Full Name</label>
+              <input className="pf-input" value={fullName} onChange={e=>setFullName(e.target.value)}/>
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <label className="pf-label">Email</label>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <input className="pf-input" value={user?.email || ""} readOnly style={{ background:"#F9FAFB", color:"#9CA3AF", flex:1 }}/>
+                <button onClick={onChangeEmail}
+                  style={{ flexShrink:0, border:"1.5px solid #2563EB", color:"#2563EB", background:"#fff", borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:500, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                  Change
+                </button>
               </div>
             </div>
-            <button className="pf-save-btn" onClick={onClose}>Save changes</button>
+            <div style={{ marginBottom:14 }}>
+              <label className="pf-label">Phone</label>
+              <input className="pf-input" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+7 000 000 0000"/>
+            </div>
+            <button className="pf-save-btn" onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : "Save changes"}
+            </button>
           </div>
 
           {/* Security Settings */}
@@ -330,9 +401,9 @@ export function ProfileModal({ onClose, onChangePassword, onChangeEmail }) {
                     style={{ flex:1, border:".5px solid #E5E7EB", background:"#fff", borderRadius:6, padding:"6px 12px", fontSize:12, cursor:"pointer", fontFamily:"inherit" }}>
                     Cancel
                   </button>
-                  <button onClick={()=>alert("Account deleted (demo)")}
-                    style={{ flex:1, border:"none", background:"#DC2626", color:"#fff", borderRadius:6, padding:"6px 12px", fontSize:12, cursor:"pointer", fontFamily:"inherit", fontWeight:500 }}>
-                    Delete
+                  <button onClick={handleDelete} disabled={deleting}
+                    style={{ flex:1, border:"none", background:"#DC2626", color:"#fff", borderRadius:6, padding:"6px 12px", fontSize:12, cursor:"pointer", fontFamily:"inherit", fontWeight:500, opacity:deleting?0.6:1 }}>
+                    {deleting ? "Deleting…" : "Delete"}
                   </button>
                 </div>
               </div>
@@ -355,8 +426,9 @@ export function ChangePasswordModal({ onClose, onDone }) {
   const [showNext, setShowNext] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
 
-  const submit = () => {
+  const submit = async () => {
     const errs = {};
     if (!prev) errs.prev = "Required";
     if (!next) errs.next = "Required";
@@ -364,8 +436,20 @@ export function ChangePasswordModal({ onClose, onDone }) {
     else if (!/[A-Z]/.test(next) || !/\d/.test(next)) errs.next = "Must include uppercase and number";
     if (confirmPw !== next) errs.confirmPw = "Passwords don't match";
     if (Object.keys(errs).length) { setErrors(errs); return; }
-    onDone?.();
-    onClose();
+
+    setLoading(true);
+    try {
+      await changePassword(prev, next);
+      toast.success("Password changed successfully");
+      onDone?.();
+      onClose();
+    } catch (e) {
+      const detail = e?.response?.data;
+      if (detail?.old_password) setErrors(er => ({ ...er, prev: detail.old_password[0] }));
+      else toast.error(detail?.detail || "Failed to change password");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -439,7 +523,9 @@ export function ChangePasswordModal({ onClose, onDone }) {
           {errors.confirmPw && <span style={{ fontSize:11, color:"#EF4444" }}>{errors.confirmPw}</span>}
         </div>
 
-        <button className="pf-btn-primary" onClick={submit}>Save</button>
+        <button className="pf-btn-primary" onClick={submit} disabled={loading}>
+          {loading ? "Saving…" : "Save"}
+        </button>
       </div>
     </div>
   );
@@ -449,11 +535,13 @@ export function ChangePasswordModal({ onClose, onDone }) {
    CHANGE EMAIL MODAL — 3 steps: email → otp → success
 ══════════════════════════════════════════════════════════ */
 export function ChangeEmailModal({ onClose }) {
+  const { user, setUser } = useAuthStore();
   const [step, setStep] = useState(1); // 1=email, 2=otp, 3=success
-  const [email, setEmail] = useState("220103351@stu.sdu.edu.kz");
+  const [email, setEmail] = useState("");
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
-  const [timer, setTimer] = useState(36);
+  const [timer, setTimer] = useState(60);
   const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
   const inputsRef = useRef([]);
 
   // Timer
@@ -471,13 +559,21 @@ export function ChangeEmailModal({ onClose }) {
     }
   }, [step]);
 
-  const submitEmail = () => {
+  const submitEmail = async () => {
     if (!email.trim() || !/\S+@\S+\.\S+/.test(email)) {
       setErr("Please enter a valid email."); return;
     }
-    setErr("");
-    setStep(2);
-    setTimer(36);
+    setLoading(true);
+    try {
+      await requestEmailChange(email.trim().toLowerCase());
+      setErr("");
+      setStep(2);
+      setTimer(60);
+    } catch (e) {
+      setErr(e?.response?.data?.new_email?.[0] || e?.response?.data?.detail || "Failed to send code");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleOtpChange = (i, val) => {
@@ -488,8 +584,19 @@ export function ChangeEmailModal({ onClose }) {
     setOtp(next);
     if (val && i < 5) inputsRef.current[i + 1]?.focus();
     if (next.every(x => x !== "")) {
-      // Check code — for demo: any 6 digits pass
-      setTimeout(() => setStep(3), 300);
+      const code = next.join("");
+      setLoading(true);
+      confirmEmailChange(email.trim().toLowerCase(), code)
+        .then(() => {
+          setUser({ ...user, email: email.trim().toLowerCase() });
+          setStep(3);
+        })
+        .catch(e => {
+          toast.error(e?.response?.data?.detail || "Invalid or expired code");
+          setOtp(["","","","","",""]);
+          inputsRef.current[0]?.focus();
+        })
+        .finally(() => setLoading(false));
     }
   };
 
@@ -497,7 +604,16 @@ export function ChangeEmailModal({ onClose }) {
     if (e.key === "Backspace" && !otp[i] && i > 0) inputsRef.current[i - 1]?.focus();
   };
 
-  const resend = () => { setOtp(["","","","","",""]); setTimer(36); inputsRef.current[0]?.focus(); };
+  const resend = async () => {
+    setOtp(["","","","","",""]);
+    setTimer(60);
+    inputsRef.current[0]?.focus();
+    try {
+      await requestEmailChange(email.trim().toLowerCase());
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to resend code");
+    }
+  };
 
   if (step === 3) {
     return (
@@ -550,7 +666,9 @@ export function ChangeEmailModal({ onClose }) {
                 style={{ borderColor: err ? "#EF4444" : "#E5E7EB" }}/>
             </div>
             {err && <div style={{ fontSize:12, color:"#EF4444", marginBottom:16 }}>{err}</div>}
-            <button className="pf-btn-primary" onClick={submitEmail}>Get verification code</button>
+            <button className="pf-btn-primary" onClick={submitEmail} disabled={loading}>
+              {loading ? "Sending…" : "Get verification code"}
+            </button>
           </>
         )}
 
@@ -596,9 +714,30 @@ export function ChangeEmailModal({ onClose }) {
    SETTINGS MODAL
 ══════════════════════════════════════════════════════════ */
 export function SettingsModal({ onClose }) {
-  const [ann, setAnn] = useState({ newAnn:true, statusChanges:true, deadlineReminders:false });
-  const [sys, setSys] = useState({ general:true, email:true, technical:true, actionConf:true });
-  const [theme, setTheme] = useState("light");
+  const [notifEmail, setNotifEmail] = useState(true);
+  const [notifPush,  setNotifPush]  = useState(true);
+  const [theme,      setTheme]      = useState("light");
+  const [loaded,     setLoaded]     = useState(false);
+  const saveRef = useRef(null);
+
+  // Load settings on mount
+  useEffect(() => {
+    getSettings()
+      .then(s => {
+        setNotifEmail(s.notification_email);
+        setNotifPush(s.notification_push);
+        setTheme(s.theme || "light");
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  const persist = (patch) => {
+    clearTimeout(saveRef.current);
+    saveRef.current = setTimeout(() => {
+      updateSettings(patch).catch(() => {});
+    }, 600);
+  };
 
   const Toggle = ({ checked, onChange }) => (
     <label className="pf-switch">
@@ -606,6 +745,13 @@ export function SettingsModal({ onClose }) {
       <div className="pf-switch-track"/>
       <div className="pf-switch-thumb"/>
     </label>
+  );
+
+  if (!loaded) return (
+    <div className="pf-overlay">
+      <style>{css}</style>
+      <div className="pf-modal pf-modal-sm" style={{ padding:60, textAlign:"center", color:"#9CA3AF", fontSize:13 }}>Loading…</div>
+    </div>
   );
 
   return (
@@ -620,41 +766,16 @@ export function SettingsModal({ onClose }) {
         <div style={{ padding:"36px 36px 32px" }}>
           <h2 style={{ fontSize:22,fontWeight:700,color:"#111827",textAlign:"center",marginBottom:28 }}>Settings</h2>
 
-          {/* Announcements */}
+          {/* Notifications */}
           <div style={{ marginBottom:22 }}>
-            <div style={{ fontSize:15,fontWeight:600,color:"#111827",marginBottom:4 }}>Announcements</div>
+            <div style={{ fontSize:15,fontWeight:600,color:"#111827",marginBottom:4 }}>Notifications</div>
             <div className="pf-toggle-row">
-              <span className="pf-toggle-label">New announcements</span>
-              <Toggle checked={ann.newAnn} onChange={v=>setAnn(s=>({...s,newAnn:v}))}/>
+              <span className="pf-toggle-label">Email notifications</span>
+              <Toggle checked={notifEmail} onChange={v=>{ setNotifEmail(v); persist({ notification_email: v }); }}/>
             </div>
             <div className="pf-toggle-row">
-              <span className="pf-toggle-label">Status changes</span>
-              <Toggle checked={ann.statusChanges} onChange={v=>setAnn(s=>({...s,statusChanges:v}))}/>
-            </div>
-            <div className="pf-toggle-row">
-              <span className="pf-toggle-label">Deadline reminders</span>
-              <Toggle checked={ann.deadlineReminders} onChange={v=>setAnn(s=>({...s,deadlineReminders:v}))}/>
-            </div>
-          </div>
-
-          {/* System Notifications */}
-          <div style={{ marginBottom:22 }}>
-            <div style={{ fontSize:15,fontWeight:600,color:"#111827",marginBottom:4 }}>System Notifications</div>
-            <div className="pf-toggle-row">
-              <span className="pf-toggle-label">General system notifications</span>
-              <Toggle checked={sys.general} onChange={v=>setSys(s=>({...s,general:v}))}/>
-            </div>
-            <div className="pf-toggle-row">
-              <span className="pf-toggle-label">Email notifications (duplicate notifications)</span>
-              <Toggle checked={sys.email} onChange={v=>setSys(s=>({...s,email:v}))}/>
-            </div>
-            <div className="pf-toggle-row">
-              <span className="pf-toggle-label">Technical updates and maintenance</span>
-              <Toggle checked={sys.technical} onChange={v=>setSys(s=>({...s,technical:v}))}/>
-            </div>
-            <div className="pf-toggle-row">
-              <span className="pf-toggle-label">Action confirmations</span>
-              <Toggle checked={sys.actionConf} onChange={v=>setSys(s=>({...s,actionConf:v}))}/>
+              <span className="pf-toggle-label">Push notifications</span>
+              <Toggle checked={notifPush} onChange={v=>{ setNotifPush(v); persist({ notification_push: v }); }}/>
             </div>
           </div>
 
@@ -664,13 +785,13 @@ export function SettingsModal({ onClose }) {
             <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
               <span className="pf-toggle-label">Theme</span>
               <div className="pf-theme-sel">
-                <button className={`pf-theme-btn${theme==="light"?" active":""}`} onClick={()=>setTheme("light")} title="Light">
+                <button className={`pf-theme-btn${theme==="light"?" active":""}`} onClick={()=>{ setTheme("light"); persist({ theme:"light" }); }} title="Light">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
                 </button>
-                <button className={`pf-theme-btn${theme==="dark"?" active":""}`} onClick={()=>setTheme("dark")} title="Dark">
+                <button className={`pf-theme-btn${theme==="dark"?" active":""}`} onClick={()=>{ setTheme("dark"); persist({ theme:"dark" }); }} title="Dark">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                 </button>
-                <button className={`pf-theme-btn${theme==="auto"?" active":""}`} onClick={()=>setTheme("auto")} title="Auto">
+                <button className={`pf-theme-btn${theme==="auto"?" active":""}`} onClick={()=>{ setTheme("auto"); persist({ theme:"auto" }); }} title="Auto">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                 </button>
               </div>

@@ -8,6 +8,8 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from .models import UserSettings
+
 User = get_user_model()
 
 
@@ -173,17 +175,12 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id",
-            "email",
-            "full_name",
-            "phone",
-            "organization",
-            "organization_name",
-            "is_active",
-            "created_at",
-            "last_login",
+            "id", "email", "full_name", "phone",
+            "organization", "organization_name",
+            "avatar_url",
+            "is_active", "created_at", "last_login",
         ]
-        read_only_fields = ["id", "email", "is_active", "created_at", "last_login"]
+        read_only_fields = ["id", "email", "is_active", "created_at", "last_login", "avatar_url"]
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
@@ -201,3 +198,63 @@ class UserListSerializer(serializers.ModelSerializer):
         model = User
         fields = ["id", "email", "full_name", "is_active", "created_at"]
         read_only_fields = fields
+
+
+# ============================================================
+# UserSettings
+# ============================================================
+
+class UserSettingsSerializer(serializers.ModelSerializer):
+    """GET/PATCH /api/v1/users/me/settings/"""
+
+    class Meta:
+        model = UserSettings
+        fields = ["notification_email", "notification_push", "language", "theme", "updated_at"]
+        read_only_fields = ["updated_at"]
+
+
+# ============================================================
+# Avatar upload (presigned POST, 2-step)
+# ============================================================
+
+class AvatarRequestUploadSerializer(serializers.Serializer):
+    file_name = serializers.CharField(max_length=255)
+    file_size = serializers.IntegerField(min_value=1)
+
+    def validate_file_name(self, value):
+        allowed = {"jpg", "jpeg", "png", "webp", "gif"}
+        ext = value.rsplit(".", 1)[-1].lower() if "." in value else ""
+        if ext not in allowed:
+            raise serializers.ValidationError("Разрешены только изображения: jpg, jpeg, png, webp, gif.")
+        return value
+
+    def validate_file_size(self, value):
+        if value > 5 * 1024 * 1024:
+            raise serializers.ValidationError("Аватар не должен превышать 5 МБ.")
+        return value
+
+
+class AvatarConfirmSerializer(serializers.Serializer):
+    storage_key = serializers.CharField()
+
+
+# ============================================================
+# Change-email OTP flow
+# ============================================================
+
+class ChangeEmailRequestSerializer(serializers.Serializer):
+    new_email = serializers.EmailField()
+
+    def validate_new_email(self, value):
+        value = value.lower().strip()
+        if User.objects.filter(email=value, is_active=True).exists():
+            raise serializers.ValidationError("Этот email уже используется.")
+        return value
+
+
+class ChangeEmailConfirmSerializer(serializers.Serializer):
+    new_email = serializers.EmailField()
+    code = serializers.CharField(min_length=6, max_length=6)
+
+    def validate_new_email(self, value):
+        return value.lower().strip()

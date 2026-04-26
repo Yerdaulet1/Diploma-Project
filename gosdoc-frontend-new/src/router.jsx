@@ -8,6 +8,7 @@ import Projects from "./Projects";
 import Notifications from "./Notifications";
 import HelpSupport from "./HelpSupport";
 import Documents from "./Documents";
+import Analytics from "./Analytics";
 
 function PageLoader() {
   return (
@@ -27,8 +28,9 @@ function ProtectedRoute() {
 
 function PublicRoute() {
   const { isAuthenticated, isLoading } = useAuth();
+  const isRegistering = useAuthStore((s) => s.isRegistering);
   if (isLoading) return <PageLoader />;
-  if (isAuthenticated) return <Navigate to="/inbox" replace />;
+  if (isAuthenticated && !isRegistering) return <Navigate to="/inbox" replace />;
   return <Outlet />;
 }
 
@@ -40,6 +42,7 @@ const SCREEN_TO_PATH = {
   documents: "/documents",
   notifications: "/notifications",
   help: "/help",
+  analytics: "/analytics",
 };
 
 function useNavAdapter() {
@@ -92,6 +95,11 @@ function WrapHelp() {
   return <HelpSupport onNavigate={onNavigate} onGoToAuth={onGoToAuth} />;
 }
 
+function WrapAnalytics() {
+  const { onNavigate, onGoToAuth } = useNavAdapter();
+  return <Analytics onNavigate={onNavigate} onGoToAuth={onGoToAuth} />;
+}
+
 export const routes = [
   {
     element: <PublicRoute />,
@@ -107,6 +115,7 @@ export const routes = [
       { path: "/documents", element: <WrapDocuments /> },
       { path: "/notifications", element: <WrapNotifications /> },
       { path: "/help", element: <WrapHelp /> },
+      { path: "/analytics", element: <WrapAnalytics /> },
     ],
   },
   { path: "*", element: <Navigate to="/inbox" replace /> },

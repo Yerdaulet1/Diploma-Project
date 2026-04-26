@@ -1,6 +1,15 @@
 import { useState, useRef, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
+import {
+  getDocuments, deleteDocument,
+  requestUpload, uploadFileToS3, confirmUpload, getDownloadUrl,
+  getDocumentContent, saveDocumentContent,
+} from "./api/documents";
+import { getWorkspaces } from "./api/workspaces";
+import useAuthStore from "./store/authStore";
 
 /* ══════════════════════════════════════════════════════════
    CSS
@@ -175,19 +184,36 @@ const ROWS_N  = 50;
 const COLS    = Array.from({length:COLS_N},(_,i)=>String.fromCharCode(65+i));
 const XLS_TABS= ["Home","Insert","Page Layout","Formulas","Data","Review","View"];
 
-const SAMPLE_DOCS = [
-  {id:1,name:"Contract_Agreement",    ext:"doc",color:"#2563EB",bg:"#DBEAFE",owner:"me",              lastOpened:"Apr 20, 2025",size:"1.2 MB",date:"Apr 18",docType:"docs"},
-  {id:2,name:"HR_Policy_Draft",       ext:"doc",color:"#2563EB",bg:"#DBEAFE",owner:"Gakku Bekzhankyzy",lastOpened:"Apr 18, 2025",size:"0.8 MB",date:"Apr 15",docType:"docs"},
-  {id:3,name:"Budget_Q1_2025",        ext:"xls",color:"#16A34A",bg:"#DCFCE7",owner:"me",              lastOpened:"Apr 17, 2025",size:"2.4 MB",date:"Apr 10",docType:"xls"},
-  {id:4,name:"Service_Agreement",     ext:"doc",color:"#2563EB",bg:"#DBEAFE",owner:"me",              lastOpened:"Apr 15, 2025",size:"0.6 MB",date:"Apr 8", docType:"docs"},
-  {id:5,name:"Procurement_Report",    ext:"xls",color:"#16A34A",bg:"#DCFCE7",owner:"Zarina Karmen",   lastOpened:"Apr 12, 2025",size:"3.1 MB",date:"Apr 5", docType:"xls"},
-  {id:6,name:"Project_Proposal_2025", ext:"doc",color:"#2563EB",bg:"#DBEAFE",owner:"me",              lastOpened:"Apr 10, 2025",size:"1.7 MB",date:"Apr 3", docType:"docs"},
-];
+
+function apiDocToUi(doc) {
+  const ft = (doc.file_type || "doc").toLowerCase();
+  const isXls = ft === "xlsx" || ft === "ods";
+  const isEditable = ft === "odt" || ft === "ods";
+  return {
+    id: doc.id,
+    name: doc.title,
+    ext: ft,
+    color: isXls ? "#16A34A" : "#2563EB",
+    bg:    isXls ? "#DCFCE7" : "#DBEAFE",
+    owner: doc.uploaded_by_name || "Me",
+    lastOpened: doc.updated_at
+      ? new Date(doc.updated_at).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" })
+      : "—",
+    size: "—",
+    date: doc.created_at
+      ? new Date(doc.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })
+      : "—",
+    docType: isXls ? "xls" : "docs",
+    _isEditable: isEditable,
+    _apiId: doc.id,
+  };
+}
 
 const NAV = [
   {label:"Inbox",       key:"inbox",     icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg>},
   {label:"Projects",    key:"projects",  icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>},
   {label:"Documents",   key:"documents", active:true, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>},
+  {label:"Analytics",       key:"analytics", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>},
   {label:"Help & Support",key:"help",    icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>},
 ];
 
@@ -308,7 +334,7 @@ function InsertTableModal({ onInsert, onClose }) {
 /* ══════════════════════════════════════════════════════════
    DOCS EDITOR
 ══════════════════════════════════════════════════════════ */
-function DocsEditor({ doc, onClose, onSave }) {
+function DocsEditor({ doc, initialContent, onClose, onSave }) {
   const [font,    setFont]    = useState("DM Sans");
   const [fsize,   setFsize]   = useState("13");
   const [bold,    setBold]    = useState(false);
@@ -321,6 +347,13 @@ function DocsEditor({ doc, onClose, onSave }) {
   const editorRef = useRef(null);
   const colorRef  = useRef(null);
   const bgRef     = useRef(null);
+
+  useEffect(() => {
+    if (initialContent && editorRef.current) {
+      editorRef.current.innerHTML = initialContent;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const exec = (cmd, val=null) => { editorRef.current?.focus(); document.execCommand(cmd, false, val); };
 
@@ -358,7 +391,7 @@ function DocsEditor({ doc, onClose, onSave }) {
 
   return (
     <div className="dc-editor-wrap">
-      {showSave && <SaveModal defaultName={doc?.name||"Untitled Document"} docType="docs" onSave={onSave} onClose={()=>setShowSave(false)}/>}
+      {showSave && <SaveModal defaultName={doc?.name||"Untitled Document"} docType="docs" onSave={(name) => { onSave(name, editorRef.current?.innerHTML || "<p></p>"); setShowSave(false); }} onClose={()=>setShowSave(false)}/>}
       {showTable && <InsertTableModal onInsert={insertTable} onClose={()=>setShowTable(false)}/>}
 
       {/* ── TOOLBAR ── */}
@@ -506,9 +539,16 @@ function DocsEditor({ doc, onClose, onSave }) {
 ══════════════════════════════════════════════════════════ */
 const initCells = () => Array.from({length:ROWS_N},()=>Array(COLS_N).fill(""));
 
-function XlsEditor({ doc, onClose, onSave }) {
+function XlsEditor({ doc, initialContent, onClose, onSave }) {
   const [xlsTab, setXlsTab] = useState("Home");
-  const [cells,  setCells]  = useState(initCells);
+  const [cells,  setCells]  = useState(() => {
+    if (initialContent && Array.isArray(initialContent)) {
+      return Array.from({length:ROWS_N}, (_,r) =>
+        Array.from({length:COLS_N}, (_,c) => initialContent[r]?.[c] ?? "")
+      );
+    }
+    return initCells();
+  });
   const [sel,    setSel]    = useState({r:0,c:0});
   const [edit,   setEdit]   = useState(null);
   const [formulaVal, setFormulaVal] = useState("");
@@ -616,7 +656,7 @@ function XlsEditor({ doc, onClose, onSave }) {
 
   return (
     <div className="dc-xls-wrap">
-      {showSave && <SaveModal defaultName={doc?.name||"Untitled Spreadsheet"} docType="xls" onSave={onSave} onClose={()=>setShowSave(false)}/>}
+      {showSave && <SaveModal defaultName={doc?.name||"Untitled Spreadsheet"} docType="xls" onSave={(name) => { onSave(name, cells); setShowSave(false); }} onClose={()=>setShowSave(false)}/>}
 
       {/* Ribbon tabs */}
       <div className="dc-xls-tabs">
@@ -707,16 +747,49 @@ export default function Documents({ onGoToAuth, onNavigate }) {
   const [sbOpen,          setSbOpen]         = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView,     setProfileView]     = useState(null);
-  const [docs,            setDocs]            = useState(SAMPLE_DOCS);
-  const [view,            setView]            = useState("list"); // "list" | "docs" | "xls"
+  const [view,            setView]            = useState("list");
   const [activeDoc,       setActiveDoc]       = useState(null);
   const [showTypeModal,   setShowTypeModal]   = useState(false);
   const [page,            setPage]            = useState(1);
+  const [saving,          setSaving]          = useState(false);
+
+  const user = useAuthStore(s => s.user);
+  const queryClient = useQueryClient();
+
+  const { data: docsData } = useQuery({
+    queryKey: ["documents"],
+    queryFn: getDocuments,
+  });
+  const { data: workspacesData } = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: getWorkspaces,
+  });
+
+  const docs = (docsData?.results ?? []).map(apiDocToUi);
   const PER_PAGE = 5;
-  const totalPages = Math.ceil(docs.length / PER_PAGE);
+  const totalPages = Math.max(1, Math.ceil(docs.length / PER_PAGE));
   const pagedDocs  = docs.slice((page-1)*PER_PAGE, page*PER_PAGE);
 
-  const openDoc = (d) => {
+  const openDoc = async (d) => {
+    if (d._apiId) {
+      if (d._isEditable) {
+        try {
+          const contentData = await getDocumentContent(d._apiId);
+          setActiveDoc({ ...d, _content: contentData.content, _sheetData: contentData.sheet_data });
+          setView(d.docType === "xls" ? "xls" : "docs");
+        } catch {
+          toast.error("Failed to load document content");
+        }
+      } else {
+        try {
+          const { download_url } = await getDownloadUrl(d._apiId);
+          window.open(download_url, "_blank");
+        } catch {
+          toast.error("Failed to open document");
+        }
+      }
+      return;
+    }
     setActiveDoc(d);
     setView(d.docType === "xls" ? "xls" : "docs");
   };
@@ -724,7 +797,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
   const handleTypeSelect = (type) => {
     setShowTypeModal(false);
     const newDoc = {
-      id: Date.now(), name:"Untitled", ext: type==="xls"?"xls":"doc",
+      id: Date.now(), name:"Untitled", ext: type==="xls"?"ods":"odt",
       color: type==="xls"?"#16A34A":"#2563EB",
       bg:    type==="xls"?"#DCFCE7":"#DBEAFE",
       owner:"me", lastOpened:"Just now", size:"0 KB", date:"Today", docType:type,
@@ -733,14 +806,87 @@ export default function Documents({ onGoToAuth, onNavigate }) {
     setView(type);
   };
 
-  const handleSave = (name) => {
-    const saved = { ...activeDoc, name };
-    setDocs(prev => {
-      const exists = prev.find(d=>d.id===saved.id);
-      return exists ? prev.map(d=>d.id===saved.id?saved:d) : [saved,...prev];
-    });
-    setActiveDoc(saved);
-    setView("list");
+  const handleSave = async (name, content) => {
+    const isXls = activeDoc?.docType === "xls";
+
+    // Existing API doc — save content in place
+    if (activeDoc?._apiId) {
+      setSaving(true);
+      try {
+        const payload = isXls
+          ? { sheet_data: Array.isArray(content) ? content : null }
+          : { content: { html: content } };
+        await saveDocumentContent(activeDoc._apiId, payload);
+        toast.success("Document saved");
+        queryClient.invalidateQueries({ queryKey: ["documents"] });
+        setView("list");
+        setActiveDoc(null);
+      } catch (e) {
+        toast.error(e?.response?.data?.detail || "Failed to save document");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
+    // New doc — upload blob to S3 then save content
+    const workspaces = workspacesData?.results ?? [];
+    const workspace = workspaces[0];
+    if (!workspace) {
+      toast.error("No workspace found — create a project first.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const ext = isXls ? "ods" : "odt";
+      const fileName = `${name}.${ext}`;
+      const rawText = isXls
+        ? (Array.isArray(content) ? content.map(row => row.map(c => `"${(c||"").replace(/"/g,'""')}"`).join(",")).join("\n") : (content || " "))
+        : (content || " ");
+      const blob = new Blob([rawText], { type: "text/plain" });
+      const file = new File([blob], fileName);
+
+      const presigned = await requestUpload({
+        workspace: workspace.id, title: name, file_name: fileName, file_size: file.size,
+      });
+      await uploadFileToS3(presigned, file);
+      const confirmed = await confirmUpload({
+        workspace: workspace.id, title: name,
+        storage_key: presigned.fields?.key || presigned.storage_key,
+        file_name: fileName,
+      });
+
+      // Also save editor content so it can be re-opened in-editor later
+      if (confirmed?.id) {
+        try {
+          const payload = isXls
+            ? { sheet_data: Array.isArray(content) ? content : null }
+            : { content: { html: content } };
+          await saveDocumentContent(confirmed.id, payload);
+        } catch (_) { /* non-critical */ }
+      }
+
+      toast.success("Document saved");
+      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      setView("list");
+      setActiveDoc(null);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to save document");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (d) => {
+    if (!d._apiId) return;
+    try {
+      await deleteDocument(d._apiId);
+      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      setPage(1);
+      toast.success("Document deleted");
+    } catch {
+      toast.error("Failed to delete document");
+    }
   };
 
   const breadcrumb = view==="list"
@@ -807,8 +953,8 @@ export default function Documents({ onGoToAuth, onNavigate }) {
             </div>
           </div>
           <div className="dc-pinfo">
-            <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>Erik Serikov</div>
-            <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>220103351@stu.sdu.edu.kz</div>
+            <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{user?.full_name || "User"}</div>
+            <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>{user?.email || ""}</div>
           </div>
           <div className="dc-org">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
@@ -820,9 +966,10 @@ export default function Documents({ onGoToAuth, onNavigate }) {
             {NAV.map((n,i)=>(
               <button key={i} className={`dc-navitem${n.active?" active":""}`}
                 onClick={()=>{
-                  if(n.key==="inbox"   && onNavigate) onNavigate("inbox");
-                  if(n.key==="projects"&& onNavigate) onNavigate("projects");
-                  if(n.key==="help"   && onNavigate) onNavigate("help");
+                  if(n.key==="inbox"     && onNavigate) onNavigate("inbox");
+                  if(n.key==="projects"  && onNavigate) onNavigate("projects");
+                  if(n.key==="analytics" && onNavigate) onNavigate("analytics");
+                  if(n.key==="help"      && onNavigate) onNavigate("help");
                 }}>
                 {n.icon}
                 <span className="dc-navlabel">{n.label}</span>
@@ -899,7 +1046,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                         </thead>
                         <tbody>
                           {pagedDocs.map(d=>(
-                            <tr key={d.id} onClick={()=>openDoc(d)} style={{ cursor:"pointer" }}>
+                            <tr key={d.id} onClick={()=>{openDoc(d);}} style={{ cursor:"pointer" }}>
                               <td>
                                 <div style={{ display:"flex",alignItems:"center",gap:10 }}>
                                   <div className="dc-file-icon" style={{ background:d.bg,color:d.color }}>{d.ext.toUpperCase()}</div>
@@ -917,7 +1064,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                                   <button className="dc-icon-action" title="Open" onClick={()=>openDoc(d)}>
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="14" height="14"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                   </button>
-                                  <button className="dc-icon-action" title="Delete" onClick={()=>{setDocs(prev=>prev.filter(x=>x.id!==d.id));setPage(1);}} style={{ color:"#EF4444" }}>
+                                  <button className="dc-icon-action" title="Delete" onClick={()=>handleDelete(d)} style={{ color:"#EF4444" }}>
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
                                   </button>
                                 </div>
@@ -953,12 +1100,12 @@ export default function Documents({ onGoToAuth, onNavigate }) {
 
             {/* DOCS EDITOR VIEW */}
             {view==="docs" && (
-              <DocsEditor doc={activeDoc} onClose={()=>setView("list")} onSave={handleSave}/>
+              <DocsEditor doc={activeDoc} initialContent={activeDoc?._content?.html || ""} onClose={()=>setView("list")} onSave={handleSave}/>
             )}
 
             {/* XLS EDITOR VIEW */}
             {view==="xls" && (
-              <XlsEditor doc={activeDoc} onClose={()=>setView("list")} onSave={handleSave}/>
+              <XlsEditor doc={activeDoc} initialContent={activeDoc?._sheetData || null} onClose={()=>setView("list")} onSave={handleSave}/>
             )}
           </div>
         </div>

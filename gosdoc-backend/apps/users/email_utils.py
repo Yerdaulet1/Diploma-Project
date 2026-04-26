@@ -19,6 +19,15 @@ def send_verification_code(email: str, code: str, purpose: str) -> bool:
             f"Код действителен 15 минут.\n"
             f"Если вы не регистрировались — проигнорируйте это письмо."
         )
+    elif purpose == "email_change":
+        subject = "Подтверждение смены email — ГосДок"
+        message = (
+            f"Вы запросили смену email в системе ГосДок.\n\n"
+            f"Код подтверждения:\n\n"
+            f"  {code}\n\n"
+            f"Код действителен 15 минут.\n"
+            f"Если вы не запрашивали смену email — проигнорируйте это письмо."
+        )
     else:
         subject = "Сброс пароля — ГосДок"
         message = (

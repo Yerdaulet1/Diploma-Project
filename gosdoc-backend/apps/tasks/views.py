@@ -19,16 +19,31 @@ logger = logging.getLogger(__name__)
 
 
 class TaskListView(generics.ListAPIView):
-    """GET /api/v1/tasks/ — список задач пользователя"""
+    """GET /api/v1/tasks/ — список задач пользователя.
+
+    Query params:
+      status, workspace, request_type  — точное совпадение
+      date_from (YYYY-MM-DD)           — created_at >= date_from
+      date_to   (YYYY-MM-DD)           — created_at <= date_to
+    """
 
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = TaskSerializer
-    filterset_fields = ["status", "workspace"]
+    filterset_fields = ["status", "workspace", "request_type"]
 
     def get_queryset(self):
-        return Task.objects.filter(
+        qs = Task.objects.filter(
             assigned_to=self.request.user
         ).select_related("workspace", "document", "assigned_to")
+
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+
+        return qs
 
 
 class TaskDetailView(generics.RetrieveUpdateAPIView):

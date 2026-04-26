@@ -31,6 +31,12 @@ class Document(models.Model):
         SIGNED = "signed", "Подписан"
         ARCHIVED = "archived", "Архив"
 
+    class Priority(models.TextChoices):
+        LOW = "low", "Низкий"
+        MEDIUM = "medium", "Средний"
+        HIGH = "high", "Высокий"
+        CRITICAL = "critical", "Критический"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey(
         "workspaces.Workspace",
@@ -67,6 +73,14 @@ class Document(models.Model):
         verbose_name="Загрузил",
         db_index=True,
     )
+    priority = models.CharField(
+        max_length=10,
+        choices=Priority.choices,
+        default=Priority.MEDIUM,
+        verbose_name="Приоритет",
+        db_index=True,
+    )
+    due_date = models.DateField(null=True, blank=True, verbose_name="Срок исполнения")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     metadata = models.JSONField(
@@ -74,6 +88,18 @@ class Document(models.Model):
         blank=True,
         verbose_name="Метаданные",
         help_text="Произвольные метаданные документа (классификация AI и т.п.)",
+    )
+    content = models.JSONField(
+        null=True,
+        blank=True,
+        verbose_name="Содержимое (TipTap/Word)",
+        help_text="HTML-контент TipTap для Word-документов",
+    )
+    sheet_data = models.JSONField(
+        null=True,
+        blank=True,
+        verbose_name="Данные таблицы (Excel)",
+        help_text="Структура ячеек для Excel-документов",
     )
 
     class Meta:
@@ -237,6 +263,7 @@ class DocumentAuditLog(models.Model):
         ARCHIVED = "archived", "Архивирован"
         WORKFLOW_STARTED = "workflow_started", "Workflow запущен"
         SIGNED = "signed", "Подписан"
+        APPROVED = "approved", "Согласован"
         VERSION_UPLOADED = "version_uploaded", "Версия загружена"
         COMMENT_ADDED = "comment_added", "Комментарий добавлен"
         DOWNLOADED = "downloaded", "Скачан"
@@ -294,3 +321,95 @@ class DocumentAuditLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_action_display()} | {self.document} | {self.user}"
+
+
+class Subtask(models.Model):
+    """
+    Подзадача документа — чеклист шагов для участников.
+    Прогресс документа вычисляется как done/total подзадач.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Ожидает"
+        IN_PROGRESS = "in_progress", "В работе"
+        DONE = "done", "Выполнено"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(
+        Document,
+        on_delete=models.CASCADE,
+        related_name="subtasks",
+        verbose_name="Документ",
+        db_index=True,
+    )
+    title = models.CharField(max_length=255, verbose_name="Название подзадачи")
+    assignee = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_subtasks",
+        verbose_name="Исполнитель",
+    )
+    deadline = models.DateField(null=True, blank=True, verbose_name="Срок")
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+        verbose_name="Статус",
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
+
+    class Meta:
+        verbose_name = "Подзадача"
+        verbose_name_plural = "Подзадачи"
+        db_table = "subtasks"
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["document"]),
+            models.Index(fields=["assignee"]),
+            models.Index(fields=["status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.title} [{self.get_status_display()}]"
+
+
+class DocumentAttachment(models.Model):
+    """
+    Прикреплённый файл к документу (не версия, а дополнительный материал).
+    Хранится в S3 по ключу attachments/{workspace_id}/{uuid}/{filename}.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(
+        Document,
+        on_delete=models.CASCADE,
+        related_name="attachments",
+        verbose_name="Документ",
+        db_index=True,
+    )
+    title = models.CharField(max_length=255, verbose_name="Имя файла")
+    storage_key = models.TextField(verbose_name="Ключ S3")
+    file_size = models.PositiveBigIntegerField(default=0, verbose_name="Размер файла (байт)")
+    uploaded_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="uploaded_attachments",
+        verbose_name="Загрузил",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
+
+    class Meta:
+        verbose_name = "Вложение"
+        verbose_name_plural = "Вложения"
+        db_table = "document_attachments"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["document"])]
+
+    def __str__(self) -> str:
+        return f"{self.title} → {self.document.title}"

@@ -1,17 +1,11 @@
 import { useState, useRef, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
+import { getNotifications, markRead as apiMarkRead, markAllRead as apiMarkAllRead, bulkDeleteNotifications } from "./api/notifications";
+import useAuthStore from "./store/authStore";
 
-/* ══════════════════════════════════════════════════════════
-   SAMPLE DATA
-══════════════════════════════════════════════════════════ */
-const INITIAL_NOTIFICATIONS = Array.from({ length: 25 }, (_, i) => ({
-  id: i + 1,
-  title: 'Document "Contract Agreement" was completed',
-  desc: "Jacob finished the task.",
-  time: i < 5 ? "2 min ago" : i < 10 ? "1 h ago" : i < 15 ? "3 h ago" : "Yesterday",
-  read: i >= 5, // first 5 are unread
-}));
 
 /* ══════════════════════════════════════════════════════════
    CSS
@@ -149,6 +143,7 @@ const NT_NAV = [
   { label:"Projects",     nav:"projects", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> },
   { label:"Documents",    nav:"documents", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
   { label:"Notifications",nav:"notifications", active:true, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
+  { label:"Analytics",     nav:"analytics", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
   { label:"Help & Support",nav:"help",    icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
 ];
 
@@ -165,8 +160,8 @@ function Sidebar({ onNavigate }) {
         </div>
       </div>
       <div className="nt-profile-info">
-        <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>Erik Serikov</div>
-        <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>220103351@stu.sdu.edu.kz</div>
+        <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{user?.full_name || "User"}</div>
+        <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>{user?.email || ""}</div>
       </div>
       <div className="nt-org">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
@@ -259,15 +254,57 @@ function NotificationCard({ notif, selected, onSelect, onMarkRead, onDelete }) {
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
 export default function Notifications({ onGoBack, onGoToAuth, onNavigate }) {
-  const [notifs, setNotifs] = useState(INITIAL_NOTIFICATIONS);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const [filter, setFilter] = useState("All"); // All, Read, Unread
+  const [filter, setFilter] = useState("All");
   const [filterOpen, setFilterOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const filterRef = useRef(null);
+  const debounceRef = useRef(null);
+
+  const user = useAuthStore(s => s.user);
+  const queryClient = useQueryClient();
+
+  // Debounce search → API
+  const handleSearchChange = (e) => {
+    const val = e.target.value;
+    setSearch(val);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedSearch(val);
+      setPage(1);
+    }, 350);
+  };
+
+  const queryParams = {};
+  if (debouncedSearch) queryParams.search = debouncedSearch;
+  if (filter === "Read")   queryParams.is_read = "true";
+  if (filter === "Unread") queryParams.is_read = "false";
+
+  const { data: notifsData } = useQuery({
+    queryKey: ["notifications", debouncedSearch, filter],
+    queryFn: () => getNotifications(queryParams),
+    refetchInterval: 30000,
+  });
+
+  const notifs = (notifsData?.results ?? []).map(n => ({
+    id: n.id,
+    title: n.title,
+    desc: n.message || "",
+    time: n.created_at
+      ? (() => {
+          const d = new Date(n.created_at);
+          const diffMin = Math.floor((Date.now() - d) / 60000);
+          if (diffMin < 60) return `${diffMin} min ago`;
+          if (diffMin < 1440) return `${Math.floor(diffMin/60)} h ago`;
+          return "Yesterday";
+        })()
+      : "—",
+    read: n.is_read,
+  }));
 
   // close filter dropdown on outside click
   useEffect(() => {
@@ -277,13 +314,8 @@ export default function Notifications({ onGoBack, onGoToAuth, onNavigate }) {
     return () => document.removeEventListener("mousedown", h);
   }, [filterOpen]);
 
-  // Filter + search
-  const filtered = notifs.filter(n => {
-    if (filter === "Read"   && !n.read) return false;
-    if (filter === "Unread" &&  n.read) return false;
-    if (search && !n.title.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+  // Client-side filter (is_read already filtered by API, just apply locally for Unread dot)
+  const filtered = notifs;
 
   // Pagination
   const pageSize = 25;
@@ -305,25 +337,47 @@ export default function Notifications({ onGoBack, onGoToAuth, onNavigate }) {
   const selectAll = () => setSelectedIds(new Set(pageItems.map(n => n.id)));
   const clearSelection = () => setSelectedIds(new Set());
 
-  const markRead = (id) => {
-    setNotifs(ns => ns.map(n => n.id === id ? { ...n, read: true } : n));
+  const handleMarkRead = async (id) => {
+    try {
+      await apiMarkRead(id);
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    } catch { /* ignore */ }
   };
-  const deleteOne = (id) => {
-    setNotifs(ns => ns.filter(n => n.id !== id));
-    setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s; });
+  const deleteOne = async (id) => {
+    try {
+      await bulkDeleteNotifications([id]);
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s; });
+    } catch { toast.error("Failed to delete notification"); }
   };
-  const markSelectedRead = () => {
-    setNotifs(ns => ns.map(n => selectedIds.has(n.id) ? { ...n, read: true } : n));
+  const markSelectedRead = async () => {
+    try {
+      await Promise.all([...selectedIds].map(id => apiMarkRead(id)));
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      clearSelection();
+    } catch { toast.error("Failed to mark as read"); }
   };
-  const deleteSelected = () => {
-    setNotifs(ns => ns.filter(n => !selectedIds.has(n.id)));
-    clearSelection();
+  const handleMarkAllRead = async () => {
+    try {
+      await apiMarkAllRead();
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      toast.success("All marked as read");
+    } catch { toast.error("Failed"); }
+  };
+  const deleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      await bulkDeleteNotifications([...selectedIds]);
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      clearSelection();
+      toast.success(`Deleted ${selectedIds.size} notification${selectedIds.size > 1 ? "s" : ""}`);
+    } catch { toast.error("Failed to delete notifications"); }
   };
 
   const onFilterSelect = (f) => {
-    if (f === "All") { selectAll(); }
-    else if (f === "Read")   { setFilter("Read"); clearSelection(); }
-    else if (f === "Unread") { setFilter("Unread"); clearSelection(); }
+    setFilter(f);
+    clearSelection();
+    setPage(1);
     setFilterOpen(false);
   };
 
@@ -374,7 +428,7 @@ export default function Notifications({ onGoBack, onGoToAuth, onNavigate }) {
           <div className="nt-search-wrap">
             <div className="nt-search">
               <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="15" height="15"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <input placeholder="Search in notifications..." value={search} onChange={e=>setSearch(e.target.value)}/>
+              <input placeholder="Search in notifications..." value={search} onChange={handleSearchChange}/>
             </div>
           </div>
 
@@ -416,9 +470,10 @@ export default function Notifications({ onGoBack, onGoToAuth, onNavigate }) {
               </div>
 
               {/* Mark as read */}
-              <button className="nt-tool-btn" disabled={!hasSelection} onClick={markSelectedRead} title="Mark as read">
+              <button className="nt-tool-btn" disabled={!hasSelection} onClick={markSelectedRead} title="Mark selected as read">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
               </button>
+              <button className="nt-tool-btn" onClick={handleMarkAllRead} title="Mark all as read" style={{ fontSize:10, padding:"0 6px", width:"auto" }}>All read</button>
 
               {/* Delete */}
               <button className="nt-tool-btn" disabled={!hasSelection} onClick={deleteSelected} title="Delete">
@@ -448,7 +503,7 @@ export default function Notifications({ onGoBack, onGoToAuth, onNavigate }) {
                   <NotificationCard key={n.id} notif={n}
                     selected={selectedIds.has(n.id)}
                     onSelect={()=>toggleOne(n.id)}
-                    onMarkRead={()=>markRead(n.id)}
+                    onMarkRead={()=>handleMarkRead(n.id)}
                     onDelete={()=>deleteOne(n.id)}/>
                 ))
             }

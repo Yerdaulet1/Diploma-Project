@@ -1,4 +1,17 @@
 import { useState, useRef, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import {
+  getDocuments, getDocument, updateDocument,
+  getComments, addComment as apiAddComment,
+  getSubtasks, createSubtask,
+  updateSubtask as apiUpdateSubtask,
+  deleteSubtask as apiDeleteSubtask,
+  getAttachments, requestAttachmentUpload, confirmAttachmentUpload,
+  deleteAttachment as apiDeleteAttachment,
+  uploadFileToS3, requestUpload, confirmUpload,
+} from "./api/documents";
+import { getWorkspaces, createWorkspace, addMember } from "./api/workspaces";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
 
@@ -155,6 +168,29 @@ const ACTIVITY_LOG = [
     { text:"Gauhar Sultanbekkyzy uploaded file",     time:"09:30 AM" },
   ]},
 ];
+
+const priToApi = (p) => (p === "Empty" ? null : p.toLowerCase());
+const priFromApi = (p) => (p ? p.charAt(0).toUpperCase() + p.slice(1) : "Empty");
+
+const FILE_TYPE_INFO = {
+  pdf:  { ext:"PDF", color:"#EF4444", bg:"#FEE2E2" },
+  doc:  { ext:"DOC", color:"#2563EB", bg:"#DBEAFE" },
+  docx: { ext:"DOC", color:"#2563EB", bg:"#DBEAFE" },
+  xls:  { ext:"XLS", color:"#16A34A", bg:"#DCFCE7" },
+  xlsx: { ext:"XLS", color:"#16A34A", bg:"#DCFCE7" },
+  ppt:  { ext:"PPT", color:"#EA580C", bg:"#FFEDD5" },
+  pptx: { ext:"PPT", color:"#EA580C", bg:"#FFEDD5" },
+  txt:  { ext:"TXT", color:"#6366F1", bg:"#EEF2FF" },
+};
+const fileTypeInfo = (ft) =>
+  FILE_TYPE_INFO[ft?.toLowerCase()] || { ext:(ft?.toUpperCase()||"FILE").slice(0,4), color:"#6366F1", bg:"#EEF2FF" };
+
+const DOC_STATUS_DISPLAY = { draft:"TO DO", review:"IN PROGRESS", approved:"COMPLETED", archived:"RETURNED" };
+const docStatusDisplay = (s) => DOC_STATUS_DISPLAY[s] || s?.toUpperCase() || "TO DO";
+const docStatusClass = (s) => {
+  const d = docStatusDisplay(s);
+  return d === "IN PROGRESS" ? "ds-prog" : d === "COMPLETED" ? "ds-done" : "ds-todo";
+};
 
 /* ══════════════════════════════════════════════════════════
    MINI AVATAR
@@ -625,7 +661,7 @@ function WorkflowTab() {
 /* ══════════════════════════════════════════════════════════
    ACTIVITY PANEL
 ══════════════════════════════════════════════════════════ */
-function ActivityPanel({ comments, onComment }) {
+function ActivityPanel({ comments, onComment, apiComments }) {
   const [text, setText] = useState("");
   const [showMore, setShowMore] = useState(false);
   const [images, setImages] = useState([]);
@@ -658,7 +694,20 @@ function ActivityPanel({ comments, onComment }) {
       </div>
 
       <div className="dm-activity-body">
-        {ACTIVITY_LOG.map((group, gi) => (
+        {/* API comments */}
+        {apiComments?.map((c, i) => (
+          <div key={`api-${c.id||i}`} className="dm-activity-item" style={{ marginBottom:8 }}>
+            <div className="dm-activity-dot" style={{ background:"#A78BFA" }}/>
+            <span style={{ fontSize:12 }}>
+              <strong style={{ color:"#374151" }}>{c.author_name || "User"}</strong>: {c.content}
+            </span>
+            <span className="dm-activity-time">
+              {new Date(c.created_at).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}
+            </span>
+          </div>
+        ))}
+        {/* Static log (when no api comments) */}
+        {!apiComments?.length && ACTIVITY_LOG.map((group, gi) => (
           <div key={gi}>
             <div className="dm-activity-date">{group.date}</div>
             {group.items.slice(0, showMore ? undefined : 2).map((item, ii) => (
@@ -673,6 +722,7 @@ function ActivityPanel({ comments, onComment }) {
             )}
           </div>
         ))}
+        {/* Optimistically-posted comments this session */}
         {comments.map((c, i) => (
           <div key={i} style={{ marginBottom:10 }}>
             <div className="dm-activity-item">
@@ -744,6 +794,31 @@ function ActivityPanel({ comments, onComment }) {
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
 function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
+  const qc = useQueryClient();
+  const docId = doc?.id;
+
+  // API queries — only when we have a real document id
+  const { data: apiDoc } = useQuery({
+    queryKey: ["document", docId],
+    queryFn: () => getDocument(docId),
+    enabled: !readOnly && !!docId,
+  });
+  const { data: apiSubtasks } = useQuery({
+    queryKey: ["subtasks", docId],
+    queryFn: () => getSubtasks(docId),
+    enabled: !readOnly && !!docId,
+  });
+  const { data: apiAttachments } = useQuery({
+    queryKey: ["attachments", docId],
+    queryFn: () => getAttachments(docId),
+    enabled: !!docId,
+  });
+  const { data: apiComments } = useQuery({
+    queryKey: ["comments", docId],
+    queryFn: () => getComments(docId),
+    enabled: !!docId,
+  });
+
   const [status,     setStatus]     = useState("TO DO");
   const [priority,   setPriority]   = useState("Empty");
   const [assignee,   setAssignee]   = useState(null);
@@ -760,17 +835,99 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
   const [subtasks,   setSubtasks]   = useState([{ id:1, name:"", mode:"action", assignee:null, deadline:null }]);
   const [activeTab,  setActiveTab]  = useState("task");
   const [comments,   setComments]   = useState([]);
-  const [title,      setTitle]      = useState(doc?.name || "Cooperation Agreement");
+  const [title,      setTitle]      = useState(doc?.title || doc?.name || "");
   const [saved,      setSaved]      = useState(false);
+  const [saving,     setSaving]     = useState(false);
+  const [uploading,  setUploading]  = useState(false);
+  const [deletedSubtaskIds, setDeletedSubtaskIds] = useState([]);
   const fileRef = useRef(null);
 
-  // Snapshot for cancel
-  const snapshot = useRef({ status:"TO DO", priority:"Empty", assignee:null, dueDate:null, desc:"", title:doc?.name||"Cooperation Agreement", subtasks:[{id:1,name:"",mode:"action",assignee:null,deadline:null}], attachments:[] });
+  // Sync doc metadata from API
+  useEffect(() => {
+    if (apiDoc) {
+      setTitle(apiDoc.title || "");
+      setPriority(priFromApi(apiDoc.priority));
+      setDueDate(apiDoc.due_date || null);
+    }
+  }, [apiDoc]);
 
-  const handleSave = () => {
-    snapshot.current = { status, priority, assignee, dueDate, desc, title, subtasks, attachments };
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  // Sync subtasks from API (only on first load)
+  useEffect(() => {
+    if (apiSubtasks) {
+      setSubtasks(
+        apiSubtasks.length > 0
+          ? apiSubtasks.map(st => ({
+              id: st.id, _apiId: st.id,
+              name: st.title, mode: "action",
+              assignee: st.assignee ? { id: st.assignee, name: st.assignee_name } : null,
+              deadline: st.deadline,
+            }))
+          : [{ id: 1, _apiId: null, name: "", mode: "action", assignee: null, deadline: null }]
+      );
+    }
+  }, [apiSubtasks]);
+
+  // Sync attachments from API
+  useEffect(() => {
+    if (apiAttachments?.length > 0) {
+      setAttachments(apiAttachments.map(a => ({
+        _apiId: a.id,
+        name: a.title,
+        size: `${(a.file_size / 1024 / 1024).toFixed(1)} MB`,
+        date: new Date(a.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric" }),
+        downloadUrl: a.download_url,
+      })));
+    }
+  }, [apiAttachments]);
+
+  // Snapshot for cancel
+  const snapshot = useRef({ status:"TO DO", priority:"Empty", assignee:null, dueDate:null, desc:"", title:doc?.title||doc?.name||"", subtasks:[{id:1,name:"",mode:"action",assignee:null,deadline:null}], attachments:[] });
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      if (!readOnly && docId) {
+        await updateDocument(docId, {
+          title,
+          ...(priority !== "Empty" && { priority: priToApi(priority) }),
+          due_date: dueDate || null,
+        });
+        // Delete removed subtasks
+        for (const id of deletedSubtaskIds) {
+          try { await apiDeleteSubtask(docId, id); } catch {}
+        }
+        setDeletedSubtaskIds([]);
+        // Create new / update existing subtasks
+        for (const st of subtasks) {
+          if (st._apiId) {
+            try {
+              await apiUpdateSubtask(docId, st._apiId, {
+                title: st.name || "Untitled",
+                deadline: st.deadline || null,
+              });
+            } catch {}
+          } else if (st.name?.trim()) {
+            try {
+              const newSt = await createSubtask(docId, { title: st.name, deadline: st.deadline || null });
+              st._apiId = newSt.id;
+              st.id = newSt.id;
+            } catch {}
+          }
+        }
+        qc.invalidateQueries({ queryKey: ["document", docId] });
+        qc.invalidateQueries({ queryKey: ["subtasks", docId] });
+        qc.invalidateQueries({ queryKey: ["documents"] });
+        toast.success("Saved");
+      }
+      snapshot.current = { status, priority, assignee, dueDate, desc, title, subtasks, attachments };
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleCancel = () => {
@@ -786,21 +943,58 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
   };
 
   const addSubtask = () => {
-    setSubtasks(s => [...s, { id: Date.now(), name:"", mode:"action", assignee:null, deadline:null }]);
+    setSubtasks(s => [...s, { id: Date.now(), _apiId: null, name:"", mode:"action", assignee:null, deadline:null }]);
   };
   const updateSubtask = (id, data) => setSubtasks(s => s.map(x => x.id===id ? {...x,...data} : x));
-  const deleteSubtask = (id) => setSubtasks(s => s.filter(x => x.id!==id));
-
-  const handleFileUpload = (e) => {
-    const f = e.target.files?.[0] || e.dataTransfer?.files?.[0];
-    if (!f) return;
-    setAttachments(a => [...a, { name:f.name, size:`${(f.size/1024/1024).toFixed(1)} MB`, date:"April 20" }]);
+  const deleteSubtask = (id) => {
+    const st = subtasks.find(s => s.id === id);
+    if (st?._apiId) setDeletedSubtaskIds(ids => [...ids, st._apiId]);
+    setSubtasks(s => s.filter(x => x.id !== id));
   };
 
-  const addComment = (data) => {
+  const handleFileUpload = async (e) => {
+    const f = e.target.files?.[0] || e.dataTransfer?.files?.[0];
+    if (!f) return;
+    if (!docId) {
+      setAttachments(a => [...a, { name:f.name, size:`${(f.size/1024/1024).toFixed(1)} MB`, date:"Just now" }]);
+      return;
+    }
+    setUploading(true);
+    try {
+      const presigned = await requestAttachmentUpload(docId, { file_name: f.name, file_size: f.size });
+      await uploadFileToS3(presigned, f);
+      const att = await confirmAttachmentUpload(docId, {
+        storage_key: presigned.storage_key,
+        file_name: f.name,
+        file_size: f.size,
+      });
+      setAttachments(a => [...a, {
+        _apiId: att.id,
+        name: att.title,
+        size: `${(att.file_size / 1024 / 1024).toFixed(1)} MB`,
+        date: "Just now",
+        downloadUrl: att.download_url,
+      }]);
+      qc.invalidateQueries({ queryKey: ["attachments", docId] });
+      toast.success("File uploaded");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Upload failed — check S3 config");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const addComment = async (data) => {
     const now = new Date();
-    const time = now.toLocaleTimeString("en-US",{ hour:"2-digit",minute:"2-digit" });
+    const time = now.toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit" });
     setComments(c => [...c, { text: data.text || "", images: data.images || [], time }]);
+    if (docId && data.text?.trim()) {
+      try {
+        await apiAddComment(docId, { content: data.text, document: docId });
+        qc.invalidateQueries({ queryKey: ["comments", docId] });
+      } catch {}
+    }
   };
 
   const docTypeColors = {
@@ -827,6 +1021,12 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
           <span>Managed Projects</span>
           <span className="dm-header-sep">/</span>
           <span className="active">{projectName || "Contract Approval Workflow"} Projects</span>
+          {!readOnly && (
+            <button onClick={handleSave} disabled={saving}
+              style={{ display:"flex",alignItems:"center",gap:4,padding:"4px 12px",background:saved?"#16A34A":"#2563EB",color:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:600,cursor:saving?"not-allowed":"pointer",marginRight:8,transition:"background .2s" }}>
+              {saving ? "Saving…" : saved ? "Saved ✓" : "Save"}
+            </button>
+          )}
           <button className="dm-close" onClick={onClose}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -1010,14 +1210,18 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
                           <div style={{ fontSize:13,fontWeight:500,color:"#374151" }}>{a.name}</div>
                           <div style={{ fontSize:11,color:"#9CA3AF" }}>{a.size} · {a.date}</div>
                         </div>
-                        <button className="dm-attach-del" onClick={()=>setAttachments(at=>at.filter((_,j)=>j!==i))}>Delete</button>
+                        <button className="dm-attach-del" onClick={async()=>{
+                          const att=attachments[i];
+                          if(att?._apiId&&docId){try{await apiDeleteAttachment(docId,att._apiId);qc.invalidateQueries({queryKey:["attachments",docId]});}catch{}}
+                          setAttachments(at=>at.filter((_,j)=>j!==i));
+                        }}>Delete</button>
                       </div>
                     );
                   })}
                   <input ref={fileRef} type="file" style={{ display:"none" }} onChange={handleFileUpload}/>
-                  <button className="dm-attach-link" onClick={()=>fileRef.current?.click()}>
+                  <button className="dm-attach-link" disabled={uploading} onClick={()=>!uploading&&fileRef.current?.click()}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="14" height="14"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-                    Select or drag your file here
+                    {uploading ? "Uploading…" : "Select or drag your file here"}
                   </button>
                 </div>}
 
@@ -1044,7 +1248,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
 
           {/* RIGHT — Activity */}
           <div className="dm-right">
-            <ActivityPanel comments={comments} onComment={addComment}/>
+            <ActivityPanel comments={comments} onComment={addComment} apiComments={apiComments}/>
           </div>
         </div>
 
@@ -1286,20 +1490,34 @@ function MemberInvite({ members, setMembers, errors, setErrors }) {
   NEW PROJECT MODAL
 ══════════════════════════════════════════════════════════ */
 function NewProjectModal({ onClose, onCreate }) {
+  const qc = useQueryClient();
   const [step,setStep]=useState(1);
   const [form,setForm]=useState({name:"",desc:"",docName:""});
   const [file,setFile]=useState(null);
   const [members,setMembers]=useState([{email:"",role:""},{email:"",role:""}]);
   const [errors,setErrors]=useState([]);
   const [formErr,setFormErr]=useState({});
+  const [creating,setCreating]=useState(false);
   const fileRef=useRef(null);
   const handleFile=(e)=>{const f=e.dataTransfer?.files[0]||e.target.files?.[0];if(f)setFile(f);};
   const next=()=>{const errs={};if(!form.name.trim())errs.name="Required.";if(!form.docName.trim())errs.docName="Required.";if(Object.keys(errs).length){setFormErr(errs);return;}setStep(2);};
-  const create=()=>{
+  const create=async()=>{
     const errs=members.map(m=>({email:m.email&&!/\S+@\S+\.\S+/.test(m.email)?"Invalid email.":" "}));
     if(errs.some(e=>e.email&&e.email!=" ")){setErrors(errs);return;}
-    onCreate({...form,file,members:members.filter(m=>m.email)});
-    onClose();
+    setCreating(true);
+    try {
+      const ws = await createWorkspace({ title: form.name, description: form.desc, type: "corporate" });
+      await Promise.allSettled(
+        members.filter(m=>m.email?.trim()).map(m=>addMember(ws.id,{email:m.email}))
+      );
+      qc.invalidateQueries({ queryKey: ["workspaces"] });
+      onCreate({ ...form, id: ws.id });
+      onClose();
+    } catch(err) {
+      toast.error(err?.response?.data?.detail || "Failed to create project");
+    } finally {
+      setCreating(false);
+    }
   };
   return (
     <div className="pr-overlay" onClick={onClose}>
@@ -1354,7 +1572,7 @@ function NewProjectModal({ onClose, onCreate }) {
             <MemberInvite members={members} setMembers={setMembers} errors={errors} setErrors={setErrors}/>
             <div style={{ display:"flex",gap:10,marginTop:4 }}>
               <button onClick={()=>setStep(1)} style={{ flex:1,border:"1.5px solid #E5E7EB",borderRadius:8,padding:11,fontSize:13,fontWeight:500,background:"#fff",color:"#374151",fontFamily:"inherit" }}>← Back</button>
-              <button className="pr-btn" style={{ flex:2,marginTop:0 }} onClick={create}>Create Project</button>
+              <button className="pr-btn" style={{ flex:2,marginTop:0 }} onClick={create} disabled={creating}>{creating?"Creating…":"Create Project"}</button>
             </div>
           </div>
         )}
@@ -1620,15 +1838,103 @@ function ProjectTable({ projects, onManage }) {
 }
 
 /* ══════════════════════════════════════════════════════════
+   NEW DOCUMENT MODAL
+══════════════════════════════════════════════════════════ */
+function NewDocModal({ project, onClose }) {
+  const qc = useQueryClient();
+  const [title, setTitle] = useState("");
+  const [fileType, setFileType] = useState("doc");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!title.trim()) return;
+    setSaving(true);
+    try {
+      const safeName = title.trim().replace(/\s+/g, "_");
+      const fileName = `${safeName}.${fileType}`;
+      const blob = new Blob([" "], { type: "text/plain" });
+      const file = new File([blob], fileName);
+      const presigned = await requestUpload({
+        workspace: project.id, title: title.trim(), file_name: fileName, file_size: file.size,
+      });
+      await uploadFileToS3(presigned, file);
+      await confirmUpload({
+        workspace: project.id, title: title.trim(),
+        storage_key: presigned.fields?.key || presigned.storage_key,
+        file_name: fileName,
+      });
+      qc.invalidateQueries({ queryKey: ["documents", project.id] });
+      toast.success("Document created");
+      onClose();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to create document");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="pr-overlay" onClick={onClose}>
+      <div className="pr-modal" style={{ maxWidth:400 }} onClick={e=>e.stopPropagation()}>
+        <button className="pr-modal-x" onClick={onClose}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+        <h2>New Document</h2>
+        <div style={{ display:"flex",flexDirection:"column",gap:14,marginTop:16 }}>
+          <div>
+            <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:5 }}>Document Title *</label>
+            <input
+              className="pr-input"
+              placeholder="e.g. Contract Draft"
+              value={title}
+              onChange={e=>setTitle(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter") submit(); }}
+              autoFocus
+            />
+          </div>
+          <div>
+            <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:5 }}>File Type</label>
+            <select
+              value={fileType}
+              onChange={e=>setFileType(e.target.value)}
+              style={{ width:"100%",border:"1.5px solid #E5E7EB",borderRadius:8,padding:"10px 12px",fontSize:13,color:"#374151",outline:"none",background:"#fff",fontFamily:"inherit",cursor:"pointer" }}
+            >
+              <option value="doc">DOC — Word Document</option>
+              <option value="xls">XLS — Spreadsheet</option>
+            </select>
+          </div>
+          <div style={{ display:"flex",justifyContent:"flex-end",gap:10,marginTop:6 }}>
+            <button onClick={onClose} style={{ padding:"9px 18px",fontSize:13,fontWeight:500,border:"1.5px solid #E5E7EB",borderRadius:8,background:"#fff",color:"#374151",fontFamily:"inherit",cursor:"pointer" }}>Cancel</button>
+            <button onClick={submit} disabled={!title.trim()||saving} style={{ padding:"9px 18px",fontSize:13,fontWeight:600,border:"none",borderRadius:8,background:"#2563EB",color:"#fff",fontFamily:"inherit",cursor:(!title.trim()||saving)?"not-allowed":"pointer",opacity:(!title.trim()||saving)?0.5:1 }}>
+              {saving ? "Creating…" : "Create"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
    PROJECT DETAIL
 ══════════════════════════════════════════════════════════ */
 function ProjectDetail({ project }) {
   const [view,setView]=useState("table");
   const [openDoc,setOpenDoc]=useState(null);
-  const dsc=(s)=>s==="IN PROGRESS"?"ds-prog":s==="COMPLETED"?"ds-done":"ds-todo";
+  const [showNewDoc,setShowNewDoc]=useState(false);
+
+  const { data: docsData, isLoading: docsLoading } = useQuery({
+    queryKey: ["documents", project.id],
+    queryFn: () => getDocuments({ workspace: project.id }),
+    enabled: !!project.id,
+  });
+  const docs = docsData?.results ?? (Array.isArray(docsData) ? docsData : []);
+
+  const dsc=(s)=>docStatusClass(s);
   return (
     <div style={{ padding:"20px",flex:1,overflow:"auto" }}>
       {openDoc && <DocumentModal doc={openDoc} projectName={project.name} onClose={()=>setOpenDoc(null)}/>}
+      {showNewDoc && <NewDocModal project={project} onClose={()=>setShowNewDoc(false)}/>}
       <div style={{ display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:4 }}>
         <div>
           <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:6 }}>
@@ -1640,47 +1946,111 @@ function ProjectDetail({ project }) {
         </div>
         <div style={{ display:"flex",alignItems:"center",gap:10,flexShrink:0 }}>
           <AvatarStack members={["M","A","B","P"]} extra={12}/>
-          <button style={{ background:"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit" }}>
+          <button onClick={()=>setShowNewDoc(true)} style={{ background:"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             Add Document
           </button>
         </div>
       </div>
       <div style={{ display:"flex",gap:0,borderBottom:".5px solid #E5E7EB",margin:"16px 0" }}>
-        {["table","timeline"].map(v=>(
+        {[
+          { v:"cards",    icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="2" y="3" width="9" height="9" rx="1"/><rect x="13" y="3" width="9" height="9" rx="1"/><rect x="2" y="14" width="9" height="7" rx="1"/><rect x="13" y="14" width="9" height="7" rx="1"/></svg> },
+          { v:"table",    icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg> },
+          { v:"timeline", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
+        ].map(({v,icon})=>(
           <button key={v} onClick={()=>setView(v)}
-            style={{ padding:"8px 16px",fontSize:13,fontWeight:500,background:"none",border:"none",fontFamily:"inherit",color:view===v?"#2563EB":"#9CA3AF",borderBottom:view===v?"2px solid #2563EB":"2px solid transparent",marginBottom:-1,display:"flex",alignItems:"center",gap:5 }}>
-            {v==="table"?<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg>:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>}
+            style={{ padding:"8px 16px",fontSize:13,fontWeight:500,background:"none",border:"none",fontFamily:"inherit",color:view===v?"#2563EB":"#9CA3AF",borderBottom:view===v?"2px solid #2563EB":"2px solid transparent",marginBottom:-1,display:"flex",alignItems:"center",gap:5,cursor:"pointer" }}>
+            {icon}
             {v.charAt(0).toUpperCase()+v.slice(1)}
           </button>
         ))}
       </div>
+      {view==="cards"&&(
+        docsLoading ? (
+          <div style={{ textAlign:"center",color:"#9CA3AF",padding:40 }}>Loading…</div>
+        ) : docs.length===0 ? (
+          <div style={{ textAlign:"center",color:"#9CA3AF",padding:40 }}>No documents yet</div>
+        ) : (
+          <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:14 }}>
+            {docs.map(doc=>{
+              const dt=fileTypeInfo(doc.file_type);
+              const statusLabel=docStatusDisplay(doc.status);
+              const dscCls=dsc(doc.status);
+              return(
+                <div key={doc.id} onClick={()=>setOpenDoc(doc)}
+                  style={{ border:"1.5px solid #F3F4F6",borderRadius:12,padding:16,cursor:"pointer",background:"#fff",transition:"box-shadow .15s,border-color .15s",display:"flex",flexDirection:"column",gap:10 }}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor="#DBEAFE";e.currentTarget.style.boxShadow="0 4px 16px rgba(37,99,235,.1)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor="#F3F4F6";e.currentTarget.style.boxShadow="none";}}>
+                  <div style={{ display:"flex",alignItems:"center",gap:10 }}>
+                    <div style={{ width:36,height:40,borderRadius:7,background:dt.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                      <span style={{ fontSize:9,fontWeight:700,color:dt.color }}>{dt.ext}</span>
+                    </div>
+                    <div style={{ minWidth:0 }}>
+                      <div style={{ fontWeight:600,fontSize:13,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{doc.title}</div>
+                      <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>
+                        {new Date(doc.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
+                    <span className={dscCls}>{statusLabel}</span>
+                    <span style={{ fontSize:11,color:"#9CA3AF" }}>{doc.uploaded_by_name||"—"}</span>
+                  </div>
+                  {doc.due_date && (
+                    <div style={{ fontSize:11,color:"#6B7280",borderTop:".5px solid #F3F4F6",paddingTop:8 }}>
+                      Due: {fmtDeadline(doc.due_date)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )
+      )}
       {view==="table"&&(
         <table className="pr-table" style={{ width:"100%" }}>
-          <thead><tr><th>Documents</th><th>Team Members</th><th>Deadline</th><th>Status</th><th>Progress</th><th>Action</th></tr></thead>
+          <thead><tr><th>Documents</th><th>Uploaded by</th><th>Deadline</th><th>Status</th><th>Priority</th><th>Action</th></tr></thead>
           <tbody>
-            {SAMPLE_DOCS.map((doc,i)=>(
-              <tr key={i} style={{ cursor:"pointer" }} onClick={()=>setOpenDoc(doc)}>
-                <td>
-                  <div style={{ display:"flex",alignItems:"center",gap:8 }}>
-                    <div style={{ width:32,height:36,borderRadius:6,background:DOC_TYPES[doc.type].bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
-                      <span style={{ fontSize:8,fontWeight:700,color:DOC_TYPES[doc.type].color }}>{DOC_TYPES[doc.type].ext}</span>
+            {docsLoading && (
+              <tr><td colSpan={6} style={{ textAlign:"center",color:"#9CA3AF",padding:24 }}>Loading…</td></tr>
+            )}
+            {!docsLoading && docs.length===0 && (
+              <tr><td colSpan={6} style={{ textAlign:"center",color:"#9CA3AF",padding:24 }}>No documents yet</td></tr>
+            )}
+            {docs.map((doc)=>{
+              const dt=fileTypeInfo(doc.file_type);
+              const statusLabel=docStatusDisplay(doc.status);
+              const pri=priFromApi(doc.priority);
+              return(
+                <tr key={doc.id} style={{ cursor:"pointer" }} onClick={()=>setOpenDoc(doc)}>
+                  <td>
+                    <div style={{ display:"flex",alignItems:"center",gap:8 }}>
+                      <div style={{ width:32,height:36,borderRadius:6,background:dt.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                        <span style={{ fontSize:8,fontWeight:700,color:dt.color }}>{dt.ext}</span>
+                      </div>
+                      <div>
+                        <div style={{ fontWeight:600,fontSize:13 }}>{doc.title}</div>
+                        <div style={{ fontSize:11,color:"#9CA3AF" }}>
+                          {new Date(doc.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                        </div>
+                      </div>
                     </div>
-                    <div><div style={{ fontWeight:600,fontSize:13 }}>{doc.name}</div><div style={{ fontSize:11,color:"#9CA3AF" }}>{doc.size} · {doc.date}</div></div>
-                  </div>
-                </td>
-                <td><AvatarStack members={doc.members}/></td>
-                <td style={{ fontSize:12,color:"#6B7280" }}>{doc.deadline}</td>
-                <td><span className={dsc(doc.status)}>{doc.status}</span></td>
-                <td><div style={{ display:"flex",alignItems:"center",gap:6 }}><div className="pr-prog"><div className="pr-prog-fill" style={{ width:`${doc.progress}%` }}/></div><span style={{ fontSize:11,color:"#6B7280" }}>{doc.progress}%</span></div></td>
-                <td>
-                  <div style={{ display:"flex",gap:8 }} onClick={e=>e.stopPropagation()}>
-                    <button style={{ background:"none",border:"none",color:"#6B7280",padding:0,display:"flex" }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-                    <button style={{ background:"none",border:"none",color:"#EF4444",padding:0,display:"flex" }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td style={{ fontSize:12.5,color:"#374151" }}>{doc.uploaded_by_name || "—"}</td>
+                  <td style={{ fontSize:12,color:"#6B7280" }}>{doc.due_date ? fmtDeadline(doc.due_date) : "—"}</td>
+                  <td><span className={dsc(doc.status)}>{statusLabel}</span></td>
+                  <td style={{ fontSize:12,color:"#6B7280" }}>{pri}</td>
+                  <td>
+                    <div style={{ display:"flex",gap:8 }} onClick={e=>e.stopPropagation()}>
+                      <button style={{ background:"none",border:"none",color:"#6B7280",padding:0,display:"flex" }}
+                        onClick={()=>setOpenDoc(doc)}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -1740,6 +2110,7 @@ const NAV = [
   { label:"Inbox",     icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg> },
   { label:"Projects",  active:true, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> },
   { label:"Documents", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
+  { label:"Analytics",      icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
   { label:"Help & Support", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
 ];
 
@@ -1747,25 +2118,34 @@ const NAV = [
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
 export default function Projects({ onGoToAuth, onNavigate }) {
+  const qc = useQueryClient();
   const [sbOpen,    setSbOpen]    = useState(true);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
-  const [projects,  setProjects]  = useState(SAMPLE_PROJECTS);
   const [tab,       setTab]       = useState("managed");
   const [showModal, setShowModal] = useState(false);
   const [selected,  setSelected]  = useState(null);
   const [selectedDoc, setSelectedDoc] = useState(null);
 
+  const { data: wsData, isLoading: wsLoading } = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: getWorkspaces,
+  });
+
+  const projects = (wsData?.results ?? (Array.isArray(wsData) ? wsData : [])).map(ws => ({
+    id: ws.id,
+    name: ws.title,
+    status: ws.status === "active" ? "Active" : ws.status === "closed" ? "Inactive" : "Completed",
+    members: [],
+    extra: 0,
+    files: 0,
+    updated: ws.created_at
+      ? new Date(ws.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })
+      : "—",
+  }));
+
   const handleCreate = (data) => {
-    setProjects(p => [{
-      id: p.length + 1,
-      name: data.name,
-      status: "Inactive",
-      members: data.members.map(m => m.email?.[0]?.toUpperCase() || "?"),
-      extra: 0,
-      files: data.file ? 1 : 0,
-      updated: "Now",
-    }, ...p]);
+    qc.invalidateQueries({ queryKey: ["workspaces"] });
   };
 
   const breadcrumb = selected
@@ -1860,6 +2240,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                 onClick={() => {
                   if (n.label === "Inbox" && onNavigate) onNavigate("inbox");
                   else if (n.label === "Documents" && onNavigate) onNavigate("documents");
+                  else if (n.label === "Analytics" && onNavigate) onNavigate("analytics");
                   else if (n.label === "Help & Support" && onNavigate) onNavigate("help");
                 }}>
                 {n.icon}
@@ -1911,7 +2292,13 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                 </div>
 
                 <div className="pr-inner" style={{ flex:1 }}>
-                  {tab==="managed" && (projects.length===0 ? <EmptyState/> : <ProjectTable projects={projects} onManage={p=>setSelected(p)}/>)}
+                  {tab==="managed" && (
+                    wsLoading
+                      ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>Loading workspaces…</div>
+                      : projects.length===0
+                        ? <EmptyState/>
+                        : <ProjectTable projects={projects} onManage={p=>setSelected(p)}/>
+                  )}
                   {tab==="assigned" && (SAMPLE_DOCS.length===0 ? <AssignedDocsEmpty/> : <AssignedDocsTable docs={SAMPLE_DOCS} onOpen={setSelectedDoc}/>)}
                   {tab==="archived" && (ARCHIVED_PROJECTS.length===0 && ARCHIVED_DOCS.length===0 ? <ArchivedEmpty/> : <ArchivedSection/>)}
                 </div>

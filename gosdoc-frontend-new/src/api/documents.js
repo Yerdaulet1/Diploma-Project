@@ -98,3 +98,40 @@ export const getSignatures = (documentId) =>
 
 export const verifySignature = (signatureId) =>
   api.get(`/signatures/${signatureId}/verify/`).then((r) => r.data);
+
+// --- Subtasks ---
+export const getSubtasks = (docId) =>
+  api.get(`/documents/${docId}/subtasks/`).then((r) => r.data);
+
+export const createSubtask = (docId, data) =>
+  api.post(`/documents/${docId}/subtasks/`, data).then((r) => r.data);
+
+export const updateSubtask = (docId, subId, data) =>
+  api.patch(`/documents/${docId}/subtasks/${subId}/`, data).then((r) => r.data);
+
+export const deleteSubtask = (docId, subId) =>
+  api.delete(`/documents/${docId}/subtasks/${subId}/`).then((r) => r.data);
+
+// --- Attachments ---
+export const getAttachments = (docId) =>
+  api.get(`/documents/${docId}/attachments/`).then((r) => r.data);
+
+export const requestAttachmentUpload = (docId, data) =>
+  api.post(`/documents/${docId}/attachments/request-upload/`, data).then((r) => r.data);
+
+export const confirmAttachmentUpload = (docId, data) =>
+  api.post(`/documents/${docId}/attachments/`, data).then((r) => r.data);
+
+export const deleteAttachment = (docId, attId) =>
+  api.delete(`/documents/${docId}/attachments/${attId}/`).then((r) => r.data);
+
+// --- Approve ---
+export const approveDocument = (docId) =>
+  api.post(`/documents/${docId}/approve/`).then((r) => r.data);
+
+// --- Content (Phase 7/8) ---
+export const getDocumentContent = (id) =>
+  api.get(`/documents/${id}/content/`).then((r) => r.data);
+
+export const saveDocumentContent = (id, data) =>
+  api.put(`/documents/${id}/content/`, data).then((r) => r.data);

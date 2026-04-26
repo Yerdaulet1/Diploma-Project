@@ -663,6 +663,52 @@ class GeneralChatView(APIView):
         })
 
 
+class HelpChatView(APIView):
+    """
+    POST /api/v1/ai/chat/help/
+    JWT — general platform support assistant, no workspace_id required.
+
+    Body: { "message": "..." }
+    Response: { "reply": "..." }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    _SYSTEM = (
+        "You are a helpful support assistant for GosDoc — a government document management platform. "
+        "Answer user questions about platform features, task management, organizations, projects, "
+        "document editing, notifications, and account settings. "
+        "Be concise, friendly, and accurate. Respond in the same language the user writes in."
+    )
+
+    def post(self, request):
+        message = (request.data.get("message") or "").strip()
+        if not message:
+            return Response({"detail": "message is required."}, status=400)
+
+        try:
+            ai = get_ai_service()
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        try:
+            reply = ai._generate(
+                system_instruction=self._SYSTEM,
+                prompt=message,
+                max_output_tokens=512,
+            )
+        except Exception as exc:
+            logger.error("HelpChat error (user=%s): %s", request.user.email, exc)
+            return Response(
+                {"detail": "AI service error. Please try again later."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        ChatMessage.objects.create(user=request.user, role=ChatMessage.ROLE_USER, content=message)
+        ChatMessage.objects.create(user=request.user, role=ChatMessage.ROLE_ASSISTANT, content=reply)
+
+        return Response({"reply": reply})
+
+
 class ChatHistoryView(APIView):
     """
     GET /api/v1/ai/chat/history/

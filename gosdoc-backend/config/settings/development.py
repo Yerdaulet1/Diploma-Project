@@ -12,9 +12,14 @@ DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
 # ============================================================
-# Email — используем реальный SMTP даже в dev
+# Email — console backend в dev (код виден в терминале Django)
+# Чтобы использовать реальный SMTP, задай EMAIL_BACKEND=smtp в .env
 # ============================================================
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+import os as _os
+EMAIL_BACKEND = _os.environ.get(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",
+)
 
 # ============================================================
 # CORS — в dev разрешаем все источники

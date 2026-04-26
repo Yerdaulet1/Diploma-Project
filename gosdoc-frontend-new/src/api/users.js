@@ -17,3 +17,24 @@ export const changePassword = (old_password, new_password) =>
 
 export const deleteAccount = () =>
   api.delete("/users/me/").then((r) => r.data);
+
+// Avatar (Phase 11/12)
+export const requestAvatarUpload = (data) =>
+  api.post("/users/me/avatar/request-upload/", data).then((r) => r.data);
+
+export const confirmAvatarUpload = (data) =>
+  api.post("/users/me/avatar/confirm/", data).then((r) => r.data);
+
+// Settings (Phase 11/12)
+export const getSettings = () =>
+  api.get("/users/me/settings/").then((r) => r.data);
+
+export const updateSettings = (data) =>
+  api.patch("/users/me/settings/", data).then((r) => r.data);
+
+// Change-email OTP (Phase 11/12)
+export const requestEmailChange = (new_email) =>
+  api.post("/users/me/change-email/request/", { new_email }).then((r) => r.data);
+
+export const confirmEmailChange = (new_email, code) =>
+  api.post("/users/me/change-email/confirm/", { new_email, code }).then((r) => r.data);

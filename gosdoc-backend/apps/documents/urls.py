@@ -31,7 +31,13 @@ from django.urls import path
 
 from apps.signatures.views import SignDocumentView, SignatureListView
 from .views import (
+    AttachmentDetailView,
+    AttachmentDownloadView,
+    AttachmentListCreateView,
+    AttachmentRequestUploadView,
     CommentListCreateView,
+    DocumentApproveView,
+    DocumentContentView,
     DocumentDetailView,
     DocumentDownloadView,
     DocumentListCreateView,
@@ -41,6 +47,8 @@ from .views import (
     DocumentWorkflowStartView,
     RequestUploadView,
     RequestVersionUploadView,
+    SubtaskDetailView,
+    SubtaskListCreateView,
 )
 
 urlpatterns = [
@@ -72,6 +80,9 @@ urlpatterns = [
         name="document-version-diff",
     ),
 
+    # ---- Content (Phase 7) ----
+    path("<uuid:pk>/content/", DocumentContentView.as_view(), name="document-content"),
+
     # ---- Workflow ----
     path("<uuid:pk>/workflow/start/", DocumentWorkflowStartView.as_view(), name="document-workflow-start"),
 
@@ -81,4 +92,29 @@ urlpatterns = [
     # ---- Подписи ----
     path("<uuid:pk>/sign/", SignDocumentView.as_view(), name="document-sign"),
     path("<uuid:pk>/signatures/", SignatureListView.as_view(), name="document-signatures"),
+
+    # ---- Согласование ----
+    path("<uuid:pk>/approve/", DocumentApproveView.as_view(), name="document-approve"),
+
+    # ---- Подзадачи ----
+    path("<uuid:pk>/subtasks/", SubtaskListCreateView.as_view(), name="document-subtask-list"),
+    path("<uuid:pk>/subtasks/<uuid:sid>/", SubtaskDetailView.as_view(), name="document-subtask-detail"),
+
+    # ---- Вложения ----
+    path(
+        "<uuid:pk>/attachments/request-upload/",
+        AttachmentRequestUploadView.as_view(),
+        name="document-attachment-request-upload",
+    ),
+    path("<uuid:pk>/attachments/", AttachmentListCreateView.as_view(), name="document-attachment-list"),
+    path(
+        "<uuid:pk>/attachments/<uuid:aid>/",
+        AttachmentDetailView.as_view(),
+        name="document-attachment-detail",
+    ),
+    path(
+        "<uuid:pk>/attachments/<uuid:aid>/download/",
+        AttachmentDownloadView.as_view(),
+        name="document-attachment-download",
+    ),
 ]

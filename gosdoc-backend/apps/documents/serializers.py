@@ -6,7 +6,7 @@
 from django.conf import settings
 from rest_framework import serializers
 
-from .models import Comment, Document, DocumentVersion
+from .models import Comment, Document, DocumentAttachment, DocumentVersion, Subtask
 
 
 # ============================================================
@@ -151,14 +151,18 @@ class DocumentSerializer(serializers.ModelSerializer):
         source="current_version.checksum", read_only=True
     )
     workspace_title = serializers.CharField(source="workspace.title", read_only=True)
+    progress = serializers.SerializerMethodField()
+    subtasks_total = serializers.SerializerMethodField()
+    subtasks_done = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
         fields = [
             "id", "workspace", "workspace_title", "title", "file_type",
             "storage_key", "current_version", "current_version_number",
-            "current_version_checksum", "status",
+            "current_version_checksum", "status", "priority", "due_date",
             "uploaded_by", "uploaded_by_name",
+            "progress", "subtasks_total", "subtasks_done",
             "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -166,6 +170,19 @@ class DocumentSerializer(serializers.ModelSerializer):
             "current_version", "uploaded_by",
             "created_at", "updated_at",
         ]
+
+    def get_progress(self, obj) -> int | None:
+        total = obj.subtasks.count()
+        if total == 0:
+            return None
+        done = obj.subtasks.filter(status=Subtask.Status.DONE).count()
+        return round((done / total) * 100)
+
+    def get_subtasks_total(self, obj) -> int:
+        return obj.subtasks.count()
+
+    def get_subtasks_done(self, obj) -> int:
+        return obj.subtasks.filter(status=Subtask.Status.DONE).count()
 
 
 class DocumentListSerializer(serializers.ModelSerializer):
@@ -175,18 +192,96 @@ class DocumentListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
         fields = [
-            "id", "title", "file_type", "status",
+            "id", "title", "file_type", "status", "priority", "due_date",
             "uploaded_by_name", "created_at", "updated_at",
         ]
         read_only_fields = fields
 
 
 class DocumentUpdateSerializer(serializers.ModelSerializer):
-    """Сериализатор для PATCH /api/v1/documents/{id}/ (только изменяемые поля)."""
+    """Сериализатор для PATCH /api/v1/documents/{id}/ (title, priority, due_date)."""
 
     class Meta:
         model = Document
-        fields = ["title"]
+        fields = ["title", "priority", "due_date"]
+
+
+class DocumentContentSerializer(serializers.ModelSerializer):
+    """
+    GET/PUT /api/v1/documents/{id}/content/
+    Хранит TipTap HTML (Word) или sheet_data (Excel) без смены storage_key.
+    """
+
+    class Meta:
+        model = Document
+        fields = ["id", "file_type", "content", "sheet_data", "updated_at"]
+        read_only_fields = ["id", "file_type", "updated_at"]
+
+
+# ============================================================
+# Subtasks
+# ============================================================
+
+class SubtaskSerializer(serializers.ModelSerializer):
+    """Сериализатор подзадачи документа."""
+    assignee_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Subtask
+        fields = [
+            "id", "document", "title", "assignee", "assignee_name",
+            "deadline", "status", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "document", "created_at", "updated_at"]
+
+    def get_assignee_name(self, obj) -> str | None:
+        return obj.assignee.full_name if obj.assignee else None
+
+
+# ============================================================
+# Attachments
+# ============================================================
+
+class AttachmentRequestUploadSerializer(serializers.Serializer):
+    """Шаг 1: запрос presigned POST URL для вложения."""
+    file_name = serializers.CharField(max_length=255, required=True)
+    file_size = serializers.IntegerField(required=True, min_value=1)
+
+    def validate_file_size(self, value):
+        if value > settings.MAX_DOCUMENT_SIZE_BYTES:
+            raise serializers.ValidationError(
+                f"Файл превышает максимальный размер {settings.MAX_DOCUMENT_SIZE_BYTES // 1_048_576} МБ."
+            )
+        return value
+
+
+class AttachmentConfirmSerializer(serializers.Serializer):
+    """Шаг 2: подтверждение загрузки вложения в S3."""
+    storage_key = serializers.CharField(required=True)
+    file_name = serializers.CharField(max_length=255, required=True)
+    file_size = serializers.IntegerField(required=True, min_value=0)
+
+
+class AttachmentSerializer(serializers.ModelSerializer):
+    """Полный вид вложения с presigned download URL."""
+    uploaded_by_name = serializers.SerializerMethodField()
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DocumentAttachment
+        fields = [
+            "id", "document", "title", "storage_key",
+            "file_size", "uploaded_by", "uploaded_by_name",
+            "created_at", "download_url",
+        ]
+        read_only_fields = ["id", "document", "uploaded_by", "created_at"]
+
+    def get_uploaded_by_name(self, obj) -> str | None:
+        return obj.uploaded_by.full_name if obj.uploaded_by else None
+
+    def get_download_url(self, obj) -> str | None:
+        from .storage import generate_presigned_url
+        return generate_presigned_url(obj.storage_key, filename=obj.title)
 
 
 # ============================================================

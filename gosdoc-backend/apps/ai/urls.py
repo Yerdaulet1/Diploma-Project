@@ -21,6 +21,7 @@ from .views import (
     EmbedDocumentView,
     GeneralChatView,
     GenerateDocumentView,
+    HelpChatView,
     SearchDocumentsView,
     SummarizeDocumentView,
 )
@@ -34,5 +35,6 @@ urlpatterns = [
     # --- Чат ---
     path("chat/document/", ChatWithDocumentView.as_view(), name="ai-chat-document"),
     path("chat/general/", GeneralChatView.as_view(), name="ai-chat-general"),
+    path("chat/help/", HelpChatView.as_view(), name="ai-chat-help"),
     path("chat/history/", ChatHistoryView.as_view(), name="ai-chat-history"),
 ]

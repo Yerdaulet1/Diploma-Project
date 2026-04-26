@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
+import { getTasks, completeTask, skipTask } from "./api/tasks";
+import { getDocuments } from "./api/documents";
+import useAuthStore from "./store/authStore";
 
 /* ══════════════════════════════════════════════════════════
    DATA
@@ -41,6 +46,86 @@ const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct
 const WEEK_DAYS    = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
 const PROJECTS     = ["All projects","Project A","Project B"];
 const DATE_OPTS    = ["Today","Yesterday","Last 7 days","This month","Custom range"];
+
+/* ══════════════════════════════════════════════════════════
+   API → CARD HELPERS
+══════════════════════════════════════════════════════════ */
+function taskIcon(requestType, title) {
+  if (requestType === "signature") return { icon:"pen",    color:"#F0FDF4", stroke:"#16A34A" };
+  if (requestType === "approval")  return { icon:"folder", color:"#EEF2FF", stroke:"#4F46E5" };
+  if (requestType === "review")    return { icon:"doc",    color:"#FFF7ED", stroke:"#EA580C" };
+  const t = (title || "").toLowerCase();
+  if (t.includes("sign"))                       return { icon:"pen",    color:"#F0FDF4", stroke:"#16A34A" };
+  if (t.includes("review") || t.includes("approve")) return { icon:"folder", color:"#EEF2FF", stroke:"#4F46E5" };
+  if (t.includes("edit")   || t.includes("return"))  return { icon:"alert",  color:"#FEF3C7", stroke:"#B45309" };
+  return { icon:"doc", color:"#FFF7ED", stroke:"#EA580C" };
+}
+
+function statusToBadges(status) {
+  if (status === "in_progress") return ["inprog"];
+  if (status === "done")        return ["completed"];
+  if (status === "skipped")     return ["returned"];
+  if (status === "urgent")      return ["urgent"];
+  if (status === "returned")    return ["returned"];
+  if (status === "waiting")     return ["waiting"];
+  return ["pending"];
+}
+
+function docStatusToBadges(status) {
+  if (status === "review") return ["waiting"];
+  if (status === "signed") return ["completed"];
+  if (status === "archived") return ["completed"];
+  return ["pending"];
+}
+
+function fmtRelTime(isoStr) {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  const now = new Date();
+  const diffMin = Math.floor((now - d) / 60000);
+  if (diffMin < 60) return `${diffMin} min ago`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH} h ago`;
+  return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`;
+}
+
+function isToday(isoStr) {
+  if (!isoStr) return false;
+  const d = new Date(isoStr);
+  const now = new Date();
+  return d.toDateString() === now.toDateString();
+}
+
+function taskToCard(task) {
+  const { icon, color, stroke } = taskIcon(task.request_type, task.title);
+  return {
+    id: task.id,
+    icon, color, stroke,
+    name: task.document_title || "Document",
+    from: task.workspace_name || "—",
+    action: task.title,
+    badges: statusToBadges(task.status),
+    time: fmtRelTime(task.created_at),
+    _taskId: task.id,
+    _status: task.status,
+    _requestType: task.request_type,
+  };
+}
+
+function docToCard(doc) {
+  return {
+    id: doc.id,
+    icon: "folder",
+    color: "#EEF2FF",
+    stroke: "#4F46E5",
+    name: doc.title,
+    to: doc.uploaded_by_name || "—",
+    action: doc.status ? doc.status.charAt(0).toUpperCase() + doc.status.slice(1) : "Draft",
+    badges: docStatusToBadges(doc.status),
+    time: fmtRelTime(doc.updated_at),
+    _docId: doc.id,
+  };
+}
 
 /* ══════════════════════════════════════════════════════════
    HELPERS
@@ -411,7 +496,7 @@ function ContextMenu({ onClear, onOpenTask, onClose }) {
 /* ══════════════════════════════════════════════════════════
    CARD ROW
 ══════════════════════════════════════════════════════════ */
-function CardRow({ item, isOut, onClearReq }) {
+function CardRow({ item, isOut, onClearReq, onOpenTask }) {
   const [menu, setMenu] = useState(false);
   return (
     <div style={{ display:"flex",alignItems:"center",gap:12,borderBottom:"0.5px solid #F3F4F6",padding:"11px 4px",cursor:"pointer",position:"relative" }}>
@@ -443,7 +528,7 @@ function CardRow({ item, isOut, onClearReq }) {
             style={{ fontSize:15,color:"#D1D5DB",cursor:"pointer",letterSpacing:"2px",background:"none",border:"none",padding:"0 4px",lineHeight:1 }}>
             ···
           </button>
-          {menu && <ContextMenu onClose={()=>setMenu(false)} onClear={onClearReq} onOpenTask={()=>alert("Open task (demo)")}/>}
+          {menu && <ContextMenu onClose={()=>setMenu(false)} onClear={onClearReq} onOpenTask={()=>{ onOpenTask && onOpenTask(); setMenu(false); }}/>}
         </div>
       </div>
     </div>
@@ -477,6 +562,7 @@ const NAV_ITEMS = [
   { label:"Inbox", active:true, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg> },
   { label:"Projects", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> },
   { label:"Documents", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
+  { label:"Analytics", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
   { label:"Help & Support", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
 ];
 
@@ -566,15 +652,94 @@ const css = `
 export default function Inbox({ onGoToAuth, onNavigate }) {
   const [sbOpen,   setSbOpen]   = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [profileView, setProfileView] = useState(null); // null | "profile" | "password" | "email"
+  const [profileView, setProfileView] = useState(null);
   const [tab,      setTab]      = useState("incoming");
   const [project,  setProject]  = useState("All projects");
   const [date,     setDate]     = useState("Last 7 days");
   const [confirm,  setConfirm]  = useState(false);
 
-  const isOut     = tab === "outgoing";
-  const todayData = isOut ? OUTGOING_TODAY : INCOMING_TODAY;
-  const weekData  = isOut ? OUTGOING_WEEK  : INCOMING_WEEK;
+  const user = useAuthStore(s => s.user);
+  const queryClient = useQueryClient();
+
+  const isOut = tab === "outgoing";
+
+  // Convert UI date label → API date_from / date_to params
+  const dateParams = (() => {
+    const now = new Date();
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    if (date === "Today") {
+      return { date_from: fmt(now), date_to: fmt(now) };
+    }
+    if (date === "Yesterday") {
+      const y = new Date(now); y.setDate(y.getDate() - 1);
+      return { date_from: fmt(y), date_to: fmt(y) };
+    }
+    if (date === "Last 7 days") {
+      const w = new Date(now); w.setDate(w.getDate() - 7);
+      return { date_from: fmt(w) };
+    }
+    if (date === "This month") {
+      return { date_from: fmt(new Date(now.getFullYear(), now.getMonth(), 1)) };
+    }
+    // Custom range: "DD.MM.YY-DD.MM.YY" or "DD.MM.YY"
+    const match = date.match(/^(\d{2})\.(\d{2})\.(\d{2})(?:-(\d{2})\.(\d{2})\.(\d{2}))?$/);
+    if (match) {
+      const parse = (d, m, y) => `20${y}-${m}-${d}`;
+      const from = parse(match[1], match[2], match[3]);
+      const to   = match[4] ? parse(match[4], match[5], match[6]) : from;
+      return { date_from: from, date_to: to };
+    }
+    return {};
+  })();
+
+  const { data: tasksData } = useQuery({
+    queryKey: ["tasks", dateParams],
+    queryFn: () => getTasks(dateParams),
+    enabled: !isOut,
+  });
+
+  const { data: docsData } = useQuery({
+    queryKey: ["documents", "outgoing"],
+    queryFn: () => getDocuments(),
+    enabled: isOut,
+  });
+
+  const rawTasks = tasksData?.results ?? [];
+  const rawDocs  = docsData?.results ?? [];
+
+  const todayIn  = rawTasks.filter(t =>  isToday(t.created_at)).map(taskToCard);
+  const weekIn   = rawTasks.filter(t => !isToday(t.created_at)).map(taskToCard);
+  const todayOut = rawDocs.filter(d =>  isToday(d.updated_at)).map(docToCard);
+  const weekOut  = rawDocs.filter(d => !isToday(d.updated_at)).map(docToCard);
+
+  const todayData = isOut ? todayOut : todayIn;
+  const weekData  = isOut ? weekOut  : weekIn;
+
+  const handleComplete = async (taskId, taskStatus) => {
+    if (!taskId) return;
+    if (taskStatus !== "in_progress") {
+      toast.error("Task must be in progress to complete");
+      return;
+    }
+    try {
+      await completeTask(taskId);
+      toast.success("Task completed");
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to complete task");
+    }
+  };
+
+  const handleSkip = async (taskId) => {
+    if (!taskId) return;
+    try {
+      await skipTask(taskId);
+      toast.success("Task cleared");
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to skip task");
+    }
+  };
 
   return (
     <div className="ib-page">
@@ -642,8 +807,8 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
             </div>
           </div>
           <div className="ib-profile-info">
-            <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>Erik Serikov</div>
-            <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>220103351@stu.sdu.edu.kz</div>
+            <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{user?.full_name || "User"}</div>
+            <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>{user?.email || ""}</div>
           </div>
           <div className="ib-org">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
@@ -657,6 +822,7 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
                 onClick={() => {
                   if (n.label==="Projects" && onNavigate) onNavigate("projects");
                   else if (n.label==="Documents" && onNavigate) onNavigate("documents");
+                  else if (n.label==="Analytics" && onNavigate) onNavigate("analytics");
                   else if (n.label==="Help & Support" && onNavigate) onNavigate("help");
                 }}>
                 {n.icon}
@@ -699,9 +865,27 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
             <div className="ib-inner">
               <div className="ib-content">
                 <div className="ib-sec">Today</div>
-                {todayData.map(item=><CardRow key={item.id} item={item} isOut={isOut} onClearReq={()=>setConfirm(true)}/>)}
+                {todayData.length === 0 && <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>No items</div>}
+                {todayData.map(item=>(
+                  <CardRow
+                    key={item.id}
+                    item={item}
+                    isOut={isOut}
+                    onClearReq={() => isOut ? setConfirm(true) : handleSkip(item._taskId)}
+                    onOpenTask={() => handleComplete(item._taskId, item._status)}
+                  />
+                ))}
                 <div className="ib-sec" style={{ marginTop:20 }}>Last 7 days</div>
-                {weekData.map(item=><CardRow key={item.id} item={item} isOut={isOut} onClearReq={()=>setConfirm(true)}/>)}
+                {weekData.length === 0 && <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>No items</div>}
+                {weekData.map(item=>(
+                  <CardRow
+                    key={item.id}
+                    item={item}
+                    isOut={isOut}
+                    onClearReq={() => isOut ? setConfirm(true) : handleSkip(item._taskId)}
+                    onOpenTask={() => handleComplete(item._taskId, item._status)}
+                  />
+                ))}
               </div>
             </div>
           </div>

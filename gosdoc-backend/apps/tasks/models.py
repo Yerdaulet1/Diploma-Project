@@ -29,6 +29,14 @@ class Task(models.Model):
         IN_PROGRESS = "in_progress", "В работе"
         DONE = "done", "Завершена"
         SKIPPED = "skipped", "Пропущена"
+        URGENT = "urgent", "Срочно"
+        RETURNED = "returned", "Возвращена"
+        WAITING = "waiting", "Ожидает ответа"
+
+    class RequestType(models.TextChoices):
+        REVIEW = "review", "На рассмотрение"
+        APPROVAL = "approval", "На согласование"
+        SIGNATURE = "signature", "На подпись"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey(
@@ -62,8 +70,17 @@ class Task(models.Model):
         verbose_name="Статус",
         db_index=True,
     )
+    request_type = models.CharField(
+        max_length=20,
+        choices=RequestType.choices,
+        null=True,
+        blank=True,
+        verbose_name="Тип запроса",
+        db_index=True,
+    )
     due_date = models.DateField(null=True, blank=True, verbose_name="Срок выполнения")
     completed_at = models.DateTimeField(null=True, blank=True, verbose_name="Дата завершения")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
 
     class Meta:
         verbose_name = "Задача"
@@ -77,6 +94,7 @@ class Task(models.Model):
             models.Index(fields=["status"]),
             models.Index(fields=["step_order"]),
             models.Index(fields=["due_date"]),
+            models.Index(fields=["request_type"]),
         ]
 
     def __str__(self) -> str:

@@ -109,14 +109,19 @@ services:
       redis:
         condition: service_healthy
 
-  # ---- Frontend (React) ----
-  # frontend:
-  #   build:
-  #     context: ../gosdoc-frontend
-  #   ports:
-  #     - "80:80"
-  #   depends_on:
-  #     - backend
+  # ---- Frontend (React dev server) ----
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ../gosdoc-frontend-new:/app
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_PROXY_TARGET: http://backend:8000
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:

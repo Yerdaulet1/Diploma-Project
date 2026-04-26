@@ -1,10 +1,14 @@
 import './App.css'
 import { useState, useRef, useEffect } from "react";
+import { toast } from "sonner";
+import { login, register, verifyEmail, resendCode, resetPasswordRequest, resetPasswordConfirm } from "./api/auth";
+import { createWorkspace, addMember } from "./api/workspaces";
+import useAuthStore from "./store/authStore";
 
 /* ═══════════════════════════════════════════════════════
    CONSTANTS & DATA
 ═══════════════════════════════════════════════════════ */
-const TOTAL_STEPS = 3;
+const TOTAL_STEPS = 4;
 
 const features = [
   {
@@ -246,19 +250,32 @@ function SignInPage({ onNavigate }) {
   const [remember, setRemember] = useState(false);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  const setUser = useAuthStore((s) => s.setUser);
 
   const change = (e) => {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
     setErrors(er => ({ ...er, [e.target.name]: "" }));
   };
 
-  const submit = () => {
+  const submit = async () => {
     const errs = {};
     if (!form.email.trim() || !/\S+@\S+\.\S+/.test(form.email)) errs.email = "Valid email required.";
     if (!form.password) errs.password = "Password is required.";
     if (Object.keys(errs).length) { setErrors(errs); return; }
+
     setLoading(true);
-    setTimeout(() => { setLoading(false); onNavigate("inbox"); }, 1200);
+    try {
+      const data = await login(form.email, form.password);
+      localStorage.setItem("gosdoc_access_token", data.access);
+      localStorage.setItem("gosdoc_refresh_token", data.refresh);
+      if (data.user) setUser(data.user);
+      onNavigate("inbox");
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      const nonField = err.response?.data?.non_field_errors?.[0];
+      toast.error(detail || nonField || "Invalid email or password.");
+      setLoading(false);
+    }
   };
 
   return (
@@ -282,6 +299,7 @@ function SignInPage({ onNavigate }) {
                   name="email" type="email" style={s.input}
                   placeholder="ex: example@gmail.com"
                   value={form.email} onChange={change}
+                  onKeyDown={e => e.key === "Enter" && submit()}
                 />
               </InputWrap>
             </FieldGroup>
@@ -293,6 +311,7 @@ function SignInPage({ onNavigate }) {
                   name="password" type={showPw ? "text" : "password"} style={s.input}
                   placeholder="Enter your password"
                   value={form.password} onChange={change}
+                  onKeyDown={e => e.key === "Enter" && submit()}
                 />
                 <button onClick={() => setShowPw(v => !v)} style={s.iconBtn}>
                   <EyeIcon open={showPw} />
@@ -350,6 +369,7 @@ function SignUpStep1({ onNext, onNavigate }) {
   const [form, setForm] = useState({ fullName: "", email: "", orgName: "", password: "", agreed: false });
   const [showPw, setShowPw] = useState(false);
   const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
 
   const change = (e) => {
     const { name, value, type, checked } = e.target;
@@ -357,7 +377,7 @@ function SignUpStep1({ onNext, onNavigate }) {
     setErrors(er => ({ ...er, [name]: "" }));
   };
 
-  const submit = () => {
+  const submit = async () => {
     const errs = {};
     if (!form.fullName.trim()) errs.fullName = "Full name is required.";
     if (!form.email.trim() || !/\S+@\S+\.\S+/.test(form.email)) errs.email = "Valid email required.";
@@ -365,7 +385,30 @@ function SignUpStep1({ onNext, onNavigate }) {
       errs.password = "Min 8 chars, one uppercase and one number.";
     if (!form.agreed) errs.agreed = "You must agree to continue.";
     if (Object.keys(errs).length) { setErrors(errs); return; }
-    onNext({ email: form.email });
+
+    setLoading(true);
+    try {
+      await register({
+        full_name: form.fullName,
+        email: form.email,
+        password: form.password,
+        password_confirm: form.password,
+        ...(form.orgName.trim() && { org_name: form.orgName.trim() }),
+      });
+      onNext({ email: form.email });
+    } catch (err) {
+      const data = err.response?.data || {};
+      const newErrs = {};
+      if (data.email) newErrs.email = Array.isArray(data.email) ? data.email[0] : data.email;
+      if (data.full_name) newErrs.fullName = Array.isArray(data.full_name) ? data.full_name[0] : data.full_name;
+      if (data.password) newErrs.password = Array.isArray(data.password) ? data.password[0] : data.password;
+      if (Object.keys(newErrs).length) {
+        setErrors(newErrs);
+      } else {
+        toast.error(data.detail || "Registration failed. Please try again.");
+      }
+      setLoading(false);
+    }
   };
 
   return (
@@ -376,7 +419,7 @@ function SignUpStep1({ onNext, onNavigate }) {
       <div className="auth-formwrap">
         <div className="auth-inner">
           <h1 className="auth-heading" style={s.heading}>Sign Up</h1>
-          <p style={s.stepLabel}>STEP 1 OF 3</p>
+          <p style={s.stepLabel}>STEP 1 OF 4</p>
           <p style={s.subtext}>Please fill in the form to create an account.</p>
 
           <div className="auth-row-split">
@@ -427,7 +470,9 @@ function SignUpStep1({ onNext, onNavigate }) {
           </label>
           {errors.agreed && <span style={{ fontSize: 11, color: "#EF4444" }}>{errors.agreed}</span>}
 
-          <button style={{ ...s.ctaBtn, marginTop: 14 }} onClick={submit}>Create Account</button>
+          <button style={{ ...s.ctaBtn, marginTop: 14, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
+            {loading ? "Creating account…" : "Create Account"}
+          </button>
           <Divider />
           <SocialButtons />
 
@@ -450,9 +495,10 @@ function SignUpStep1({ onNext, onNavigate }) {
 ═══════════════════════════════════════════════════════ */
 function SignUpStep2({ data, onNext }) {
   const [code, setCode] = useState(["", "", "", "", "", ""]);
-  const [timer, setTimer] = useState(36);
-  const [status, setStatus] = useState("idle"); // "idle" | "error" | "success"
+  const [timer, setTimer] = useState(60);
+  const [status, setStatus] = useState("idle"); // "idle" | "error" | "success" | "loading"
   const inputs = useRef([]);
+  const { setUser, setIsRegistering } = useAuthStore();
 
   useEffect(() => {
     if (timer <= 0) return;
@@ -464,7 +510,7 @@ function SignUpStep2({ data, onNext }) {
     if (!/^\d?$/.test(val)) return;
     const next = [...code]; next[i] = val;
     setCode(next);
-    if (status !== "idle") setStatus("idle");
+    if (status === "error") setStatus("idle");
     if (val && i < 5) inputs.current[i + 1]?.focus();
   };
 
@@ -477,14 +523,36 @@ function SignUpStep2({ data, onNext }) {
     if (pasted.length === 6) { setCode(pasted.split("")); inputs.current[5]?.focus(); }
   };
 
-  // Demo: code "123456" is correct, everything else is wrong
-  const DEMO_CODE = "123456";
-  const submit = () => {
+  const submit = async () => {
     const entered = code.join("");
     if (entered.length < 6) { setStatus("error"); return; }
-    if (entered !== DEMO_CODE) { setStatus("error"); return; }
-    setStatus("success");
-    setTimeout(() => onNext(), 600);
+    setStatus("loading");
+    try {
+      const resp = await verifyEmail(data?.email, entered);
+      // Save tokens so Steps 3/4 can make authenticated API calls.
+      // isRegistering=true blocks PublicRoute from redirecting to /inbox
+      // until the user explicitly clicks "Go to Dashboard" in SuccessScreen.
+      setIsRegistering(true);
+      localStorage.setItem("gosdoc_access_token", resp.access);
+      localStorage.setItem("gosdoc_refresh_token", resp.refresh);
+      if (resp.user) setUser(resp.user);
+      setStatus("success");
+      setTimeout(() => onNext(), 600);
+    } catch (err) {
+      setStatus("error");
+    }
+  };
+
+  const handleResend = async () => {
+    try {
+      await resendCode(data?.email, "registration");
+      setTimer(60);
+      setCode(["", "", "", "", "", ""]);
+      setStatus("idle");
+      toast.success("A new code has been sent to your email.");
+    } catch (err) {
+      toast.error("Failed to resend code. Please try again.");
+    }
   };
 
   const borderColor = (d) => {
@@ -499,6 +567,7 @@ function SignUpStep2({ data, onNext }) {
   };
 
   const fmt = String(Math.floor(timer / 60)).padStart(2, "0") + ":" + String(timer % 60).padStart(2, "0");
+  const isLoading = status === "loading";
 
   return (
     <>
@@ -508,7 +577,7 @@ function SignUpStep2({ data, onNext }) {
       <div className="auth-formwrap">
         <div className="auth-inner">
           <h1 className="auth-heading" style={s.heading}>Sign Up</h1>
-          <p style={s.stepLabel}>STEP 2 OF 3</p>
+          <p style={s.stepLabel}>STEP 2 OF 4</p>
           <p style={s.subtext}>We've sent a 6-digit confirmation code to your email.</p>
 
           <div style={{ textAlign: "center", marginTop: 36, marginBottom: 28 }}>
@@ -526,7 +595,8 @@ function SignUpStep2({ data, onNext }) {
                 key={i} ref={el => inputs.current[i] = el}
                 value={d} maxLength={1}
                 onChange={e => handleDigit(i, e.target.value)}
-                onKeyDown={e => handleKeyDown(i, e)}
+                onKeyDown={e => { handleKeyDown(i, e); if (e.key === "Enter") submit(); }}
+                disabled={isLoading || status === "success"}
                 style={{
                   width: 48, height: 56, textAlign: "center", fontSize: 22, fontWeight: 700,
                   border: `2px solid ${borderColor(d)}`,
@@ -534,6 +604,7 @@ function SignUpStep2({ data, onNext }) {
                   background: bgColor(),
                   color: status === "error" ? "#EF4444" : status === "success" ? "#16A34A" : "#111827",
                   transition: "all 0.2s", fontFamily: "inherit",
+                  opacity: isLoading ? 0.6 : 1,
                 }}
               />
             ))}
@@ -560,8 +631,11 @@ function SignUpStep2({ data, onNext }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 20 }}>
             <span style={{ fontSize: 13, color: "#6B7280" }}>
               Didn't receive the code?{" "}
-              <button onClick={() => { setTimer(60); setCode(["","","","","",""]); setStatus("idle"); }}
-                style={{ ...s.ghostBtn, color: "#2563EB", fontSize: 13 }}>
+              <button
+                onClick={handleResend}
+                disabled={timer > 0}
+                style={{ ...s.ghostBtn, color: timer > 0 ? "#9CA3AF" : "#2563EB", fontSize: 13, cursor: timer > 0 ? "not-allowed" : "pointer" }}
+              >
                 Resend
               </button>
             </span>
@@ -569,14 +643,12 @@ function SignUpStep2({ data, onNext }) {
           </div>
 
           <button
-            style={{ ...s.ctaBtn, marginTop: 28, background: status === "success" ? "#16A34A" : "#2563EB", transition: "background 0.3s" }}
+            style={{ ...s.ctaBtn, marginTop: 28, background: status === "success" ? "#16A34A" : "#2563EB", transition: "background 0.3s", opacity: isLoading ? 0.7 : 1 }}
             onClick={submit}
+            disabled={isLoading || status === "success"}
           >
-            {status === "success" ? "✓ Verified" : "Verify Code"}
+            {isLoading ? "Verifying…" : status === "success" ? "✓ Verified" : "Verify Code"}
           </button>
-          <p style={{ textAlign: "center", fontSize: 11, color: "#9CA3AF", marginTop: 8 }}>
-            Demo: enter <strong>123456</strong> to verify
-          </p>
         </div>
       </div>
       <ProgressBar step={2} />
@@ -590,17 +662,26 @@ function SignUpStep2({ data, onNext }) {
 function SignUpStep3({ onNext, onBack, onSkip }) {
   const [form, setForm] = useState({ name: "", desc: "" });
   const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
 
   const change = (e) => {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
     setErrors(er => ({ ...er, [e.target.name]: "" }));
   };
 
-  const submit = () => {
+  const submit = async () => {
     const errs = {};
     if (!form.name.trim()) errs.name = "Project name is required.";
     if (Object.keys(errs).length) { setErrors(errs); return; }
-    onNext();
+
+    setLoading(true);
+    try {
+      const workspace = await createWorkspace({ title: form.name, description: form.desc });
+      onNext({ workspaceId: workspace.id });
+    } catch (err) {
+      toast.error("Failed to create workspace. You can set it up later.");
+      onNext({ workspaceId: null });
+    }
   };
 
   return (
@@ -615,7 +696,7 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
       <div className="auth-formwrap">
         <div className="auth-inner">
           <h1 className="auth-heading" style={s.heading}>Sign Up</h1>
-          <p style={s.stepLabel}>STEP 3 OF 3</p>
+          <p style={s.stepLabel}>STEP 3 OF 4</p>
           <p style={s.subtext}>Set up your first project to start managing documents and workflows.</p>
 
           <FieldGroup label="Project Name" required error={errors.name}>
@@ -640,7 +721,9 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
             />
           </div>
 
-          <button style={{ ...s.ctaBtn, marginTop: 20 }} onClick={submit}>Continue</button>
+          <button style={{ ...s.ctaBtn, marginTop: 20, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
+            {loading ? "Creating project…" : "Continue"}
+          </button>
         </div>
       </div>
       <ProgressBar step={3} />
@@ -651,16 +734,17 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
 /* ═══════════════════════════════════════════════════════
    SIGN UP — STEP 4 (Team)
 ═══════════════════════════════════════════════════════ */
-function SignUpStep4({ onBack, onSkip, onFinish }) {
+function SignUpStep4({ workspaceId, onBack, onSkip, onFinish }) {
   const [members, setMembers] = useState([{ email: "", role: "" }, { email: "", role: "" }]);
   const [errors, setErrors] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   const updateMember = (i, field, val) => {
     setMembers(m => m.map((item, idx) => idx === i ? { ...item, [field]: val } : item));
     setErrors(er => er.map((e, idx) => idx === i ? { ...e, [field]: "" } : e));
   };
 
-  const addMember = () => {
+  const addMemberRow = () => {
     if (members.length < 7) setMembers(m => [...m, { email: "", role: "" }]);
   };
 
@@ -670,11 +754,25 @@ function SignUpStep4({ onBack, onSkip, onFinish }) {
     setErrors(er => er.filter((_, idx) => idx !== i));
   };
 
-  const submit = () => {
+  const submit = async () => {
     const errs = members.map(m => ({
       email: m.email && !/\S+@\S+\.\S+/.test(m.email) ? "Invalid email." : "",
     }));
     if (errs.some(e => e.email)) { setErrors(errs); return; }
+
+    const validMembers = members.filter(m => m.email.trim());
+    if (!validMembers.length || !workspaceId) { onFinish(); return; }
+
+    setLoading(true);
+    const results = await Promise.allSettled(
+      validMembers.map(m => addMember(workspaceId, { email: m.email }))
+    );
+    const failed = results.filter(r => r.status === "rejected").length;
+    if (failed > 0) {
+      toast.error(`${failed} invite(s) could not be sent. You can add members later.`);
+    } else {
+      toast.success("Team invites sent!");
+    }
     onFinish();
   };
 
@@ -723,10 +821,12 @@ function SignUpStep4({ onBack, onSkip, onFinish }) {
           </div>
 
           {members.length < 7 && (
-            <button onClick={addMember} style={s.addMemberBtn}><PlusIcon /> Add member</button>
+            <button onClick={addMemberRow} style={s.addMemberBtn}><PlusIcon /> Add member</button>
           )}
 
-          <button style={{ ...s.ctaBtn, marginTop: 24 }} onClick={submit}>Invite Team Members</button>
+          <button style={{ ...s.ctaBtn, marginTop: 24, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
+            {loading ? "Sending invites…" : "Invite Team Members"}
+          </button>
         </div>
       </div>
       <ProgressBar step={4} />
@@ -738,6 +838,13 @@ function SignUpStep4({ onBack, onSkip, onFinish }) {
    SUCCESS SCREEN
 ═══════════════════════════════════════════════════════ */
 function SuccessScreen({ onNavigate }) {
+  const { setIsRegistering } = useAuthStore();
+
+  const handleGo = () => {
+    setIsRegistering(false);
+    onNavigate("inbox");
+  };
+
   return (
     <div style={{
       flex: 1, display: "flex", flexDirection: "column",
@@ -758,7 +865,7 @@ function SuccessScreen({ onNavigate }) {
       <p style={{ fontSize: 14, color: "#6B7280", marginBottom: 32, lineHeight: 1.6 }}>
         Your account has been created successfully.<br />Start collaborating with your team.
       </p>
-      <button style={{ ...s.ctaBtn, maxWidth: 320 }} onClick={() => onNavigate("inbox")}>
+      <button style={{ ...s.ctaBtn, maxWidth: 320 }} onClick={handleGo}>
         Go to Dashboard
       </button>
       <button
@@ -778,13 +885,22 @@ function SuccessScreen({ onNavigate }) {
 function ForgotStep1({ onNext, onNavigate }) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const submit = () => {
+  const submit = async () => {
     if (!email.trim() || !/\S+@\S+\.\S+/.test(email)) {
       setError("Please enter a valid email address.");
       return;
     }
-    onNext({ email });
+    setLoading(true);
+    try {
+      await resetPasswordRequest(email);
+      onNext({ email });
+    } catch (err) {
+      const msg = err.response?.data?.detail || err.response?.data?.email?.[0] || "Failed to send reset code.";
+      toast.error(msg);
+      setLoading(false);
+    }
   };
 
   return (
@@ -810,12 +926,13 @@ function ForgotStep1({ onNext, onNavigate }) {
                 placeholder="ex: example@gmail.com"
                 value={email}
                 onChange={e => { setEmail(e.target.value); setError(""); }}
+                onKeyDown={e => e.key === "Enter" && submit()}
               />
             </InputWrap>
           </FieldGroup>
 
-          <button style={{ ...s.ctaBtn, marginTop: 20 }} onClick={submit}>
-            Send Code
+          <button style={{ ...s.ctaBtn, marginTop: 20, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
+            {loading ? "Sending code…" : "Send Code"}
           </button>
 
           <p style={{ textAlign: "center", fontSize: 13, color: "#6B7280", marginTop: 20 }}>
@@ -834,7 +951,7 @@ function ForgotStep1({ onNext, onNavigate }) {
 /* ── Forgot Step 2: OTP verification ── */
 function ForgotStep2({ data, onNext, onBack }) {
   const [code, setCode] = useState(["", "", "", "", "", ""]);
-  const [timer, setTimer] = useState(36);
+  const [timer, setTimer] = useState(60);
   const [status, setStatus] = useState("idle"); // "idle" | "error" | "success"
   const inputs = useRef([]);
 
@@ -861,14 +978,24 @@ function ForgotStep2({ data, onNext, onBack }) {
     if (pasted.length === 6) { setCode(pasted.split("")); inputs.current[5]?.focus(); }
   };
 
-  // Demo: code "123456" is correct
-  const DEMO_CODE = "123456";
+  const handleResend = async () => {
+    try {
+      await resetPasswordRequest(data?.email);
+      setTimer(60);
+      setCode(["", "", "", "", "", ""]);
+      setStatus("idle");
+      toast.success("A new code has been sent to your email.");
+    } catch (err) {
+      toast.error("Failed to resend code.");
+    }
+  };
+
+  // Code is validated against the backend only in step 3 (reset/confirm endpoint)
   const submit = () => {
     const entered = code.join("");
     if (entered.length < 6) { setStatus("error"); return; }
-    if (entered !== DEMO_CODE) { setStatus("error"); return; }
     setStatus("success");
-    setTimeout(() => onNext(), 600);
+    setTimeout(() => onNext({ code: entered }), 600);
   };
 
   const borderColor = (d) => {
@@ -912,7 +1039,7 @@ function ForgotStep2({ data, onNext, onBack }) {
                 key={i} ref={el => inputs.current[i] = el}
                 value={d} maxLength={1}
                 onChange={e => handleDigit(i, e.target.value)}
-                onKeyDown={e => handleKeyDown(i, e)}
+                onKeyDown={e => { handleKeyDown(i, e); if (e.key === "Enter") submit(); }}
                 style={{
                   width: 52, height: 56, textAlign: "center", fontSize: 22, fontWeight: 700,
                   border: `2px solid ${borderColor(d)}`,
@@ -930,7 +1057,7 @@ function ForgotStep2({ data, onNext, onBack }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13">
                 <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
               </svg>
-              Invalid code. Please try again.
+              Please enter all 6 digits.
             </p>
           )}
           {status === "success" && (
@@ -938,15 +1065,18 @@ function ForgotStep2({ data, onNext, onBack }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="13" height="13">
                 <circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/>
               </svg>
-              Code verified!
+              Code accepted!
             </p>
           )}
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 20 }}>
             <span style={{ fontSize: 13, color: "#6B7280" }}>
               Didn't receive the code?{" "}
-              <button onClick={() => { setTimer(60); setCode(["","","","","",""]); setStatus("idle"); }}
-                style={{ ...s.ghostBtn, color: "#2563EB", fontSize: 13 }}>
+              <button
+                onClick={handleResend}
+                disabled={timer > 0}
+                style={{ ...s.ghostBtn, color: timer > 0 ? "#9CA3AF" : "#2563EB", fontSize: 13, cursor: timer > 0 ? "not-allowed" : "pointer" }}
+              >
                 Resend
               </button>
             </span>
@@ -956,12 +1086,10 @@ function ForgotStep2({ data, onNext, onBack }) {
           <button
             style={{ ...s.ctaBtn, marginTop: 24, background: status === "success" ? "#16A34A" : "#2563EB", transition: "background 0.3s" }}
             onClick={submit}
+            disabled={status === "success"}
           >
-            {status === "success" ? "✓ Verified" : "Confirm"}
+            {status === "success" ? "✓ Continue" : "Confirm"}
           </button>
-          <p style={{ textAlign: "center", fontSize: 11, color: "#9CA3AF", marginTop: 8 }}>
-            Demo: enter <strong>123456</strong> to verify
-          </p>
         </div>
       </div>
     </>
@@ -969,24 +1097,35 @@ function ForgotStep2({ data, onNext, onBack }) {
 }
 
 /* ── Forgot Step 3: Reset password ── */
-function ForgotStep3({ onNavigate }) {
+function ForgotStep3({ data, onNavigate }) {
   const [form, setForm] = useState({ password: "", confirm: "" });
   const [show, setShow] = useState({ pw: false, confirm: false });
   const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
 
   const change = (e) => {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
     setErrors(er => ({ ...er, [e.target.name]: "" }));
   };
 
-  const submit = () => {
+  const submit = async () => {
     const errs = {};
     if (form.password.length < 8 || !/[A-Z]/.test(form.password) || !/\d/.test(form.password))
       errs.password = "Min 8 chars, one uppercase letter and one number.";
     if (form.confirm !== form.password)
       errs.confirm = "Passwords do not match.";
     if (Object.keys(errs).length) { setErrors(errs); return; }
-    onNavigate("signin");
+
+    setLoading(true);
+    try {
+      await resetPasswordConfirm(data?.email, data?.code, form.password);
+      toast.success("Password reset successfully!");
+      onNavigate("signin");
+    } catch (err) {
+      const detail = err.response?.data?.detail || "Failed to reset password. Please try again.";
+      toast.error(detail);
+      setLoading(false);
+    }
   };
 
   return (
@@ -1039,7 +1178,9 @@ function ForgotStep3({ onNavigate }) {
             </FieldGroup>
           </div>
 
-          <button style={{ ...s.ctaBtn, marginTop: 28 }} onClick={submit}>Done</button>
+          <button style={{ ...s.ctaBtn, marginTop: 28, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
+            {loading ? "Resetting…" : "Done"}
+          </button>
         </div>
       </div>
     </>
@@ -1068,6 +1209,8 @@ export default function AuthFlow({ onGoToDashboard }) {
     setStep(s => s + 1);
   };
   const goBack = () => setStep(s => s - 1);
+  // Skip project step → jump straight to success (no workspace = no team invite)
+  const goSkipProject = () => setStep(5);
   const goSkip = () => setStep(s => s + 1);
 
   const forgotNext = (data = {}) => {
@@ -1096,13 +1239,21 @@ export default function AuthFlow({ onGoToDashboard }) {
             <ForgotStep2 data={forgotData} onNext={forgotNext} onBack={forgotBack} />
           )}
           {page === "forgot" && forgotStep === 3 && (
-            <ForgotStep3 onNavigate={navigate} />
+            <ForgotStep3 data={forgotData} onNavigate={navigate} />
           )}
 
           {page === "signup" && step === 1 && <SignUpStep1 onNext={goNext} onNavigate={navigate} />}
           {page === "signup" && step === 2 && <SignUpStep2 data={stepData} onNext={goNext} />}
-          {page === "signup" && step === 3 && <SignUpStep3 onNext={goNext} onBack={goBack} onSkip={goSkip} />}
-          {page === "signup" && step === 4 && <SuccessScreen onNavigate={navigate} />}
+          {page === "signup" && step === 3 && <SignUpStep3 onNext={goNext} onBack={goBack} onSkip={goSkipProject} />}
+          {page === "signup" && step === 4 && (
+            <SignUpStep4
+              workspaceId={stepData.workspaceId}
+              onBack={goBack}
+              onSkip={goSkip}
+              onFinish={() => setStep(5)}
+            />
+          )}
+          {page === "signup" && step === 5 && <SuccessScreen onNavigate={navigate} />}
 
         </div>
       </div>

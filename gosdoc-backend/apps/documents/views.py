@@ -24,10 +24,14 @@ from rest_framework.views import APIView
 
 from apps.workspaces.models import Workspace, WorkspaceMember
 from .audit_log import get_client_ip, log_document_action
-from .models import Comment, Document, DocumentAuditLog, DocumentVersion
+from .models import Comment, Document, DocumentAttachment, DocumentAuditLog, DocumentVersion, Subtask
 from .serializers import (
+    AttachmentConfirmSerializer,
+    AttachmentRequestUploadSerializer,
+    AttachmentSerializer,
     CommentSerializer,
     DocumentConfirmUploadSerializer,
+    DocumentContentSerializer,
     DocumentListSerializer,
     DocumentSerializer,
     DocumentUpdateSerializer,
@@ -36,6 +40,7 @@ from .serializers import (
     NewVersionConfirmSerializer,
     NewVersionPresignedRequestSerializer,
     PresignedUploadRequestSerializer,
+    SubtaskSerializer,
 )
 from .storage import (
     check_object_exists,
@@ -687,3 +692,321 @@ class CommentResolveView(APIView):
         comment.save(update_fields=["is_resolved"])
         logger.info("Комментарий %s закрыт пользователем %s", pk, request.user.email)
         return Response({"detail": "Комментарий закрыт."})
+
+
+# ============================================================
+# Subtasks
+# ============================================================
+
+class SubtaskListCreateView(generics.ListCreateAPIView):
+    """
+    GET  /api/v1/documents/{id}/subtasks/ — список подзадач
+    POST /api/v1/documents/{id}/subtasks/ — создать подзадачу (owner/editor)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = SubtaskSerializer
+    pagination_class = None
+
+    def _get_document(self):
+        return get_object_or_404(
+            Document.objects.filter(workspace__members__user=self.request.user),
+            pk=self.kwargs["pk"],
+        )
+
+    def get_queryset(self):
+        document = self._get_document()
+        return document.subtasks.select_related("assignee").order_by("created_at")
+
+    def perform_create(self, serializer):
+        document = self._get_document()
+        assert_workspace_role(self.request.user, document.workspace, ["owner", "editor"])
+        serializer.save(document=document)
+
+
+class SubtaskDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    GET    /api/v1/documents/{pk}/subtasks/{sid}/ — деталь
+    PATCH  /api/v1/documents/{pk}/subtasks/{sid}/ — обновить (owner/editor)
+    DELETE /api/v1/documents/{pk}/subtasks/{sid}/ — удалить (owner/editor)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = SubtaskSerializer
+
+    def get_object(self):
+        document = get_object_or_404(
+            Document.objects.filter(workspace__members__user=self.request.user)
+            .select_related("workspace"),
+            pk=self.kwargs["pk"],
+        )
+        subtask = get_object_or_404(Subtask, pk=self.kwargs["sid"], document=document)
+        if self.request.method in ("PATCH", "PUT", "DELETE"):
+            assert_workspace_role(self.request.user, document.workspace, ["owner", "editor"])
+        return subtask
+
+
+# ============================================================
+# Attachments
+# ============================================================
+
+class AttachmentRequestUploadView(APIView):
+    """
+    POST /api/v1/documents/{id}/attachments/request-upload/
+    JWT + Editor — presigned POST URL для вложения (шаг 1 из 2).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        document = get_object_or_404(
+            Document.objects.filter(
+                workspace__members__user=request.user
+            ).select_related("workspace"),
+            pk=pk,
+        )
+        assert_workspace_role(request.user, document.workspace, ["owner", "editor"])
+
+        serializer = AttachmentRequestUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        import uuid as _uuid
+        file_name = data["file_name"]
+        storage_key = f"attachments/{document.workspace_id}/{_uuid.uuid4()}/{file_name}"
+        content_type = get_content_type(file_name) or "application/octet-stream"
+
+        presigned = generate_presigned_post(
+            storage_key=storage_key,
+            content_type=content_type,
+            max_size_bytes=data["file_size"],
+            expiration=3600,
+        )
+
+        if not presigned:
+            return Response(
+                {"detail": "Не удалось сгенерировать URL. Проверьте настройки S3."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({
+            "upload_url": presigned["url"],
+            "upload_fields": presigned["fields"],
+            "storage_key": storage_key,
+            "expires_in": 3600,
+        })
+
+
+class AttachmentListCreateView(generics.ListCreateAPIView):
+    """
+    GET  /api/v1/documents/{id}/attachments/ — список вложений
+    POST /api/v1/documents/{id}/attachments/ — подтвердить загрузку (шаг 2 из 2)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def get_serializer_class(self):
+        return AttachmentConfirmSerializer if self.request.method == "POST" else AttachmentSerializer
+
+    def _get_document(self):
+        return get_object_or_404(
+            Document.objects.filter(
+                workspace__members__user=self.request.user
+            ).select_related("workspace"),
+            pk=self.kwargs["pk"],
+        )
+
+    def get_queryset(self):
+        document = self._get_document()
+        return document.attachments.select_related("uploaded_by")
+
+    def create(self, request, *args, **kwargs):
+        document = self._get_document()
+        assert_workspace_role(request.user, document.workspace, ["owner", "editor"])
+
+        serializer = AttachmentConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        if not check_object_exists(data["storage_key"]):
+            return Response(
+                {"detail": "Файл не найден в хранилище. Завершите загрузку в S3."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        attachment = DocumentAttachment.objects.create(
+            document=document,
+            title=data["file_name"],
+            storage_key=data["storage_key"],
+            file_size=data["file_size"],
+            uploaded_by=request.user,
+        )
+
+        logger.info(
+            "Вложение загружено: %s → документ %s (by %s)",
+            attachment.title, document.title, request.user.email,
+        )
+        return Response(
+            AttachmentSerializer(attachment, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AttachmentDetailView(generics.DestroyAPIView):
+    """
+    DELETE /api/v1/documents/{pk}/attachments/{aid}/ — удалить вложение (owner/editor)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        document = get_object_or_404(
+            Document.objects.filter(
+                workspace__members__user=self.request.user
+            ).select_related("workspace"),
+            pk=self.kwargs["pk"],
+        )
+        assert_workspace_role(self.request.user, document.workspace, ["owner", "editor"])
+        return get_object_or_404(DocumentAttachment, pk=self.kwargs["aid"], document=document)
+
+    def destroy(self, request, *args, **kwargs):
+        attachment = self.get_object()
+        try:
+            delete_from_s3(attachment.storage_key)
+        except Exception as exc:
+            logger.warning("Не удалось удалить вложение из S3: %s", exc)
+        attachment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AttachmentDownloadView(APIView):
+    """
+    GET /api/v1/documents/{pk}/attachments/{aid}/download/
+    JWT + Member — presigned GET URL для скачивания вложения.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk, aid):
+        document = get_object_or_404(
+            Document.objects.filter(workspace__members__user=request.user),
+            pk=pk,
+        )
+        attachment = get_object_or_404(DocumentAttachment, pk=aid, document=document)
+        url = generate_presigned_url(attachment.storage_key, filename=attachment.title)
+        if not url:
+            return Response(
+                {"detail": "Не удалось сгенерировать ссылку."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response({
+            "download_url": url,
+            "expires_in": 3600,
+            "file_name": attachment.title,
+        })
+
+
+# ============================================================
+# Approve
+# ============================================================
+
+class DocumentApproveView(APIView):
+    """
+    POST /api/v1/documents/{id}/approve/
+    JWT + Member — согласовать документ (завершить текущий workflow-шаг).
+
+    Находит активную задачу текущего пользователя по этому документу,
+    помечает её как done и активирует следующий шаг.
+    Когда все шаги завершены — статус документа остаётся review
+    до тех пор, пока не будут собраны подписи.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        document = get_object_or_404(
+            Document.objects.filter(
+                workspace__members__user=request.user
+            ).select_related("workspace"),
+            pk=pk,
+        )
+
+        if document.status != Document.DocumentStatus.REVIEW:
+            return Response(
+                {"detail": "Согласование доступно только для документов со статусом «На согласовании»."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from apps.tasks.models import Task
+        from apps.tasks.workflow import activate_next_task
+
+        task = Task.objects.filter(
+            document=document,
+            assigned_to=request.user,
+            status=Task.TaskStatus.IN_PROGRESS,
+        ).first()
+
+        if not task:
+            return Response(
+                {"detail": "У вас нет активной задачи по этому документу."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        task.status = Task.TaskStatus.DONE
+        task.completed_at = timezone.now()
+        task.save(update_fields=["status", "completed_at"])
+
+        activate_next_task(task)
+
+        log_document_action(
+            document=document,
+            user=request.user,
+            action=DocumentAuditLog.Action.APPROVED,
+            details={"task_id": str(task.id), "step_order": task.step_order},
+            ip_address=get_client_ip(request),
+        )
+
+        logger.info(
+            "Документ '%s' согласован пользователем %s (шаг %s)",
+            document.title, request.user.email, task.step_order,
+        )
+        return Response({
+            "detail": "Шаг согласования выполнен.",
+            "document_id": str(document.id),
+            "step_order": task.step_order,
+        })
+
+
+# ============================================================
+# Phase 7 — Document content storage (TipTap / Excel)
+# ============================================================
+
+class DocumentContentView(APIView):
+    """
+    GET /api/v1/documents/{id}/content/ — вернуть content/sheet_data
+    PUT /api/v1/documents/{id}/content/ — сохранить content/sheet_data
+
+    Хранит редактируемый контент документа в БД (JSONField),
+    не трогая S3-файл и storage_key.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_document(self, request, pk):
+        return get_object_or_404(
+            Document.objects.filter(
+                workspace__members__user=request.user
+            ).select_related("workspace"),
+            pk=pk,
+        )
+
+    def get(self, request, pk):
+        document = self._get_document(request, pk)
+        return Response(DocumentContentSerializer(document).data)
+
+    def put(self, request, pk):
+        document = self._get_document(request, pk)
+        assert_workspace_role(request.user, document.workspace, ["owner", "editor"])
+
+        serializer = DocumentContentSerializer(document, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        logger.info(
+            "Контент документа '%s' обновлён пользователем %s",
+            document.title, request.user.email,
+        )
+        return Response(serializer.data)

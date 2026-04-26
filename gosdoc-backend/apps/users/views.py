@@ -15,15 +15,20 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .email_utils import send_verification_code
-from .models import EmailVerificationCode
+from .models import EmailVerificationCode, UserSettings
 from .permissions import IsSelfOrAdmin, IsAdminUser
 from .serializers import (
+    AvatarConfirmSerializer,
+    AvatarRequestUploadSerializer,
+    ChangeEmailConfirmSerializer,
+    ChangeEmailRequestSerializer,
     ChangePasswordSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RegisterSerializer,
     UserListSerializer,
     UserSerializer,
+    UserSettingsSerializer,
     UserUpdateSerializer,
     VerifyEmailSerializer,
 )
@@ -342,3 +347,184 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
         user.save(update_fields=["is_active"])
         logger.info("Пользователь %s деактивирован администратором %s", user.email, request.user.email)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ============================================================
+# Phase 11 — Avatar upload (presigned POST, 2-step)
+# ============================================================
+
+class AvatarRequestUploadView(APIView):
+    """
+    POST /api/v1/users/me/avatar/request-upload/
+    JWT — шаг 1: получить presigned POST URL для загрузки аватара в S3.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from apps.documents.storage import generate_presigned_post, get_content_type
+        import uuid as _uuid
+
+        serializer = AvatarRequestUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        file_name = data["file_name"]
+        ext = file_name.rsplit(".", 1)[-1].lower()
+        storage_key = f"avatars/{request.user.id}/{_uuid.uuid4()}.{ext}"
+        content_type = get_content_type(file_name) or "image/jpeg"
+
+        presigned = generate_presigned_post(
+            storage_key=storage_key,
+            content_type=content_type,
+            max_size_bytes=data["file_size"],
+            expiration=3600,
+        )
+        if not presigned:
+            return Response(
+                {"detail": "Не удалось сгенерировать URL. Проверьте настройки S3."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({
+            "upload_url": presigned["url"],
+            "upload_fields": presigned["fields"],
+            "storage_key": storage_key,
+            "expires_in": 3600,
+        })
+
+
+class AvatarConfirmView(APIView):
+    """
+    POST /api/v1/users/me/avatar/confirm/
+    JWT — шаг 2: подтвердить загрузку, сохранить avatar_key и сгенерировать avatar_url.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from apps.documents.storage import check_object_exists, generate_presigned_url
+
+        serializer = AvatarConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        storage_key = serializer.validated_data["storage_key"]
+
+        if not check_object_exists(storage_key):
+            return Response(
+                {"detail": "Файл не найден в хранилище. Завершите загрузку в S3."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        url = generate_presigned_url(storage_key, expiration=365 * 24 * 3600)
+
+        user = request.user
+        user.avatar_key = storage_key
+        user.avatar_url = url or storage_key
+        user.save(update_fields=["avatar_key", "avatar_url"])
+
+        logger.info("Аватар обновлён для пользователя %s", user.email)
+        return Response({
+            "avatar_url": user.avatar_url,
+            "detail": "Аватар успешно обновлён.",
+        })
+
+
+# ============================================================
+# Phase 11 — UserSettings
+# ============================================================
+
+class UserSettingsView(APIView):
+    """
+    GET   /api/v1/users/me/settings/ — получить настройки (создаёт defaults при первом обращении)
+    PATCH /api/v1/users/me/settings/ — обновить настройки
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_or_create_settings(self, user):
+        settings_obj, _ = UserSettings.objects.get_or_create(user=user)
+        return settings_obj
+
+    def get(self, request):
+        settings_obj = self._get_or_create_settings(request.user)
+        return Response(UserSettingsSerializer(settings_obj).data)
+
+    def patch(self, request):
+        settings_obj = self._get_or_create_settings(request.user)
+        serializer = UserSettingsSerializer(settings_obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        logger.info("Настройки пользователя %s обновлены", request.user.email)
+        return Response(serializer.data)
+
+
+# ============================================================
+# Phase 11 — Change-email OTP flow
+# ============================================================
+
+class ChangeEmailRequestView(APIView):
+    """
+    POST /api/v1/users/me/change-email/request/
+    JWT — отправить OTP на новый email.
+    Body: { "new_email": "..." }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangeEmailRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_email = serializer.validated_data["new_email"]
+
+        vc = EmailVerificationCode.generate(new_email, EmailVerificationCode.Purpose.EMAIL_CHANGE)
+        sent = send_verification_code(new_email, vc.code, "email_change")
+
+        if not sent:
+            return Response(
+                {"detail": "Не удалось отправить код. Проверьте email."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        logger.info("Код смены email отправлен: %s → %s", request.user.email, new_email)
+        return Response({"detail": "Код подтверждения отправлен на новый email."})
+
+
+class ChangeEmailConfirmView(APIView):
+    """
+    POST /api/v1/users/me/change-email/confirm/
+    JWT — подтвердить смену email кодом.
+    Body: { "new_email": "...", "code": "123456" }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangeEmailConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_email = serializer.validated_data["new_email"]
+        code = serializer.validated_data["code"]
+
+        vc = EmailVerificationCode.objects.filter(
+            email=new_email,
+            purpose=EmailVerificationCode.Purpose.EMAIL_CHANGE,
+            is_used=False,
+        ).order_by("-created_at").first()
+
+        if not vc or not vc.is_valid(code):
+            return Response(
+                {"detail": "Неверный или просроченный код."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if User.objects.filter(email=new_email, is_active=True).exclude(pk=request.user.pk).exists():
+            return Response(
+                {"detail": "Этот email уже занят другим пользователем."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        old_email = request.user.email
+        request.user.email = new_email
+        request.user.save(update_fields=["email"])
+        vc.is_used = True
+        vc.save(update_fields=["is_used"])
+
+        logger.info("Email изменён: %s → %s", old_email, new_email)
+        return Response({
+            "detail": "Email успешно изменён.",
+            "email": new_email,
+        })

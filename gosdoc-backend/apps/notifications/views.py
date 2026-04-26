@@ -3,6 +3,7 @@
 Раздел 4.9 ТЗ
 """
 
+from django.db.models import Q
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -12,14 +13,21 @@ from .serializers import NotificationSerializer
 
 
 class NotificationListView(generics.ListAPIView):
-    """GET /api/v1/notifications/ — список уведомлений пользователя"""
+    """
+    GET /api/v1/notifications/
+    Query params: is_read, type, search (title/message icontains)
+    """
 
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = NotificationSerializer
     filterset_fields = ["is_read", "type"]
 
     def get_queryset(self):
-        return Notification.objects.filter(user=self.request.user)
+        qs = Notification.objects.filter(user=self.request.user)
+        search = self.request.query_params.get("search")
+        if search:
+            qs = qs.filter(Q(title__icontains=search) | Q(message__icontains=search))
+        return qs
 
 
 class NotificationReadView(APIView):
@@ -46,3 +54,25 @@ class NotificationReadAllView(APIView):
     def post(self, request):
         count = Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
         return Response({"detail": f"Отмечено {count} уведомлений."})
+
+
+class NotificationBulkDeleteView(APIView):
+    """
+    DELETE /api/v1/notifications/bulk-delete/
+    Body: { "ids": ["uuid1", "uuid2", ...] }
+    Удаляет только уведомления текущего пользователя.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request):
+        ids = request.data.get("ids", [])
+        if not isinstance(ids, list) or not ids:
+            return Response(
+                {"detail": "Передайте непустой список ids."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        deleted_count, _ = Notification.objects.filter(
+            user=request.user, pk__in=ids
+        ).delete()
+        return Response({"deleted": deleted_count})

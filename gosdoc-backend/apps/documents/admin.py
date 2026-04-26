@@ -1,11 +1,11 @@
 from django.contrib import admin
-from .models import Comment, Document, DocumentAuditLog, DocumentVersion
+from .models import Comment, Document, DocumentAttachment, DocumentAuditLog, DocumentVersion, Subtask
 
 
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
-    list_display = ["title", "file_type", "status", "workspace", "uploaded_by", "created_at"]
-    list_filter = ["status", "file_type"]
+    list_display = ["title", "file_type", "status", "priority", "due_date", "workspace", "uploaded_by", "created_at"]
+    list_filter = ["status", "file_type", "priority"]
     search_fields = ["title"]
     raw_id_fields = ["workspace", "uploaded_by", "current_version"]
 
@@ -41,3 +41,18 @@ class DocumentAuditLogAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+@admin.register(Subtask)
+class SubtaskAdmin(admin.ModelAdmin):
+    list_display = ["title", "document", "assignee", "status", "deadline", "created_at"]
+    list_filter = ["status"]
+    search_fields = ["title", "document__title"]
+    raw_id_fields = ["document", "assignee"]
+
+
+@admin.register(DocumentAttachment)
+class DocumentAttachmentAdmin(admin.ModelAdmin):
+    list_display = ["title", "document", "uploaded_by", "file_size", "created_at"]
+    search_fields = ["title", "document__title"]
+    raw_id_fields = ["document", "uploaded_by"]
