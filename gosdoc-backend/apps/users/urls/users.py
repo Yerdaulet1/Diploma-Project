@@ -8,6 +8,7 @@ from django.urls import path
 from apps.users.views import (
     AvatarConfirmView,
     AvatarRequestUploadView,
+    AvatarServerUploadView,
     ChangeEmailConfirmView,
     ChangeEmailRequestView,
     UserDetailView,
@@ -24,6 +25,7 @@ urlpatterns = [
     # Avatar (Phase 11)
     path("me/avatar/request-upload/", AvatarRequestUploadView.as_view(), name="user-avatar-request"),
     path("me/avatar/confirm/", AvatarConfirmView.as_view(), name="user-avatar-confirm"),
+    path("me/avatar/upload/", AvatarServerUploadView.as_view(), name="user-avatar-upload"),
     # Settings (Phase 11)
     path("me/settings/", UserSettingsView.as_view(), name="user-settings"),
     # Change-email OTP (Phase 11)

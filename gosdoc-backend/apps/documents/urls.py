@@ -38,9 +38,12 @@ from .views import (
     CommentListCreateView,
     DocumentApproveView,
     DocumentContentView,
+    DocumentCopyView,
     DocumentDetailView,
     DocumentDownloadView,
+    DocumentExtractContentView,
     DocumentListCreateView,
+    DocumentServerUploadView,
     DocumentVersionCreateView,
     DocumentVersionDiffView,
     DocumentVersionListView,
@@ -54,6 +57,8 @@ from .views import (
 urlpatterns = [
     # ---- Двухэтапная загрузка ----
     path("request-upload/", RequestUploadView.as_view(), name="document-request-upload"),
+    # ---- Серверная загрузка (без presigned URL) ----
+    path("server-upload/", DocumentServerUploadView.as_view(), name="document-server-upload"),
 
     # ---- CRUD документов ----
     path("", DocumentListCreateView.as_view(), name="document-list"),
@@ -82,6 +87,8 @@ urlpatterns = [
 
     # ---- Content (Phase 7) ----
     path("<uuid:pk>/content/", DocumentContentView.as_view(), name="document-content"),
+    # ---- Extract content from S3 binary (Phase 8) ----
+    path("<uuid:pk>/extract/", DocumentExtractContentView.as_view(), name="document-extract"),
 
     # ---- Workflow ----
     path("<uuid:pk>/workflow/start/", DocumentWorkflowStartView.as_view(), name="document-workflow-start"),
@@ -92,6 +99,9 @@ urlpatterns = [
     # ---- Подписи ----
     path("<uuid:pk>/sign/", SignDocumentView.as_view(), name="document-sign"),
     path("<uuid:pk>/signatures/", SignatureListView.as_view(), name="document-signatures"),
+
+    # ---- Копирование в другой кабинет ----
+    path("<uuid:pk>/copy/", DocumentCopyView.as_view(), name="document-copy"),
 
     # ---- Согласование ----
     path("<uuid:pk>/approve/", DocumentApproveView.as_view(), name="document-approve"),

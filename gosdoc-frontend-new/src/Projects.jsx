@@ -9,9 +9,10 @@ import {
   deleteSubtask as apiDeleteSubtask,
   getAttachments, requestAttachmentUpload, confirmAttachmentUpload,
   deleteAttachment as apiDeleteAttachment,
-  uploadFileToS3, requestUpload, confirmUpload,
+  serverUploadDocument, copyDocument,
 } from "./api/documents";
-import { getWorkspaces, createWorkspace, addMember } from "./api/workspaces";
+import { getWorkspaces, createWorkspace, addMember, getMembers } from "./api/workspaces";
+import useAuthStore from "./store/authStore";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
 
@@ -150,24 +151,7 @@ const css = `
 ══════════════════════════════════════════════════════════ */
 const STATUSES = ["TO DO", "IN PROGRESS", "COMPLETED", "RETURNED"];
 const PRIORITIES = ["Empty", "Low", "Medium", "High", "Critical"];
-const SAMPLE_MEMBERS = [
-  { id:1, name:"Ivan Ivanov",       initials:"II", color:"#60A5FA" },
-  { id:2, name:"Elmira Smirnova",   initials:"ES", color:"#F87171" },
-  { id:3, name:"Gakku Bekzhankyzy",initials:"GB", color:"#34D399" },
-  { id:4, name:"Gauhar Sultanbekkyzy", initials:"GS", color:"#FBBF24" },
-  { id:5, name:"Ali Bekov",         initials:"AB", color:"#A78BFA" },
-];
-const WORKFLOW_STEPS = [
-  { id:1, title:"Document Upload",  status:"done",    badge:"Completed", desc:"Completed on 15.05.2024 at 10:30", actor:"Document uploaded by Ivan Ivanov",     progress:100 },
-  { id:2, title:"Legal Review",     status:"active",  badge:"In progress",desc:"", actor:"This task was assigned to Elmira Smirnova", progress:60 },
-  { id:3, title:"Signing",          status:"pending", badge:"Pending",    desc:"Waiting for completion of the examination", actor:"This task was assigned to Gakku Bekzhankyzy", progress:0 },
-];
-const ACTIVITY_LOG = [
-  { date:"Feb 16", items:[
-    { text:"Gauhar Sultanbekkyzy created this task", time:"09:00 AM" },
-    { text:"Gauhar Sultanbekkyzy uploaded file",     time:"09:30 AM" },
-  ]},
-];
+const AV_COLORS_MEMBERS = ["#60A5FA","#F87171","#34D399","#FBBF24","#A78BFA","#F472B6","#FB923C"];
 
 const priToApi = (p) => (p === "Empty" ? null : p.toLowerCase());
 const priFromApi = (p) => (p ? p.charAt(0).toUpperCase() + p.slice(1) : "Empty");
@@ -206,12 +190,13 @@ function MiniAv({ member, size=22 }) {
 /* ══════════════════════════════════════════════════════════
    ASSIGNEE PICKER POPUP
 ══════════════════════════════════════════════════════════ */
-function AssigneePicker({ selected, onToggle, onClose }) {
+function AssigneePicker({ selected, onToggle, onClose, members = [] }) {
   const ref = useRef(null);
   return (
     <div className="dm-assignee-popup" ref={ref} onMouseDown={e=>e.stopPropagation()}>
       <div style={{ padding:"6px 12px 6px", fontSize:11, color:"#9CA3AF", fontWeight:500 }}>Assign member</div>
-      {SAMPLE_MEMBERS.map(m => (
+      {members.length === 0 && <div style={{ padding:"8px 12px", fontSize:12, color:"#9CA3AF" }}>No members</div>}
+      {members.map(m => (
         <div key={m.id} className={`dm-assignee-item${selected?.id===m.id?" selected":""}`}
           onClick={()=>{ onToggle(m); onClose(); }}>
           <MiniAv member={m}/>
@@ -504,7 +489,7 @@ function DeadlinePicker({ value, onChange, onClose, pos }) {
 /* ══════════════════════════════════════════════════════════
    SUBTASK ROW
 ══════════════════════════════════════════════════════════ */
-function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndClose, isFirst }) {
+function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndClose, isFirst, members = [] }) {
   const [showAssignee, setShowAssignee] = useState(false);
   const [showDl,       setShowDl]       = useState(false);
   const [dlPos,        setDlPos]        = useState({ top:0, left:0 });
@@ -579,7 +564,8 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
               <AssigneePicker
                 selected={subtask.assignee}
                 onToggle={m => onChange({ ...subtask, assignee: subtask.assignee?.id===m.id ? null : m })}
-                onClose={() => setShowAssignee(false)}/>
+                onClose={() => setShowAssignee(false)}
+                members={members}/>
             </div>
           </>
         )}
@@ -609,51 +595,12 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
    WORKFLOW TAB
 ══════════════════════════════════════════════════════════ */
 function WorkflowTab() {
-  const badgeColor = { "Completed":"#DCFCE7", "In progress":"#DBEAFE", "Pending":"#FEF9C3" };
-  const badgeText  = { "Completed":"#166534", "In progress":"#1D4ED8", "Pending":"#854D0E" };
   return (
-    <div>
-      {WORKFLOW_STEPS.map((step, i) => (
-        <div key={step.id} className="wf-step">
-          <div className="wf-line-col">
-            <div className={`wf-dot ${step.status}`}>
-              {step.status==="done" && <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>}
-              {step.status==="active" && <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>}
-              {step.status==="pending" && <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="14" height="14"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>}
-            </div>
-            {i < WORKFLOW_STEPS.length-1 && <div className={`wf-connector${step.status==="done"?" done":""}`}/>}
-          </div>
-          <div className={`wf-card ${step.status}`}>
-            <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4 }}>
-              <span style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{step.title}</span>
-              <div style={{ display:"flex",alignItems:"center",gap:8 }}>
-                <span style={{ fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20,background:badgeColor[step.badge]||"#F3F4F6",color:badgeText[step.badge]||"#6B7280" }}>
-                  {step.badge}
-                </span>
-                {step.status==="done" && (
-                  <button style={{ background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",display:"flex",alignItems:"center" }}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                  </button>
-                )}
-              </div>
-            </div>
-            {step.desc && <div style={{ fontSize:11.5,color:"#9CA3AF",marginBottom:6 }}>{step.desc}</div>}
-            {step.actor && (
-              <div style={{ display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#6B7280" }}>
-                <div style={{ width:20,height:20,borderRadius:"50%",background:"#CBD5E1",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="11" height="11"><circle cx="12" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/></svg>
-                </div>
-                <span style={{ color: step.status==="pending"?"#D1D5DB":"#374151" }}>{step.actor}</span>
-              </div>
-            )}
-            {step.status==="active" && (
-              <div className="wf-progress" style={{ marginTop:8 }}>
-                <div className="wf-progress-fill" style={{ width:`${step.progress}%` }}/>
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
+    <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"40px 0",color:"#9CA3AF",fontSize:13 }}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="1.5" width="40" height="40" style={{ marginBottom:12 }}>
+        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+      </svg>
+      No workflow steps yet.
     </div>
   );
 }
@@ -704,22 +651,6 @@ function ActivityPanel({ comments, onComment, apiComments }) {
             <span className="dm-activity-time">
               {new Date(c.created_at).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}
             </span>
-          </div>
-        ))}
-        {/* Static log (when no api comments) */}
-        {!apiComments?.length && ACTIVITY_LOG.map((group, gi) => (
-          <div key={gi}>
-            <div className="dm-activity-date">{group.date}</div>
-            {group.items.slice(0, showMore ? undefined : 2).map((item, ii) => (
-              <div key={ii} className="dm-activity-item">
-                <div className="dm-activity-dot"/>
-                <span>{item.text}</span>
-                <span className="dm-activity-time">{item.time}</span>
-              </div>
-            ))}
-            {group.items.length > 2 && !showMore && (
-              <button className="dm-show-more" onClick={() => setShowMore(true)}>Show more</button>
-            )}
           </div>
         ))}
         {/* Optimistically-posted comments this session */}
@@ -796,6 +727,7 @@ function ActivityPanel({ comments, onComment, apiComments }) {
 function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
   const qc = useQueryClient();
   const docId = doc?.id;
+  const workspaceId = doc?.workspace?.id || doc?.workspace;
 
   // API queries — only when we have a real document id
   const { data: apiDoc } = useQuery({
@@ -818,6 +750,17 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
     queryFn: () => getComments(docId),
     enabled: !!docId,
   });
+  const { data: membersData } = useQuery({
+    queryKey: ["members", workspaceId],
+    queryFn: () => getMembers(workspaceId),
+    enabled: !!workspaceId,
+  });
+  const membersList = (membersData?.results ?? (Array.isArray(membersData) ? membersData : [])).map((m, i) => ({
+    id: m.user?.id || m.id,
+    name: m.user?.full_name || m.user?.email || "Member",
+    initials: (m.user?.full_name || "M").split(" ").map(p => p[0]).join("").toUpperCase().slice(0, 2),
+    color: AV_COLORS_MEMBERS[i % AV_COLORS_MEMBERS.length],
+  }));
 
   const [status,     setStatus]     = useState("TO DO");
   const [priority,   setPriority]   = useState("Empty");
@@ -1128,7 +1071,8 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
                               <div style={{ width:22,height:22,borderRadius:"50%",background:"#E5E7EB",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>×</div>
                               Empty
                             </div>
-                            {SAMPLE_MEMBERS.map(m=>(
+                            {membersList.length === 0 && <div style={{ padding:"6px 12px",fontSize:12,color:"#9CA3AF" }}>No members</div>}
+                            {membersList.map(m=>(
                               <div key={m.id} className={`dm-assignee-item${assignee?.id===m.id?" selected":""}`}
                                 onClick={()=>{ setAssignee(m); setShowAsnDd(false); }}>
                                 <MiniAv member={m}/>
@@ -1173,7 +1117,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
 
                 {/* Main Document (read-only view of the assigned file) */}
                 {readOnly && (() => {
-                  const dt = DOC_TYPES[doc?.type] || DOC_TYPES[0];
+                  const dt = fileTypeInfo(doc?.file_type);
                   return (
                     <div className="dm-section">
                       <div className="dm-section-title">
@@ -1185,7 +1129,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
                           <span style={{ fontSize:9,fontWeight:700,color:dt.color }}>{dt.ext}</span>
                         </div>
                         <div>
-                          <div style={{ fontSize:13,fontWeight:500,color:"#374151" }}>{doc?.name}.{dt.ext.toLowerCase()}</div>
+                          <div style={{ fontSize:13,fontWeight:500,color:"#374151" }}>{doc?.title || doc?.name}</div>
                           <div style={{ fontSize:11,color:"#9CA3AF" }}>{doc?.size} · {doc?.date}</div>
                         </div>
                       </div>
@@ -1237,7 +1181,8 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
                       onChange={data => updateSubtask(st.id, data)}
                       onDelete={() => deleteSubtask(st.id)}
                       onAddNext={addSubtask}
-                      onSaveAndClose={() => { handleSave(); setTimeout(onClose, 300); }}/>
+                      onSaveAndClose={() => { handleSave(); setTimeout(onClose, 300); }}
+                      members={membersList}/>
                   ))}
                 </div>
               </>
@@ -1261,31 +1206,6 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
 /* ══════════════════════════════════════════════════════════
    DATA
 ══════════════════════════════════════════════════════════ */
-const SAMPLE_PROJECTS = [
-  { id:1, name:"Contract Approval Workflow",  status:"Active",    members:["M","A","B"], extra:0, files:4, updated:"2 hours ago" },
-  { id:3, name:"Service Agreement Approval",  status:"Active",    members:["M","A","B"], extra:2, files:5, updated:"Yesterday" },
-  { id:4, name:"Vendor Contract Management",  status:"Active",    members:["M","A","B"], extra:0, files:4, updated:"Yesterday" },
-  { id:7, name:"Service Agreement Approval",  status:"Completed", members:["M","A","B"], extra:0, files:1, updated:"Oct 10" },
-];
-const DOC_TYPES = [
-  { ext:"TXT", color:"#6366F1", bg:"#EEF2FF" },
-  { ext:"PDF", color:"#EF4444", bg:"#FEE2E2" },
-  { ext:"DOC", color:"#2563EB", bg:"#DBEAFE" },
-  { ext:"XLS", color:"#16A34A", bg:"#DCFCE7" },
-  { ext:"PDF", color:"#EF4444", bg:"#FEE2E2" },
-];
-const SAMPLE_DOCS = [
-  { name:"Project_Overview", size:"3.3 MB", date:"April 20", members:["M","A","B"], deadline:"Jun 20",  status:"IN PROGRESS", progress:70,  type:0 },
-  { name:"Project_Overview", size:"3.3 MB", date:"April 20", members:["P","A"],     deadline:"Jun 29",  status:"IN PROGRESS", progress:70,  type:1 },
-  { name:"Project_Overview", size:"3.3 MB", date:"April 20", members:["B","P"],     deadline:"Oct 15",  status:"COMPLETED",   progress:100, type:2 },
-  { name:"Project_Overview", size:"3.3 MB", date:"April 20", members:["A","B","Z"], deadline:"Mar 3",   status:"COMPLETED",   progress:100, type:3 },
-  { name:"Project_Overview", size:"3.3 MB", date:"April 20", members:["M","H","B"], deadline:"Jun 20",  status:"IN PROGRESS", progress:25,  type:4 },
-];
-const CALENDAR_EVENTS = [
-  { day:30, month:11, name:"Campaign Launch Planning", members:["A","B"] },
-  { day:5,  month:12, name:"Campaign Launch Planning", members:["A","B"] },
-  { day:9,  month:12, name:"Campaign Launch Planning", members:["A","B"] },
-];
 const AV_COLORS = ["#60A5FA","#F87171","#34D399","#FBBF24","#A78BFA","#F472B6","#FB923C"];
 
 /* ══════════════════════════════════════════════════════════
@@ -1453,7 +1373,7 @@ function AvatarStack({ members, extra=0 }) {
 
 function MemberInvite({ members, setMembers, errors, setErrors }) {
   const update=(i,f,v)=>{setMembers(m=>m.map((x,j)=>j===i?{...x,[f]:v}:x));if(errors)setErrors(e=>e.map((x,j)=>j===i?{...x,[f]:""}:x));};
-  const add=()=>{if(members.length<7)setMembers(m=>[...m,{email:"",role:""}]);};
+  const add=()=>{if(members.length<7)setMembers(m=>[...m,{email:"",role:"viewer"}]);};
   const remove=(i)=>{if(members.length<=1)return;setMembers(m=>m.filter((_,j)=>j!==i));if(errors)setErrors(e=>e.filter((_,j)=>j!==i));};
   return (
     <div>
@@ -1470,7 +1390,12 @@ function MemberInvite({ members, setMembers, errors, setErrors }) {
               style={{ borderColor:errors?.[i]?.email?"#EF4444":"#E5E7EB" }}/>
             {errors?.[i]?.email&&<span style={{ fontSize:11,color:"#EF4444" }}>{errors[i].email}</span>}
           </div>
-          <input className="pr-m-input" placeholder="ex: Product Manager" value={m.role} onChange={e=>update(i,"role",e.target.value)} style={{ flex:1 }}/>
+          <select value={m.role||"viewer"} onChange={e=>update(i,"role",e.target.value)}
+            style={{ flex:1,border:"1.5px solid #E5E7EB",borderRadius:8,padding:"9px 10px",fontSize:13,color:"#374151",fontFamily:"inherit",background:"#fff",cursor:"pointer",outline:"none" }}>
+            <option value="viewer">Viewer</option>
+            <option value="editor">Editor</option>
+            <option value="signer">Signer</option>
+          </select>
           <button className="pr-m-rm" onClick={()=>remove(i)} disabled={members.length<=1}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -1494,7 +1419,7 @@ function NewProjectModal({ onClose, onCreate }) {
   const [step,setStep]=useState(1);
   const [form,setForm]=useState({name:"",desc:"",docName:""});
   const [file,setFile]=useState(null);
-  const [members,setMembers]=useState([{email:"",role:""},{email:"",role:""}]);
+  const [members,setMembers]=useState([{email:"",role:"viewer"},{email:"",role:"viewer"}]);
   const [errors,setErrors]=useState([]);
   const [formErr,setFormErr]=useState({});
   const [creating,setCreating]=useState(false);
@@ -1507,8 +1432,22 @@ function NewProjectModal({ onClose, onCreate }) {
     setCreating(true);
     try {
       const ws = await createWorkspace({ title: form.name, description: form.desc, type: "corporate" });
+
+      // Upload initial document (attached file or blank docx)
+      try {
+        const docTitle = form.docName.trim();
+        const fileName = file
+          ? file.name
+          : `${docTitle.replace(/\s+/g,"_")}.docx`;
+        const fileToUpload = file || new File([new Blob([" "],{type:"text/plain"})], fileName);
+        await serverUploadDocument(ws.id, docTitle, fileToUpload);
+        qc.invalidateQueries({ queryKey: ["documents", ws.id] });
+      } catch(docErr) {
+        toast.error("Project created, but document upload failed.");
+      }
+
       await Promise.allSettled(
-        members.filter(m=>m.email?.trim()).map(m=>addMember(ws.id,{email:m.email}))
+        members.filter(m=>m.email?.trim()).map(m=>addMember(ws.id,{email:m.email,role:m.role||"viewer"}))
       );
       qc.invalidateQueries({ queryKey: ["workspaces"] });
       onCreate({ ...form, id: ws.id });
@@ -1547,7 +1486,7 @@ function NewProjectModal({ onClose, onCreate }) {
               {formErr.docName&&<span style={{ fontSize:11,color:"#EF4444" }}>{formErr.docName}</span>}
             </div>
             <div className="pr-dropzone" onClick={()=>fileRef.current?.click()} onDragOver={e=>e.preventDefault()} onDrop={handleFile}>
-              <input ref={fileRef} type="file" style={{ display:"none" }} onChange={handleFile}/>
+              <input ref={fileRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display:"none" }} onChange={handleFile}/>
               {file?(
                 <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:6 }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.5" width="32" height="32"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -1629,7 +1568,7 @@ function AssignedDocsTable({ docs, onOpen }) {
         </thead>
         <tbody>
           {docs.map((d, i) => {
-            const dt = DOC_TYPES[d.type] || DOC_TYPES[0];
+            const dt = fileTypeInfo(d.file_type);
             return (
               <tr key={i} style={{ cursor:"pointer" }} onClick={() => onOpen && onOpen(d)}>
                 <td>
@@ -1692,85 +1631,73 @@ function ArchivedEmpty() {
 /* ══════════════════════════════════════════════════════════
    ARCHIVED DATA + SECTION
 ══════════════════════════════════════════════════════════ */
-const ARCHIVED_PROJECTS = [
-  { name:"Service Agreement Approval", members:["M","A","B"], docs:1, updated:"Oct 10" },
-  { name:"Client Onboarding Contract", members:["P","G"],     docs:3, updated:"Sep 28" },
-];
-const ARCHIVED_DOCS = [
-  { name:"Service_Agreement_Final", ext:"PDF", color:"#EF4444", bg:"#FEE2E2", members:["M","A","B"], manager:"Ivan Ivanov",        updated:"Oct 10" },
-  { name:"NDA_Document",            ext:"DOC", color:"#2563EB", bg:"#DBEAFE", members:["P","G"],     manager:"Elmira Smirnova",    updated:"Sep 28" },
-  { name:"Vendor_Contract_Final",   ext:"XLS", color:"#16A34A", bg:"#DCFCE7", members:["A","B","Z"], manager:"Gakku Bekzhankyzy", updated:"Aug 15" },
-];
-function ArchivedSection() {
+function ArchivedSection({ projects = [], docs = [] }) {
   return (
     <div style={{ padding:"0 4px 28px" }}>
       <div className="ar-section-title">
         <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="16" height="16"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
         Completed projects
-        <span style={{ color:"#9CA3AF",fontWeight:400 }}>({ARCHIVED_PROJECTS.length})</span>
+        <span style={{ color:"#9CA3AF",fontWeight:400 }}>({projects.length})</span>
         <span style={{ marginLeft:4,fontSize:11,color:"#9CA3AF",fontWeight:400,background:"#F3F4F6",borderRadius:4,padding:"1px 6px" }}>View only</span>
       </div>
-      <table className="pr-table">
-        <thead>
-          <tr>
-            <th>Project</th><th>Ex-members</th><th>Documents</th><th>Last Updated</th><th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ARCHIVED_PROJECTS.map((p, i) => (
-            <tr key={i}>
-              <td style={{ fontWeight:500 }}>{p.name}</td>
-              <td><AvatarStack members={p.members}/></td>
-              <td>
-                <span style={{ display:"flex",alignItems:"center",gap:5,fontSize:12,color:"#6B7280" }}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="13" height="13"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                  {p.docs} {p.docs === 1 ? "file" : "files"}
-                </span>
-              </td>
-              <td style={{ fontSize:12,color:"#6B7280" }}>{p.updated}</td>
-              <td>
-                <button style={{ background:"none",border:"none",color:"#2563EB",fontSize:13,fontWeight:600,padding:0,cursor:"pointer",display:"flex",alignItems:"center",gap:3 }}>
-                  View <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {projects.length === 0
+        ? <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>No completed projects</div>
+        : (
+          <table className="pr-table">
+            <thead>
+              <tr>
+                <th>Project</th><th>Documents</th><th>Last Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projects.map((p, i) => (
+                <tr key={i}>
+                  <td style={{ fontWeight:500 }}>{p.name}</td>
+                  <td style={{ fontSize:12,color:"#6B7280" }}>{p.files} {p.files === 1 ? "file" : "files"}</td>
+                  <td style={{ fontSize:12,color:"#6B7280" }}>{p.updated}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
 
       <div className="ar-section-title" style={{ marginTop:28 }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="16" height="16"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Completed documents
-        <span style={{ color:"#9CA3AF",fontWeight:400 }}>({ARCHIVED_DOCS.length})</span>
+        Archived documents
+        <span style={{ color:"#9CA3AF",fontWeight:400 }}>({docs.length})</span>
         <span style={{ marginLeft:4,fontSize:11,color:"#9CA3AF",fontWeight:400,background:"#F3F4F6",borderRadius:4,padding:"1px 6px" }}>View only</span>
       </div>
-      <table className="pr-table">
-        <thead>
-          <tr>
-            <th>Document</th><th>Ex-members</th><th>Project Manager</th><th>Last Updated</th><th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ARCHIVED_DOCS.map((d, i) => (
-            <tr key={i}>
-              <td>
-                <div style={{ display:"flex",alignItems:"center",gap:10 }}>
-                  <div className="ad-file-icon" style={{ background:d.bg,color:d.color }}>{d.ext}</div>
-                  <div style={{ fontWeight:500,fontSize:13,color:"#111827" }}>{d.name}.{d.ext.toLowerCase()}</div>
-                </div>
-              </td>
-              <td><AvatarStack members={d.members}/></td>
-              <td style={{ fontSize:12.5,color:"#374151" }}>{d.manager}</td>
-              <td style={{ fontSize:12,color:"#6B7280" }}>{d.updated}</td>
-              <td>
-                <button style={{ background:"none",border:"none",color:"#2563EB",fontSize:13,fontWeight:600,padding:0,cursor:"pointer",display:"flex",alignItems:"center",gap:3 }}>
-                  View <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {docs.length === 0
+        ? <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>No archived documents</div>
+        : (
+          <table className="pr-table">
+            <thead>
+              <tr>
+                <th>Document</th><th>Last Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {docs.map((d, i) => {
+                const dt = fileTypeInfo(d.file_type);
+                return (
+                  <tr key={i}>
+                    <td>
+                      <div style={{ display:"flex",alignItems:"center",gap:10 }}>
+                        <div className="ad-file-icon" style={{ background:dt.bg,color:dt.color }}>{dt.ext}</div>
+                        <div style={{ fontWeight:500,fontSize:13,color:"#111827" }}>{d.title}</div>
+                      </div>
+                    </td>
+                    <td style={{ fontSize:12,color:"#6B7280" }}>
+                      {d.updated_at ? new Date(d.updated_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )
+      }
     </div>
   );
 }
@@ -1838,77 +1765,292 @@ function ProjectTable({ projects, onManage }) {
 }
 
 /* ══════════════════════════════════════════════════════════
-   NEW DOCUMENT MODAL
+   NEW DOCUMENT MODAL  (upload from PC  |  pick from cloud)
 ══════════════════════════════════════════════════════════ */
 function NewDocModal({ project, onClose }) {
   const qc = useQueryClient();
-  const [title, setTitle] = useState("");
-  const [fileType, setFileType] = useState("doc");
+  const [tab, setTab] = useState("upload");  // "upload" | "cloud"
   const [saving, setSaving] = useState(false);
 
-  const submit = async () => {
+  /* ── Upload tab ── */
+  const [title,    setTitle]    = useState("");
+  const [fileType, setFileType] = useState("docx");
+  const [pickedFile, setPickedFile] = useState(null);
+  const fileInputRef = useRef(null);
+
+  /* ── Cloud tab ── */
+  const [search,      setSearch]      = useState("");
+  const [selectedDoc, setSelectedDoc] = useState(null);
+
+  const { data: cloudData, isLoading: cloudLoading } = useQuery({
+    queryKey: ["documents-cloud"],
+    queryFn: () => getDocuments(),
+    enabled: tab === "cloud",
+  });
+  const cloudDocs = (cloudData?.results ?? (Array.isArray(cloudData) ? cloudData : []))
+    .filter(d => String(d.workspace) !== String(project.id));
+  const filteredCloud = search.trim()
+    ? cloudDocs.filter(d => d.title.toLowerCase().includes(search.toLowerCase()))
+    : cloudDocs;
+
+  /* ── Handlers ── */
+  const handleUpload = async () => {
     if (!title.trim()) return;
     setSaving(true);
     try {
       const safeName = title.trim().replace(/\s+/g, "_");
-      const fileName = `${safeName}.${fileType}`;
-      const blob = new Blob([" "], { type: "text/plain" });
-      const file = new File([blob], fileName);
-      const presigned = await requestUpload({
-        workspace: project.id, title: title.trim(), file_name: fileName, file_size: file.size,
-      });
-      await uploadFileToS3(presigned, file);
-      await confirmUpload({
-        workspace: project.id, title: title.trim(),
-        storage_key: presigned.fields?.key || presigned.storage_key,
-        file_name: fileName,
-      });
+      const fileName = pickedFile ? pickedFile.name : `${safeName}.${fileType}`;
+      const fileToSend = pickedFile || new File([new Blob([" "], {type:"text/plain"})], fileName);
+      await serverUploadDocument(project.id, title.trim(), fileToSend);
       qc.invalidateQueries({ queryKey: ["documents", project.id] });
       toast.success("Document created");
       onClose();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to create document");
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
+
+  const handleAddFromCloud = async () => {
+    if (!selectedDoc) return;
+    setSaving(true);
+    try {
+      await copyDocument(selectedDoc.id, project.id);
+      qc.invalidateQueries({ queryKey: ["documents", project.id] });
+      toast.success("Document added to project");
+      onClose();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to add document");
+    } finally { setSaving(false); }
+  };
+
+  const tabBtn = (id, label, icon) => (
+    <button onClick={()=>{setTab(id);setSelectedDoc(null);}}
+      style={{ flex:1,padding:"10px 8px",fontSize:13,fontWeight:500,border:"1.5px solid",borderRadius:10,
+        borderColor:tab===id?"#2563EB":"#E5E7EB",
+        background:tab===id?"#EFF6FF":"#fff",
+        color:tab===id?"#2563EB":"#6B7280",
+        fontFamily:"inherit",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:7,transition:"all .15s" }}>
+      {icon}{label}
+    </button>
+  );
 
   return (
     <div className="pr-overlay" onClick={onClose}>
-      <div className="pr-modal" style={{ maxWidth:400 }} onClick={e=>e.stopPropagation()}>
+      <div className="pr-modal" style={{ maxWidth:460 }} onClick={e=>e.stopPropagation()}>
         <button className="pr-modal-x" onClick={onClose}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
-        <h2>New Document</h2>
-        <div style={{ display:"flex",flexDirection:"column",gap:14,marginTop:16 }}>
-          <div>
-            <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:5 }}>Document Title *</label>
-            <input
-              className="pr-input"
-              placeholder="e.g. Contract Draft"
-              value={title}
-              onChange={e=>setTitle(e.target.value)}
-              onKeyDown={e=>{ if(e.key==="Enter") submit(); }}
-              autoFocus
-            />
+        <h2 style={{ marginBottom:14 }}>Add Document</h2>
+
+        {/* Tab switcher */}
+        <div style={{ display:"flex",gap:8,marginBottom:18 }}>
+          {tabBtn("upload", "Upload from computer",
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          )}
+          {tabBtn("cloud", "From cloud",
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+          )}
+        </div>
+
+        {/* ── Upload tab ── */}
+        {tab==="upload" && (
+          <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
+            <div>
+              <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:5 }}>Document Title *</label>
+              <input className="pr-input" placeholder="e.g. Contract Draft" value={title}
+                onChange={e=>setTitle(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter") handleUpload(); }}
+                autoFocus/>
+            </div>
+
+            {/* File picker */}
+            <div
+              onClick={()=>fileInputRef.current?.click()}
+              onDragOver={e=>e.preventDefault()}
+              onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)setPickedFile(f);}}
+              style={{ border:"1.5px dashed #E5E7EB",borderRadius:10,padding:"16px 12px",textAlign:"center",cursor:"pointer",background:"#FAFAFA",transition:"border-color .15s" }}
+              onMouseEnter={e=>e.currentTarget.style.borderColor="#2563EB"}
+              onMouseLeave={e=>e.currentTarget.style.borderColor="#E5E7EB"}>
+              <input ref={fileInputRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display:"none" }}
+                onChange={e=>{ const f=e.target.files?.[0]; if(f) setPickedFile(f); }}/>
+              {pickedFile ? (
+                <div style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:"#374151",fontSize:13 }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <span style={{ fontWeight:500 }}>{pickedFile.name}</span>
+                  <button onClick={e=>{e.stopPropagation();setPickedFile(null);}}
+                    style={{ background:"none",border:"none",color:"#9CA3AF",cursor:"pointer",padding:0,display:"flex" }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+              ) : (
+                <div style={{ color:"#9CA3AF",fontSize:13 }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" width="22" height="22" style={{ display:"block",margin:"0 auto 6px" }}><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                  Click or drag to attach a file <span style={{ color:"#9CA3AF",fontSize:11 }}>(optional)</span>
+                  <div style={{ fontSize:11,marginTop:3 }}>pdf · docx · xlsx</div>
+                </div>
+              )}
+            </div>
+
+            {/* File type selector (only when no file attached) */}
+            {!pickedFile && (
+              <div>
+                <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:5 }}>Create as</label>
+                <select value={fileType} onChange={e=>setFileType(e.target.value)}
+                  style={{ width:"100%",border:"1.5px solid #E5E7EB",borderRadius:8,padding:"9px 12px",fontSize:13,color:"#374151",outline:"none",background:"#fff",fontFamily:"inherit",cursor:"pointer" }}>
+                  <option value="docx">DOCX — Word Document</option>
+                  <option value="xlsx">XLSX — Spreadsheet</option>
+                </select>
+              </div>
+            )}
+
+            <div style={{ display:"flex",justifyContent:"flex-end",gap:10,marginTop:4 }}>
+              <button onClick={onClose} style={{ padding:"9px 18px",fontSize:13,fontWeight:500,border:"1.5px solid #E5E7EB",borderRadius:8,background:"#fff",color:"#374151",fontFamily:"inherit",cursor:"pointer" }}>Cancel</button>
+              <button onClick={handleUpload} disabled={!title.trim()||saving}
+                style={{ padding:"9px 20px",fontSize:13,fontWeight:600,border:"none",borderRadius:8,background:"#2563EB",color:"#fff",fontFamily:"inherit",cursor:(!title.trim()||saving)?"not-allowed":"pointer",opacity:(!title.trim()||saving)?0.5:1 }}>
+                {saving?"Uploading…":"Upload"}
+              </button>
+            </div>
           </div>
-          <div>
-            <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:5 }}>File Type</label>
-            <select
-              value={fileType}
-              onChange={e=>setFileType(e.target.value)}
-              style={{ width:"100%",border:"1.5px solid #E5E7EB",borderRadius:8,padding:"10px 12px",fontSize:13,color:"#374151",outline:"none",background:"#fff",fontFamily:"inherit",cursor:"pointer" }}
-            >
-              <option value="doc">DOC — Word Document</option>
-              <option value="xls">XLS — Spreadsheet</option>
-            </select>
+        )}
+
+        {/* ── Cloud tab ── */}
+        {tab==="cloud" && (
+          <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
+            <input className="pr-input" placeholder="Search documents…" value={search}
+              onChange={e=>setSearch(e.target.value)} autoFocus/>
+
+            <div style={{ maxHeight:280,overflowY:"auto",borderRadius:10,border:"1.5px solid #F3F4F6" }}>
+              {cloudLoading && (
+                <div style={{ padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13 }}>Loading…</div>
+              )}
+              {!cloudLoading && filteredCloud.length===0 && (
+                <div style={{ padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13 }}>No documents found</div>
+              )}
+              {filteredCloud.map(doc=>{
+                const dt = fileTypeInfo(doc.file_type);
+                const isSelected = selectedDoc?.id === doc.id;
+                return (
+                  <div key={doc.id} onClick={()=>setSelectedDoc(isSelected ? null : doc)}
+                    style={{ display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer",borderBottom:".5px solid #F3F4F6",
+                      background:isSelected?"#EFF6FF":"#fff",transition:"background .1s" }}
+                    onMouseEnter={e=>{ if(!isSelected) e.currentTarget.style.background="#F9FAFB"; }}
+                    onMouseLeave={e=>{ if(!isSelected) e.currentTarget.style.background="#fff"; }}>
+                    <div style={{ width:32,height:36,borderRadius:6,background:dt.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                      <span style={{ fontSize:8,fontWeight:700,color:dt.color }}>{dt.ext}</span>
+                    </div>
+                    <div style={{ flex:1,minWidth:0 }}>
+                      <div style={{ fontSize:13,fontWeight:500,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{doc.title}</div>
+                      <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>
+                        {new Date(doc.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.5" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display:"flex",justifyContent:"flex-end",gap:10,marginTop:4 }}>
+              <button onClick={onClose} style={{ padding:"9px 18px",fontSize:13,fontWeight:500,border:"1.5px solid #E5E7EB",borderRadius:8,background:"#fff",color:"#374151",fontFamily:"inherit",cursor:"pointer" }}>Cancel</button>
+              <button onClick={handleAddFromCloud} disabled={!selectedDoc||saving}
+                style={{ padding:"9px 20px",fontSize:13,fontWeight:600,border:"none",borderRadius:8,background:"#2563EB",color:"#fff",fontFamily:"inherit",cursor:(!selectedDoc||saving)?"not-allowed":"pointer",opacity:(!selectedDoc||saving)?0.5:1 }}>
+                {saving?"Adding…":"Add to Project"}
+              </button>
+            </div>
           </div>
-          <div style={{ display:"flex",justifyContent:"flex-end",gap:10,marginTop:6 }}>
-            <button onClick={onClose} style={{ padding:"9px 18px",fontSize:13,fontWeight:500,border:"1.5px solid #E5E7EB",borderRadius:8,background:"#fff",color:"#374151",fontFamily:"inherit",cursor:"pointer" }}>Cancel</button>
-            <button onClick={submit} disabled={!title.trim()||saving} style={{ padding:"9px 18px",fontSize:13,fontWeight:600,border:"none",borderRadius:8,background:"#2563EB",color:"#fff",fontFamily:"inherit",cursor:(!title.trim()||saving)?"not-allowed":"pointer",opacity:(!title.trim()||saving)?0.5:1 }}>
-              {saving ? "Creating…" : "Create"}
-            </button>
-          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+   MANAGE MEMBERS MODAL
+══════════════════════════════════════════════════════════ */
+function ManageMembersModal({ project, onClose }) {
+  const qc = useQueryClient();
+  const [newMembers, setNewMembers] = useState([{ email: "", role: "viewer" }]);
+  const [errors, setErrors] = useState([]);
+  const [saving, setSaving] = useState(false);
+
+  const { data: membersData, isLoading } = useQuery({
+    queryKey: ["members", project.id],
+    queryFn: () => getMembers(project.id),
+    enabled: !!project.id,
+  });
+  const existing = membersData?.results ?? (Array.isArray(membersData) ? membersData : []);
+
+  const handleAdd = async () => {
+    const toInvite = newMembers.filter(m => m.email?.trim());
+    if (toInvite.length === 0) { onClose(); return; }
+    const errs = newMembers.map(m => ({
+      email: m.email && !/\S+@\S+\.\S+/.test(m.email) ? "Invalid email." : " ",
+    }));
+    if (errs.some(e => e.email && e.email !== " ")) { setErrors(errs); return; }
+    setSaving(true);
+    const results = await Promise.allSettled(
+      toInvite.map(m => addMember(project.id, { email: m.email, role: m.role || "viewer" }))
+    );
+    setSaving(false);
+    const failed = results.filter(r => r.status === "rejected");
+    if (failed.length) {
+      toast.error(`${failed.length} invite(s) failed — check emails or permissions`);
+    } else {
+      toast.success("Members invited successfully");
+    }
+    qc.invalidateQueries({ queryKey: ["members", project.id] });
+    onClose();
+  };
+
+  const roleLabel = { owner: "Owner", editor: "Editor", signer: "Signer", viewer: "Viewer" };
+
+  return (
+    <div className="pr-overlay" onClick={onClose}>
+      <div className="pr-modal" onClick={e => e.stopPropagation()}
+        style={{ maxWidth: 520, padding: "28px 28px 24px" }}>
+        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20 }}>
+          <h2 style={{ fontSize:17,fontWeight:700,color:"#111827",margin:0 }}>Manage Members</h2>
+          <button onClick={onClose} style={{ background:"none",border:"none",cursor:"pointer",color:"#6B7280",padding:4,borderRadius:6,display:"flex",alignItems:"center" }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        {/* Current members */}
+        <div style={{ marginBottom:20 }}>
+          <div style={{ fontSize:12,fontWeight:600,color:"#6B7280",textTransform:"uppercase",letterSpacing:.5,marginBottom:10 }}>Current Members</div>
+          {isLoading
+            ? <div style={{ fontSize:13,color:"#9CA3AF" }}>Loading…</div>
+            : existing.length === 0
+              ? <div style={{ fontSize:13,color:"#9CA3AF" }}>No members yet</div>
+              : existing.map((m, i) => (
+                  <div key={i} style={{ display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:".5px solid #F3F4F6" }}>
+                    <div style={{ width:32,height:32,borderRadius:"50%",background:AV_COLORS[i%AV_COLORS.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0 }}>
+                      {(m.user?.full_name||m.user?.email||"?")[0].toUpperCase()}
+                    </div>
+                    <div style={{ flex:1,minWidth:0 }}>
+                      <div style={{ fontSize:13,fontWeight:500,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{m.user?.full_name||"—"}</div>
+                      <div style={{ fontSize:11,color:"#9CA3AF" }}>{m.user?.email||""}</div>
+                    </div>
+                    <span style={{ fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20,background:"#EEF2FF",color:"#4F46E5" }}>
+                      {roleLabel[m.role]||m.role}
+                    </span>
+                  </div>
+                ))
+          }
+        </div>
+
+        {/* Invite new */}
+        <div style={{ fontSize:12,fontWeight:600,color:"#6B7280",textTransform:"uppercase",letterSpacing:.5,marginBottom:10 }}>Invite New Members</div>
+        <MemberInvite members={newMembers} setMembers={setNewMembers} errors={errors} setErrors={setErrors}/>
+
+        <div style={{ display:"flex",gap:10,justifyContent:"flex-end",marginTop:20 }}>
+          <button onClick={onClose} style={{ border:".5px solid #E5E7EB",borderRadius:8,padding:"9px 20px",fontSize:13,background:"#fff",color:"#6B7280",cursor:"pointer",fontFamily:"inherit" }}>Cancel</button>
+          <button onClick={handleAdd} disabled={saving}
+            style={{ background:saving?"#93C5FD":"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"9px 24px",fontSize:13,fontWeight:500,cursor:saving?"not-allowed":"pointer",fontFamily:"inherit" }}>
+            {saving ? "Inviting…" : "Send Invites"}
+          </button>
         </div>
       </div>
     </div>
@@ -1922,6 +2064,7 @@ function ProjectDetail({ project }) {
   const [view,setView]=useState("table");
   const [openDoc,setOpenDoc]=useState(null);
   const [showNewDoc,setShowNewDoc]=useState(false);
+  const [showMembers,setShowMembers]=useState(false);
 
   const { data: docsData, isLoading: docsLoading } = useQuery({
     queryKey: ["documents", project.id],
@@ -1935,17 +2078,21 @@ function ProjectDetail({ project }) {
     <div style={{ padding:"20px",flex:1,overflow:"auto" }}>
       {openDoc && <DocumentModal doc={openDoc} projectName={project.name} onClose={()=>setOpenDoc(null)}/>}
       {showNewDoc && <NewDocModal project={project} onClose={()=>setShowNewDoc(false)}/>}
+      {showMembers && <ManageMembersModal project={project} onClose={()=>setShowMembers(false)}/>}
       <div style={{ display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:4 }}>
         <div>
           <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:6 }}>
             <h1 style={{ fontSize:22,fontWeight:700,color:"#111827" }}>{project.name}</h1>
             <span className="s-active"><span style={{ width:6,height:6,borderRadius:"50%",background:"#22c55e" }}/>Active</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="#FBBF24" strokeWidth="2" width="16" height="16"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </div>
-          <p style={{ fontSize:13,color:"#6B7280",maxWidth:600 }}>This document manages the contract approval process, where multiple documents are reviewed and approved through several stages before finalization.</p>
+          <p style={{ fontSize:13,color:"#6B7280",maxWidth:600 }}>{project.description || "Document management workspace."}</p>
         </div>
         <div style={{ display:"flex",alignItems:"center",gap:10,flexShrink:0 }}>
-          <AvatarStack members={["M","A","B","P"]} extra={12}/>
+          <button onClick={()=>setShowMembers(true)}
+            style={{ background:"#fff",color:"#374151",border:".5px solid #E5E7EB",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:500,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Members
+          </button>
           <button onClick={()=>setShowNewDoc(true)} style={{ background:"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             Add Document
@@ -2068,7 +2215,7 @@ function TimelineView() {
   const first=new Date(year,month,1).getDay();const days=new Date(year,month+1,0).getDate();const prevDays=new Date(year,month,0).getDate();
   const cells=[];for(let i=0;i<first;i++)cells.push({day:prevDays-first+1+i,out:true});for(let d=1;d<=days;d++)cells.push({day:d,out:false});while(cells.length%7!==0)cells.push({day:cells.length-days-first+1,out:true});
   const MN=["January","February","March","April","May","June","July","August","September","October","November","December"];
-  const evts=CALENDAR_EVENTS.filter(e=>e.month===month+1);
+  const evts=[];
   const getE=(day,out)=>!out?evts.filter(e=>e.day===day):[];
   const prev=()=>{if(month===0){setMonth(11);setYear(y=>y-1);}else setMonth(m=>m-1);};
   const next=()=>{if(month===11){setMonth(0);setYear(y=>y+1);}else setMonth(m=>m+1);};
@@ -2119,6 +2266,7 @@ const NAV = [
 ══════════════════════════════════════════════════════════ */
 export default function Projects({ onGoToAuth, onNavigate }) {
   const qc = useQueryClient();
+  const user = useAuthStore(s => s.user);
   const [sbOpen,    setSbOpen]    = useState(true);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
@@ -2132,7 +2280,16 @@ export default function Projects({ onGoToAuth, onNavigate }) {
     queryFn: getWorkspaces,
   });
 
-  const projects = (wsData?.results ?? (Array.isArray(wsData) ? wsData : [])).map(ws => ({
+  const { data: archivedDocsData } = useQuery({
+    queryKey: ["documents", "archived"],
+    queryFn: () => getDocuments({ status: "archived" }),
+    enabled: tab === "archived",
+  });
+
+  const allWs = wsData?.results ?? (Array.isArray(wsData) ? wsData : []);
+  const orgName = allWs[0]?.title || "Organization";
+
+  const projects = allWs.map(ws => ({
     id: ws.id,
     name: ws.title,
     status: ws.status === "active" ? "Active" : ws.status === "closed" ? "Inactive" : "Completed",
@@ -2143,6 +2300,9 @@ export default function Projects({ onGoToAuth, onNavigate }) {
       ? new Date(ws.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })
       : "—",
   }));
+
+  const archivedProjects = projects.filter(p => p.status === "Inactive");
+  const archivedDocs = archivedDocsData?.results ?? (Array.isArray(archivedDocsData) ? archivedDocsData : []);
 
   const handleCreate = (data) => {
     qc.invalidateQueries({ queryKey: ["workspaces"] });
@@ -2225,12 +2385,12 @@ export default function Projects({ onGoToAuth, onNavigate }) {
             </div>
           </div>
           <div className="pr-profile-info">
-            <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>Erik Serikov</div>
-            <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>220103351@stu.sdu.edu.kz</div>
+            <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{user?.full_name || "—"}</div>
+            <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>{user?.email || ""}</div>
           </div>
           <div className="pr-org">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>SDU University</span>
+            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{orgName}</span>
             <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
@@ -2279,7 +2439,6 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                       <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                       <input placeholder="Search projects, tasks, or files..." style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",width:190,fontFamily:"inherit" }}/>
                     </div>
-                    <AvatarStack members={["M","A","B","P"]} extra={12}/>
                   </div>
                 </div>
 
@@ -2299,8 +2458,8 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                         ? <EmptyState/>
                         : <ProjectTable projects={projects} onManage={p=>setSelected(p)}/>
                   )}
-                  {tab==="assigned" && (SAMPLE_DOCS.length===0 ? <AssignedDocsEmpty/> : <AssignedDocsTable docs={SAMPLE_DOCS} onOpen={setSelectedDoc}/>)}
-                  {tab==="archived" && (ARCHIVED_PROJECTS.length===0 && ARCHIVED_DOCS.length===0 ? <ArchivedEmpty/> : <ArchivedSection/>)}
+                  {tab==="assigned" && <AssignedDocsEmpty/>}
+                  {tab==="archived" && (archivedProjects.length===0 && archivedDocs.length===0 ? <ArchivedEmpty/> : <ArchivedSection projects={archivedProjects} docs={archivedDocs}/>)}
                 </div>
               </>
             )}

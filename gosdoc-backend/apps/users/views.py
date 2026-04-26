@@ -428,6 +428,64 @@ class AvatarConfirmView(APIView):
 
 
 # ============================================================
+# Phase 11 — Avatar server-side upload (no CORS issues)
+# ============================================================
+
+class AvatarServerUploadView(APIView):
+    """
+    POST /api/v1/users/me/avatar/upload/
+    JWT — загрузить аватар через сервер (без presigned URL, без CORS).
+    Принимает multipart/form-data с полем 'file'.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        import uuid as _uuid
+        import boto3
+        from apps.documents.storage import get_s3_client, get_content_type, generate_presigned_url
+        from django.conf import settings as django_settings
+
+        file = request.FILES.get("file")
+        if not file:
+            return Response({"detail": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        ext = file.name.rsplit(".", 1)[-1].lower() if "." in file.name else "jpg"
+        if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
+            return Response({"detail": "Unsupported image format."}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+
+        IMAGE_CONTENT_TYPES = {
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "gif": "image/gif", "webp": "image/webp",
+        }
+        storage_key = f"avatars/{request.user.id}/{_uuid.uuid4()}.{ext}"
+        content_type = IMAGE_CONTENT_TYPES.get(ext, "image/jpeg")
+
+        try:
+            s3 = get_s3_client()
+            bucket = django_settings.AWS_STORAGE_BUCKET_NAME
+            s3.upload_fileobj(
+                file,
+                bucket,
+                storage_key,
+                ExtraArgs={"ContentType": content_type},
+            )
+        except Exception as exc:
+            logger.error("Avatar S3 upload failed: %s", exc)
+            return Response({"detail": "Upload to storage failed."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        # Max presigned URL TTL is 7 days for S3/Yandex
+        avatar_url = generate_presigned_url(storage_key, expiration=604800) or storage_key
+
+        user = request.user
+        user.avatar_key = storage_key
+        user.avatar_url = avatar_url
+        user.save(update_fields=["avatar_key", "avatar_url"])
+
+        logger.info("Аватар обновлён (server-upload) для %s", user.email)
+        return Response({"avatar_url": avatar_url})
+
+
+# ============================================================
 # Phase 11 — UserSettings
 # ============================================================
 

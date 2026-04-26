@@ -2,12 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import useAuthStore from "./store/authStore";
 import {
-  updateProfile, changePassword, deleteAccount,
-  requestAvatarUpload, confirmAvatarUpload,
+  getMe, updateProfile, changePassword, deleteAccount,
+  serverUploadAvatar,
   getSettings, updateSettings,
   requestEmailChange, confirmEmailChange,
 } from "./api/users";
-import { uploadFileToS3 } from "./api/documents";
 
 /* ══════════════════════════════════════════════════════════
    CSS
@@ -286,11 +285,10 @@ export function ProfileModal({ onClose, onChangePassword, onChangeEmail }) {
     if (!file) return;
     setAvatarLoading(true);
     try {
-      const presigned = await requestAvatarUpload({ file_name: file.name, file_size: file.size });
-      await uploadFileToS3(presigned, file);
-      const result = await confirmAvatarUpload({ storage_key: presigned.storage_key });
-      setAvatarSrc(result.avatar_url);
-      setUser({ ...user, avatar_url: result.avatar_url });
+      await serverUploadAvatar(file);
+      const freshUser = await getMe();
+      setAvatarSrc(freshUser.avatar_url || null);
+      setUser(freshUser);
       toast.success("Avatar updated");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to upload avatar");

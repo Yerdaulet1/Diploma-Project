@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
 import { getNotifications, markRead as apiMarkRead, markAllRead as apiMarkAllRead, bulkDeleteNotifications } from "./api/notifications";
+import { getWorkspaces } from "./api/workspaces";
 import useAuthStore from "./store/authStore";
 
 
@@ -149,6 +150,9 @@ const NT_NAV = [
 
 function Sidebar({ onNavigate }) {
   const [open, setOpen] = useState(false);
+  const user = useAuthStore(s => s.user);
+  const { data: wsData } = useQuery({ queryKey: ["workspaces"], queryFn: getWorkspaces });
+  const orgName = wsData?.results?.[0]?.title || wsData?.[0]?.title || "Organization";
   return (
     <aside className={`nt-sb${open ? " open" : ""}`}>
       <div className="nt-profile">
@@ -165,7 +169,7 @@ function Sidebar({ onNavigate }) {
       </div>
       <div className="nt-org">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-        <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>SDU University</span>
+        <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{orgName}</span>
         <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
       </div>
@@ -267,6 +271,9 @@ export default function Notifications({ onGoBack, onGoToAuth, onNavigate }) {
 
   const user = useAuthStore(s => s.user);
   const queryClient = useQueryClient();
+
+  const { data: wsData } = useQuery({ queryKey: ["workspaces"], queryFn: getWorkspaces });
+  const orgName = wsData?.results?.[0]?.title || wsData?.[0]?.title || "Organization";
 
   // Debounce search → API
   const handleSearchChange = (e) => {

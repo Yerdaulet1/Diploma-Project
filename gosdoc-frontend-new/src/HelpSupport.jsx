@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import ProfileController, { ProfileMenu } from "./Profile";
 import useAuthStore from "./store/authStore";
 import { getFaqs, sendHelpChat } from "./api/help";
+import { getWorkspaces } from "./api/workspaces";
 import logoImg from "./assets/Group 2.svg";
 
 /* ══════════════════════════════════════════════════════════
@@ -555,6 +556,8 @@ function TopicDetail({ topicId }) {
 export default function HelpSupport({ onGoToAuth, onNavigate }) {
   const { user } = useAuthStore();
   const [selectedTopic, setSelectedTopic] = useState(null);
+  const { data: wsData } = useQuery({ queryKey: ["workspaces"], queryFn: getWorkspaces });
+  const orgName = wsData?.results?.[0]?.title || wsData?.[0]?.title || "Organization";
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
   const [sbOpen, setSbOpen] = useState(true);
@@ -629,7 +632,7 @@ export default function HelpSupport({ onGoToAuth, onNavigate }) {
           </div>
           <div className="hs-org">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>SDU University</span>
+            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{orgName}</span>
             <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>

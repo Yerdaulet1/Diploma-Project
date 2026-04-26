@@ -255,6 +255,138 @@ class DocumentListCreateView(generics.ListCreateAPIView):
         )
 
 
+class DocumentServerUploadView(APIView):
+    """
+    POST /api/v1/documents/server-upload/
+    Загрузка файла через сервер (без presigned URL).
+    Используется когда S3 недоступен напрямую из браузера (CORS).
+    multipart/form-data: file, workspace (UUID), title (string)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        file_obj = request.FILES.get("file")
+        workspace_id = request.data.get("workspace", "").strip()
+        title = request.data.get("title", "").strip()
+
+        if not file_obj:
+            return Response({"file": "Файл обязателен."}, status=status.HTTP_400_BAD_REQUEST)
+        if not workspace_id:
+            return Response({"workspace": "Обязательное поле."}, status=status.HTTP_400_BAD_REQUEST)
+        if not title:
+            return Response({"title": "Обязательное поле."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .storage import validate_file_extension
+        if not validate_file_extension(file_obj.name):
+            from django.conf import settings as django_settings
+            return Response(
+                {"file": f"Недопустимый формат. Разрешены: {', '.join(django_settings.ALLOWED_DOCUMENT_EXTENSIONS)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        workspace = Workspace.objects.filter(pk=workspace_id, members__user=request.user).first()
+        if not workspace:
+            workspace = Workspace.objects.filter(pk=workspace_id, created_by=request.user).first()
+        if not workspace:
+            return Response({"workspace": "Кабинет не найден или нет доступа."}, status=status.HTTP_400_BAD_REQUEST)
+
+        assert_workspace_role(request.user, workspace, ["owner", "editor"])
+
+        storage_key = generate_storage_key(str(workspace.id), file_obj.name)
+        content_type = getattr(file_obj, "content_type", None) or get_content_type(file_obj.name)
+        success = upload_to_s3(file_obj, storage_key, content_type=content_type)
+        if not success:
+            return Response({"detail": "Ошибка загрузки в S3. Проверьте настройки хранилища."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        file_ext = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else ""
+        document = Document.objects.create(
+            workspace=workspace,
+            title=title,
+            file_type=file_ext,
+            storage_key=storage_key,
+            uploaded_by=request.user,
+            status=Document.DocumentStatus.DRAFT,
+        )
+        version = DocumentVersion.objects.create(
+            document=document,
+            version_number=1,
+            storage_key=storage_key,
+            checksum="pending",
+            created_by=request.user,
+        )
+        document.current_version = version
+        document.save(update_fields=["current_version"])
+
+        try:
+            from apps.documents.tasks import analyze_version_diff_task
+            analyze_version_diff_task.delay(str(version.id))
+        except Exception as exc:
+            logger.warning("SHA-256 task skipped for version %s: %s", version.id, exc)
+
+        log_document_action(
+            document=document,
+            user=request.user,
+            action=DocumentAuditLog.Action.CREATED,
+            details={"title": document.title, "workspace": str(workspace.id), "method": "server-upload"},
+            ip_address=get_client_ip(request),
+        )
+        logger.info("Документ создан (server-upload): %s [workspace=%s]", document.title, workspace.id)
+
+        return Response(DocumentSerializer(document, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
+class DocumentCopyView(APIView):
+    """
+    POST /api/v1/documents/{id}/copy/
+    Копирует документ в другой кабинет (workspace).
+    Body: { "workspace": "<target_workspace_uuid>" }
+    Создаёт новую запись Document с тем же storage_key (S3-файл не дублируется).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        source = get_object_or_404(
+            Document.objects.filter(workspace__members__user=request.user),
+            pk=pk,
+        )
+        target_ws_id = (request.data.get("workspace") or "").strip()
+        if not target_ws_id:
+            return Response({"workspace": "Обязательное поле."}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_ws = Workspace.objects.filter(pk=target_ws_id, members__user=request.user).first()
+        if not target_ws:
+            return Response({"workspace": "Кабинет не найден или нет доступа."}, status=status.HTTP_400_BAD_REQUEST)
+
+        assert_workspace_role(request.user, target_ws, ["owner", "editor"])
+
+        document = Document.objects.create(
+            workspace=target_ws,
+            title=source.title,
+            file_type=source.file_type,
+            storage_key=source.storage_key,
+            uploaded_by=request.user,
+            status=Document.DocumentStatus.DRAFT,
+        )
+        version = DocumentVersion.objects.create(
+            document=document,
+            version_number=1,
+            storage_key=source.storage_key,
+            checksum=source.current_version.checksum if source.current_version else "pending",
+            created_by=request.user,
+        )
+        document.current_version = version
+        document.save(update_fields=["current_version"])
+
+        log_document_action(
+            document=document,
+            user=request.user,
+            action=DocumentAuditLog.Action.CREATED,
+            details={"title": document.title, "copied_from": str(source.id), "workspace": str(target_ws.id)},
+            ip_address=get_client_ip(request),
+        )
+        return Response(DocumentSerializer(document, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
 class DocumentDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     GET    /api/v1/documents/{id}/ — JWT + Member
@@ -1010,3 +1142,68 @@ class DocumentContentView(APIView):
             document.title, request.user.email,
         )
         return Response(serializer.data)
+
+
+# ============================================================
+# Phase 8 — Extract content from S3 binary file
+# ============================================================
+
+class DocumentExtractContentView(APIView):
+    """
+    GET /api/v1/documents/{id}/extract/
+    Downloads the file from S3 and extracts editable content:
+      - .docx / .odt  → HTML via mammoth
+      - .xlsx / .xls / .ods → 2-D array via openpyxl
+    Returns: { "content": {"html": "..."} } or { "sheet_data": [[...], ...] }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        document = get_object_or_404(
+            Document.objects.filter(workspace__members__user=request.user),
+            pk=pk,
+        )
+
+        if not document.storage_key:
+            return Response({"detail": "No file attached to this document."}, status=status.HTTP_404_NOT_FOUND)
+
+        from .storage import get_s3_client
+        from django.conf import settings as django_settings
+
+        s3 = get_s3_client()
+        bucket = django_settings.AWS_STORAGE_BUCKET_NAME
+
+        try:
+            obj = s3.get_object(Bucket=bucket, Key=document.storage_key)
+            file_bytes = obj["Body"].read()
+        except Exception as exc:
+            logger.warning("Failed to download %s from S3: %s", document.storage_key, exc)
+            return Response({"detail": "Could not download file from storage."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        ft = (document.file_type or "").lower()
+
+        if ft in ("docx", "odt"):
+            try:
+                import io
+                import mammoth
+                result = mammoth.convert_to_html(io.BytesIO(file_bytes))
+                return Response({"content": {"html": result.value}})
+            except Exception as exc:
+                logger.warning("mammoth conversion failed for doc %s: %s", pk, exc)
+                return Response({"detail": "Could not extract document text."}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+        if ft in ("xlsx", "xls", "ods"):
+            try:
+                import io
+                import openpyxl
+                wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+                ws = wb.active
+                rows = []
+                for row in ws.iter_rows(values_only=True):
+                    rows.append([str(c) if c is not None else "" for c in row])
+                return Response({"sheet_data": rows})
+            except Exception as exc:
+                logger.warning("openpyxl extraction failed for doc %s: %s", pk, exc)
+                return Response({"detail": "Could not extract spreadsheet data."}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+        return Response({"detail": f"Extraction not supported for file type: {ft}"}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)

@@ -129,9 +129,27 @@ export const deleteAttachment = (docId, attId) =>
 export const approveDocument = (docId) =>
   api.post(`/documents/${docId}/approve/`).then((r) => r.data);
 
+// --- Copy document to another workspace ---
+export const copyDocument = (docId, targetWorkspaceId) =>
+  api.post(`/documents/${docId}/copy/`, { workspace: targetWorkspaceId }).then((r) => r.data);
+
+// --- Server-side upload (no CORS issues) ---
+export const serverUploadDocument = (workspaceId, title, file) => {
+  const fd = new FormData();
+  fd.append("workspace", workspaceId);
+  fd.append("title", title);
+  fd.append("file", file);
+  return api.post("/documents/server-upload/", fd, {
+    headers: { "Content-Type": "multipart/form-data" },
+  }).then((r) => r.data);
+};
+
 // --- Content (Phase 7/8) ---
 export const getDocumentContent = (id) =>
   api.get(`/documents/${id}/content/`).then((r) => r.data);
 
 export const saveDocumentContent = (id, data) =>
   api.put(`/documents/${id}/content/`, data).then((r) => r.data);
+
+export const extractDocumentContent = (id) =>
+  api.get(`/documents/${id}/extract/`).then((r) => r.data);

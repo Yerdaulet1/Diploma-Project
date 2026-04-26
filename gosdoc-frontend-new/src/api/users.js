@@ -25,6 +25,14 @@ export const requestAvatarUpload = (data) =>
 export const confirmAvatarUpload = (data) =>
   api.post("/users/me/avatar/confirm/", data).then((r) => r.data);
 
+export const serverUploadAvatar = (file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post("/users/me/avatar/upload/", fd, {
+    headers: { "Content-Type": "multipart/form-data" },
+  }).then((r) => r.data);
+};
+
 // Settings (Phase 11/12)
 export const getSettings = () =>
   api.get("/users/me/settings/").then((r) => r.data);

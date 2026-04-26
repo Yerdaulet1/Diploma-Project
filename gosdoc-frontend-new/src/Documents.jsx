@@ -6,7 +6,8 @@ import logoImg from "./assets/Group 2.svg";
 import {
   getDocuments, deleteDocument,
   requestUpload, uploadFileToS3, confirmUpload, getDownloadUrl,
-  getDocumentContent, saveDocumentContent,
+  getDocumentContent, saveDocumentContent, extractDocumentContent,
+  serverUploadDocument, signDocument,
 } from "./api/documents";
 import { getWorkspaces } from "./api/workspaces";
 import useAuthStore from "./store/authStore";
@@ -187,14 +188,14 @@ const XLS_TABS= ["Home","Insert","Page Layout","Formulas","Data","Review","View"
 
 function apiDocToUi(doc) {
   const ft = (doc.file_type || "doc").toLowerCase();
-  const isXls = ft === "xlsx" || ft === "ods";
-  const isEditable = ft === "odt" || ft === "ods";
+  const isXls = ft === "xlsx" || ft === "xls" || ft === "ods";
+  const isPdf = ft === "pdf";
   return {
     id: doc.id,
     name: doc.title,
     ext: ft,
-    color: isXls ? "#16A34A" : "#2563EB",
-    bg:    isXls ? "#DCFCE7" : "#DBEAFE",
+    color: isXls ? "#16A34A" : isPdf ? "#EF4444" : "#2563EB",
+    bg:    isXls ? "#DCFCE7" : isPdf ? "#FEE2E2" : "#DBEAFE",
     owner: doc.uploaded_by_name || "Me",
     lastOpened: doc.updated_at
       ? new Date(doc.updated_at).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" })
@@ -204,7 +205,8 @@ function apiDocToUi(doc) {
       ? new Date(doc.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })
       : "—",
     docType: isXls ? "xls" : "docs",
-    _isEditable: isEditable,
+    _isEditable: !isPdf,
+    _isPdf: isPdf,
     _apiId: doc.id,
   };
 }
@@ -220,35 +222,59 @@ const NAV = [
 /* ══════════════════════════════════════════════════════════
    TYPE SELECT MODAL
 ══════════════════════════════════════════════════════════ */
-function TypeSelectModal({ onSelect, onClose }) {
-  const [sel, setSel] = useState(null);
+function TypeSelectModal({ onSelect, onUpload, onClose }) {
+  const [sel, setSel]       = useState(null);
+  const [file, setFile]     = useState(null);
+  const [title, setTitle]   = useState("");
+  const [drag, setDrag]     = useState(false);
+  const fileRef = useRef(null);
+
+  const ALLOWED = ["pdf","docx","xlsx"];
+  const pickFile = (f) => {
+    if (!f) return;
+    const ext = f.name.split(".").pop().toLowerCase();
+    if (!ALLOWED.includes(ext)) { toast.error("Only .pdf, .docx, .xlsx allowed"); return; }
+    setFile(f);
+    setTitle(f.name.replace(/\.[^.]+$/, ""));
+  };
+
+  const btnColor = sel === "xls" ? "#16A34A" : "#2563EB";
+  const canGo    = sel === "upload" ? !!(file && title.trim()) : !!sel;
+
+  const handleGo = () => {
+    if (sel === "upload") { if (file && title.trim()) onUpload(file, title.trim()); }
+    else if (sel)          { onSelect(sel); }
+  };
+
   return (
     <div className="dc-overlay" onClick={onClose}>
-      <div className="dc-modal" onClick={e=>e.stopPropagation()} style={{ maxWidth:460 }}>
+      <div className="dc-modal" onClick={e=>e.stopPropagation()} style={{ maxWidth:480 }}>
         <button className="dc-modal-close" onClick={onClose}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
-        <div style={{ fontSize:17,fontWeight:700,color:"#111827",marginBottom:4 }}>Create new document</div>
-        <div style={{ fontSize:13,color:"#9CA3AF" }}>Choose the type of document to create</div>
+        <div style={{ fontSize:17,fontWeight:700,color:"#111827",marginBottom:4 }}>New Document</div>
+        <div style={{ fontSize:13,color:"#9CA3AF",marginBottom:2 }}>Create a blank document or upload from your computer</div>
+
+        {/* Create cards */}
         <div className="dc-type-cards">
-          <div className={`dc-type-card${sel==="docs"?" sel":""}`} onClick={()=>setSel("docs")}>
-            <svg viewBox="0 0 48 48" fill="none" width="52" height="52">
+          <div className={`dc-type-card${sel==="docs"?" sel":""}`} onClick={()=>{ setSel("docs"); setFile(null); }}>
+            <svg viewBox="0 0 48 48" fill="none" width="48" height="48">
               <rect x="6" y="2" width="36" height="44" rx="4" fill="#DBEAFE"/>
               <rect x="6" y="2" width="36" height="44" rx="4" stroke="#2563EB" strokeWidth="1.5"/>
-              <rect x="26" y="2" width="16" height="14" rx="0" fill="#BFDBFE"/>
+              <rect x="26" y="2" width="16" height="14" fill="#BFDBFE"/>
               <path d="M26 2 L42 16 L26 16 Z" fill="#2563EB" opacity=".3"/>
               <line x1="13" y1="22" x2="35" y2="22" stroke="#2563EB" strokeWidth="1.5" strokeLinecap="round"/>
               <line x1="13" y1="28" x2="35" y2="28" stroke="#93C5FD" strokeWidth="1.5" strokeLinecap="round"/>
               <line x1="13" y1="34" x2="27" y2="34" stroke="#93C5FD" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
-            <div style={{ fontWeight:600,fontSize:14,color:"#111827" }}>Word Document</div>
-            <div style={{ fontSize:11.5,color:"#9CA3AF" }}>.docs — rich text editor</div>
+            <div style={{ fontWeight:600,fontSize:13,color:"#111827" }}>Word Document</div>
+            <div style={{ fontSize:11,color:"#9CA3AF" }}>.docx — rich text</div>
           </div>
-          <div className={`dc-type-card xls${sel==="xls"?" sel":""}`} onClick={()=>setSel("xls")}>
-            <svg viewBox="0 0 48 48" fill="none" width="52" height="52">
+          <div className={`dc-type-card xls${sel==="xls"?" sel":""}`} onClick={()=>{ setSel("xls"); setFile(null); }}>
+            <svg viewBox="0 0 48 48" fill="none" width="48" height="48">
               <rect x="6" y="2" width="36" height="44" rx="4" fill="#DCFCE7"/>
               <rect x="6" y="2" width="36" height="44" rx="4" stroke="#16A34A" strokeWidth="1.5"/>
-              <rect x="26" y="2" width="16" height="14" rx="0" fill="#BBF7D0"/>
+              <rect x="26" y="2" width="16" height="14" fill="#BBF7D0"/>
               <path d="M26 2 L42 16 L26 16 Z" fill="#16A34A" opacity=".3"/>
               <line x1="13" y1="20" x2="35" y2="20" stroke="#16A34A" strokeWidth="1" opacity=".5"/>
               <line x1="13" y1="27" x2="35" y2="27" stroke="#16A34A" strokeWidth="1" opacity=".5"/>
@@ -256,15 +282,74 @@ function TypeSelectModal({ onSelect, onClose }) {
               <line x1="22" y1="20" x2="22" y2="41" stroke="#16A34A" strokeWidth="1" opacity=".5"/>
               <line x1="30" y1="20" x2="30" y2="41" stroke="#16A34A" strokeWidth="1" opacity=".5"/>
             </svg>
-            <div style={{ fontWeight:600,fontSize:14,color:"#111827" }}>Excel Spreadsheet</div>
-            <div style={{ fontSize:11.5,color:"#9CA3AF" }}>.xls — spreadsheet editor</div>
+            <div style={{ fontWeight:600,fontSize:13,color:"#111827" }}>Excel Spreadsheet</div>
+            <div style={{ fontSize:11,color:"#9CA3AF" }}>.xlsx — spreadsheet</div>
           </div>
         </div>
+
+        {/* Upload strip */}
+        <div
+          style={{ marginTop:12,border:`2px solid ${sel==="upload"?"#6B7280":"#E5E7EB"}`,borderRadius:12,padding:"14px 16px",cursor:"pointer",background:sel==="upload"?"#F9FAFB":"#fff",transition:"all .15s" }}
+          onClick={()=>{ setSel("upload"); if(!file) fileRef.current?.click(); }}>
+          <input ref={fileRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display:"none" }}
+            onChange={e=>{ const f=e.target.files?.[0]; if(f) pickFile(f); e.target.value=""; }}/>
+          <div style={{ display:"flex",alignItems:"center",gap:10 }}>
+            <div style={{ width:36,height:36,borderRadius:8,background:"#F3F4F6",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="#6B7280" strokeWidth="1.8" width="18" height="18"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+            </div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:13,fontWeight:500,color:"#374151" }}>Upload from computer</div>
+              <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>pdf · docx · xlsx</div>
+            </div>
+            {sel==="upload" && !file && (
+              <span style={{ fontSize:11.5,color:"#2563EB",fontWeight:500 }}>Click to browse</span>
+            )}
+          </div>
+
+          {/* Drop zone — only when upload selected */}
+          {sel==="upload" && (
+            <div
+              style={{ marginTop:12,border:`2px dashed ${drag?"#2563EB":"#D1D5DB"}`,borderRadius:9,padding:"14px",textAlign:"center",background:drag?"#EFF6FF":"transparent",transition:"all .15s" }}
+              onDragOver={e=>{ e.preventDefault(); e.stopPropagation(); setDrag(true); }}
+              onDragLeave={e=>{ e.stopPropagation(); setDrag(false); }}
+              onDrop={e=>{ e.preventDefault(); e.stopPropagation(); setDrag(false); pickFile(e.dataTransfer.files[0]); }}
+              onClick={e=>{ e.stopPropagation(); fileRef.current?.click(); }}>
+              {file ? (
+                <div style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:8 }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="1.8" width="16" height="16"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <span style={{ fontSize:13,fontWeight:500,color:"#374151" }}>{file.name}</span>
+                  <button onClick={e=>{ e.stopPropagation(); setFile(null); setTitle(""); }}
+                    style={{ border:"none",background:"none",cursor:"pointer",color:"#9CA3AF",padding:2,borderRadius:4,display:"flex",alignItems:"center" }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+              ) : (
+                <div style={{ fontSize:12.5,color:"#9CA3AF" }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="1.5" width="24" height="24" style={{ display:"block",margin:"0 auto 6px" }}><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                  Drop file here or click to browse
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Title input after file picked */}
+          {sel==="upload" && file && (
+            <input
+              value={title}
+              onChange={e=>setTitle(e.target.value)}
+              onClick={e=>e.stopPropagation()}
+              placeholder="Document title..."
+              style={{ display:"block",width:"100%",marginTop:10,border:"1.5px solid #E5E7EB",borderRadius:7,padding:"8px 12px",fontSize:13,color:"#374151",outline:"none",fontFamily:"inherit",boxSizing:"border-box" }}
+              onFocus={e=>e.currentTarget.style.borderColor="#2563EB"}
+              onBlur={e=>e.currentTarget.style.borderColor="#E5E7EB"}/>
+          )}
+        </div>
+
         <button
-          onClick={()=>sel && onSelect(sel)}
-          disabled={!sel}
-          style={{ width:"100%",marginTop:20,background:sel==="xls"?"#16A34A":"#2563EB",color:"#fff",border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:600,cursor:sel?"pointer":"not-allowed",opacity:sel?1:.45,fontFamily:"inherit",transition:"all .15s" }}>
-          Create {sel==="docs"?"Document":sel==="xls"?"Spreadsheet":""}
+          onClick={handleGo}
+          disabled={!canGo}
+          style={{ width:"100%",marginTop:16,background:canGo?btnColor:"#E5E7EB",color:canGo?"#fff":"#9CA3AF",border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:600,cursor:canGo?"pointer":"not-allowed",fontFamily:"inherit",transition:"all .15s" }}>
+          {sel==="upload" ? "Upload Document" : sel==="docs" ? "Create Document" : sel==="xls" ? "Create Spreadsheet" : "Select an option above"}
         </button>
       </div>
     </div>
@@ -332,9 +417,41 @@ function InsertTableModal({ onInsert, onClose }) {
 }
 
 /* ══════════════════════════════════════════════════════════
+   PDF VIEWER
+══════════════════════════════════════════════════════════ */
+function PdfViewer({ doc, onClose, onDownload }) {
+  return (
+    <div style={{ display:"flex",flexDirection:"column",width:"100%",height:"100%",background:"#374151" }}>
+      {/* Header bar */}
+      <div style={{ display:"flex",alignItems:"center",gap:10,padding:"8px 16px",background:"#1F2937",flexShrink:0 }}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="1.8" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span style={{ fontSize:13,fontWeight:600,color:"#F9FAFB",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{doc?.name || "Document"}</span>
+        <button onClick={onDownload} title="Download"
+          style={{ display:"flex",alignItems:"center",gap:5,padding:"5px 12px",background:"#374151",border:"1px solid #4B5563",borderRadius:6,color:"#D1D5DB",fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"inherit" }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download
+        </button>
+        <button onClick={onClose} title="Close"
+          style={{ display:"flex",alignItems:"center",justifyContent:"center",width:28,height:28,background:"none",border:"none",color:"#9CA3AF",cursor:"pointer",borderRadius:6 }}
+          onMouseEnter={e=>e.currentTarget.style.background="#374151"}
+          onMouseLeave={e=>e.currentTarget.style.background="none"}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      {/* PDF iframe */}
+      <iframe
+        src={doc?._pdfUrl}
+        title={doc?.name || "PDF"}
+        style={{ flex:1,border:"none",width:"100%",height:"100%" }}
+      />
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
    DOCS EDITOR
 ══════════════════════════════════════════════════════════ */
-function DocsEditor({ doc, initialContent, onClose, onSave }) {
+function DocsEditor({ doc, initialContent, onClose, onSave, onDownload }) {
   const [font,    setFont]    = useState("DM Sans");
   const [fsize,   setFsize]   = useState("13");
   const [bold,    setBold]    = useState(false);
@@ -487,9 +604,11 @@ function DocsEditor({ doc, initialContent, onClose, onSave }) {
         {Array.from({length:pages},(_,pi)=>(
           <div key={pi} className="dc-page-sheet">
             <div className="dc-top-actions">
-              <button className="dc-top-act-btn" title="Download" onClick={()=>{}}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              </button>
+              {onDownload && (
+                <button className="dc-top-act-btn" title="Download" onClick={onDownload}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </button>
+              )}
               <button className="dc-top-act-btn" title="Close" onClick={onClose}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
@@ -539,7 +658,7 @@ function DocsEditor({ doc, initialContent, onClose, onSave }) {
 ══════════════════════════════════════════════════════════ */
 const initCells = () => Array.from({length:ROWS_N},()=>Array(COLS_N).fill(""));
 
-function XlsEditor({ doc, initialContent, onClose, onSave }) {
+function XlsEditor({ doc, initialContent, onClose, onSave, onDownload }) {
   const [xlsTab, setXlsTab] = useState("Home");
   const [cells,  setCells]  = useState(() => {
     if (initialContent && Array.isArray(initialContent)) {
@@ -664,6 +783,11 @@ function XlsEditor({ doc, initialContent, onClose, onSave }) {
           <button key={t} className={`dc-xls-tab${xlsTab===t?" active":""}`} onClick={()=>setXlsTab(t)}>{t}</button>
         ))}
         <div style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:6,paddingRight:6 }}>
+          {onDownload && (
+            <button className="dc-xl-btn" style={{ width:26,height:26 }} title="Download" onClick={onDownload}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
+          )}
           <button className="dc-xl-btn" style={{ width:26,height:26 }} title="Close" onClick={onClose}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -741,6 +865,127 @@ function XlsEditor({ doc, initialContent, onClose, onSave }) {
 }
 
 /* ══════════════════════════════════════════════════════════
+   SIGNATURE MODAL
+══════════════════════════════════════════════════════════ */
+function SignatureModal({ docs, onClose }) {
+  const canvasRef = useRef(null);
+  const [drawing, setDrawing] = useState(false);
+  const [hasStroke, setHasStroke] = useState(false);
+  const [selectedDocId, setSelectedDocId] = useState(docs[0]?._apiId || "");
+  const [submitting, setSubmitting] = useState(false);
+
+  const getPos = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const src = e.touches ? e.touches[0] : e;
+    return { x: src.clientX - rect.left, y: src.clientY - rect.top };
+  };
+
+  const startDraw = (e) => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    const { x, y } = getPos(e, canvas);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    setDrawing(true);
+  };
+
+  const draw = (e) => {
+    if (!drawing) return;
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#111827";
+    const { x, y } = getPos(e, canvas);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    setHasStroke(true);
+  };
+
+  const endDraw = () => setDrawing(false);
+
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+    setHasStroke(false);
+  };
+
+  const handleSign = async () => {
+    if (!selectedDocId) { toast.error("Select a document to sign"); return; }
+    if (!hasStroke) { toast.error("Please draw your signature"); return; }
+    const signatureData = canvasRef.current.toDataURL("image/png");
+    setSubmitting(true);
+    try {
+      await signDocument(selectedDocId, { signature_data: signatureData });
+      toast.success("Document signed successfully");
+      onClose();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to sign document");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:9000,display:"flex",alignItems:"center",justifyContent:"center" }}>
+      <div style={{ background:"#fff",borderRadius:16,width:480,maxWidth:"95vw",boxShadow:"0 16px 60px rgba(0,0,0,0.2)",overflow:"hidden" }}>
+        {/* Header */}
+        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 22px 14px",borderBottom:".5px solid #F3F4F6" }}>
+          <div style={{ display:"flex",alignItems:"center",gap:8 }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="18" height="18"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            <span style={{ fontSize:15,fontWeight:700,color:"#111827" }}>Add Signature</span>
+          </div>
+          <button onClick={onClose} style={{ background:"none",border:"none",cursor:"pointer",color:"#6B7280",padding:4,borderRadius:6,display:"flex",alignItems:"center" }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        <div style={{ padding:"20px 22px" }}>
+          {/* Document selector */}
+          <div style={{ marginBottom:16 }}>
+            <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6 }}>Select document</label>
+            {docs.length === 0
+              ? <div style={{ fontSize:13,color:"#9CA3AF",padding:"10px 12px",border:".5px solid #E5E7EB",borderRadius:8 }}>No documents available</div>
+              : (
+                <select value={selectedDocId} onChange={e => setSelectedDocId(e.target.value)}
+                  style={{ width:"100%",border:".5px solid #E5E7EB",borderRadius:8,padding:"9px 12px",fontSize:13,color:"#374151",background:"#F9FAFB",outline:"none",fontFamily:"inherit",cursor:"pointer" }}>
+                  {docs.map(d => (
+                    <option key={d._apiId} value={d._apiId}>{d.name}</option>
+                  ))}
+                </select>
+              )
+            }
+          </div>
+
+          {/* Canvas */}
+          <div style={{ marginBottom:14 }}>
+            <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6 }}>
+              <label style={{ fontSize:12,fontWeight:500,color:"#374151" }}>Draw your signature</label>
+              <button onClick={clearCanvas} style={{ fontSize:11.5,color:"#6B7280",background:"none",border:".5px solid #E5E7EB",borderRadius:5,padding:"2px 8px",cursor:"pointer",fontFamily:"inherit" }}>Clear</button>
+            </div>
+            <canvas ref={canvasRef} width={436} height={150}
+              style={{ width:"100%",height:150,border:".5px solid #E5E7EB",borderRadius:8,background:"#FAFAFA",cursor:"crosshair",touchAction:"none" }}
+              onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+              onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}/>
+            {!hasStroke && <div style={{ fontSize:11.5,color:"#9CA3AF",marginTop:4,textAlign:"center" }}>Sign in the box above</div>}
+          </div>
+
+          {/* Actions */}
+          <div style={{ display:"flex",gap:10,justifyContent:"flex-end" }}>
+            <button onClick={onClose} style={{ border:".5px solid #E5E7EB",borderRadius:8,padding:"9px 20px",fontSize:13,background:"#fff",color:"#6B7280",cursor:"pointer",fontFamily:"inherit" }}>Cancel</button>
+            <button onClick={handleSign} disabled={submitting || !hasStroke || !selectedDocId}
+              style={{ background: (!hasStroke||!selectedDocId||submitting) ? "#93C5FD" : "#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"9px 24px",fontSize:13,fontWeight:500,cursor:(!hasStroke||!selectedDocId||submitting)?"not-allowed":"pointer",fontFamily:"inherit" }}>
+              {submitting ? "Signing…" : "Sign Document"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
 export default function Documents({ onGoToAuth, onNavigate }) {
@@ -750,6 +995,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
   const [view,            setView]            = useState("list");
   const [activeDoc,       setActiveDoc]       = useState(null);
   const [showTypeModal,   setShowTypeModal]   = useState(false);
+  const [showSignModal,   setShowSignModal]   = useState(false);
   const [page,            setPage]            = useState(1);
   const [saving,          setSaving]          = useState(false);
 
@@ -772,22 +1018,41 @@ export default function Documents({ onGoToAuth, onNavigate }) {
 
   const openDoc = async (d) => {
     if (d._apiId) {
-      if (d._isEditable) {
-        try {
-          const contentData = await getDocumentContent(d._apiId);
-          setActiveDoc({ ...d, _content: contentData.content, _sheetData: contentData.sheet_data });
-          setView(d.docType === "xls" ? "xls" : "docs");
-        } catch {
-          toast.error("Failed to load document content");
-        }
-      } else {
+      if (d._isPdf) {
         try {
           const { download_url } = await getDownloadUrl(d._apiId);
-          window.open(download_url, "_blank");
+          setActiveDoc({ ...d, _pdfUrl: download_url });
+          setView("pdf");
         } catch {
-          toast.error("Failed to open document");
+          toast.error("Failed to open PDF");
+        }
+        return;
+      }
+      // All other types open in editor
+      try {
+        const contentData = await getDocumentContent(d._apiId);
+        const hasContent = contentData.content?.html || (Array.isArray(contentData.sheet_data) && contentData.sheet_data.length);
+        if (hasContent) {
+          setActiveDoc({ ...d, _content: contentData.content, _sheetData: contentData.sheet_data });
+        } else {
+          // No saved content yet — extract from S3 binary file
+          try {
+            const extracted = await extractDocumentContent(d._apiId);
+            setActiveDoc({ ...d, _content: extracted.content ?? null, _sheetData: extracted.sheet_data ?? null });
+          } catch {
+            setActiveDoc({ ...d, _content: null, _sheetData: null });
+          }
+        }
+      } catch {
+        // Fallback: try extraction, else empty editor
+        try {
+          const extracted = await extractDocumentContent(d._apiId);
+          setActiveDoc({ ...d, _content: extracted.content ?? null, _sheetData: extracted.sheet_data ?? null });
+        } catch {
+          setActiveDoc({ ...d, _content: null, _sheetData: null });
         }
       }
+      setView(d.docType === "xls" ? "xls" : "docs");
       return;
     }
     setActiveDoc(d);
@@ -797,13 +1062,33 @@ export default function Documents({ onGoToAuth, onNavigate }) {
   const handleTypeSelect = (type) => {
     setShowTypeModal(false);
     const newDoc = {
-      id: Date.now(), name:"Untitled", ext: type==="xls"?"ods":"odt",
+      id: Date.now(), name:"Untitled", ext: type==="xls"?"xlsx":"docx",
       color: type==="xls"?"#16A34A":"#2563EB",
       bg:    type==="xls"?"#DCFCE7":"#DBEAFE",
       owner:"me", lastOpened:"Just now", size:"0 KB", date:"Today", docType:type,
     };
     setActiveDoc(newDoc);
     setView(type);
+  };
+
+  const handleUpload = async (file, title) => {
+    setShowTypeModal(false);
+    const workspaces = workspacesData?.results ?? [];
+    const workspace = workspaces[0];
+    if (!workspace) {
+      toast.error("No workspace found — create a project first.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await serverUploadDocument(workspace.id, title, file);
+      toast.success("Document uploaded");
+      queryClient.invalidateQueries({ queryKey: ["documents"] });
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Upload failed");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSave = async (name, content) => {
@@ -838,7 +1123,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
     }
     setSaving(true);
     try {
-      const ext = isXls ? "ods" : "odt";
+      const ext = isXls ? "xlsx" : "docx";
       const fileName = `${name}.${ext}`;
       const rawText = isXls
         ? (Array.isArray(content) ? content.map(row => row.map(c => `"${(c||"").replace(/"/g,'""')}"`).join(",")).join("\n") : (content || " "))
@@ -877,6 +1162,19 @@ export default function Documents({ onGoToAuth, onNavigate }) {
     }
   };
 
+  const handleDownload = async () => {
+    if (!activeDoc?._apiId) return;
+    try {
+      const { download_url } = await getDownloadUrl(activeDoc._apiId);
+      const a = document.createElement("a");
+      a.href = download_url;
+      a.download = activeDoc.name || "document";
+      a.click();
+    } catch {
+      toast.error("Failed to download document");
+    }
+  };
+
   const handleDelete = async (d) => {
     if (!d._apiId) return;
     try {
@@ -896,7 +1194,8 @@ export default function Documents({ onGoToAuth, onNavigate }) {
   return (
     <div className="dc-page">
       <style>{docCss}</style>
-      {showTypeModal && <TypeSelectModal onSelect={handleTypeSelect} onClose={()=>setShowTypeModal(false)}/>}
+      {showTypeModal && <TypeSelectModal onSelect={handleTypeSelect} onUpload={handleUpload} onClose={()=>setShowTypeModal(false)}/>}
+      {showSignModal && <SignatureModal docs={docs.filter(d => d._apiId)} onClose={()=>setShowSignModal(false)}/>}
       <ProfileController show={!!profileView} view={profileView} setView={setProfileView} onLogOut={onGoToAuth}/>
 
       {/* ── HEADER ── */}
@@ -958,7 +1257,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
           </div>
           <div className="dc-org">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>SDU University</span>
+            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{workspacesData?.results?.[0]?.title || workspacesData?.[0]?.title || "Organization"}</span>
             <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
@@ -1009,7 +1308,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                       <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" width="22" height="22"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>New document</span>
                     </div>
-                    <div className="dc-action-card sig">
+                    <div className="dc-action-card sig" onClick={() => setShowSignModal(true)}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" width="22" height="22"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>Add signature</span>
                     </div>
@@ -1100,12 +1399,17 @@ export default function Documents({ onGoToAuth, onNavigate }) {
 
             {/* DOCS EDITOR VIEW */}
             {view==="docs" && (
-              <DocsEditor doc={activeDoc} initialContent={activeDoc?._content?.html || ""} onClose={()=>setView("list")} onSave={handleSave}/>
+              <DocsEditor doc={activeDoc} initialContent={activeDoc?._content?.html || ""} onClose={()=>{ setView("list"); setActiveDoc(null); }} onSave={handleSave} onDownload={activeDoc?._apiId ? handleDownload : null}/>
             )}
 
             {/* XLS EDITOR VIEW */}
             {view==="xls" && (
-              <XlsEditor doc={activeDoc} initialContent={activeDoc?._sheetData || null} onClose={()=>setView("list")} onSave={handleSave}/>
+              <XlsEditor doc={activeDoc} initialContent={activeDoc?._sheetData || null} onClose={()=>{ setView("list"); setActiveDoc(null); }} onSave={handleSave} onDownload={activeDoc?._apiId ? handleDownload : null}/>
+            )}
+
+            {/* PDF VIEWER */}
+            {view==="pdf" && (
+              <PdfViewer doc={activeDoc} onClose={()=>{ setView("list"); setActiveDoc(null); }} onDownload={handleDownload}/>
             )}
           </div>
         </div>

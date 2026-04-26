@@ -5,6 +5,7 @@ import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
 import { getTasks, completeTask, skipTask } from "./api/tasks";
 import { getDocuments } from "./api/documents";
+import { getWorkspaces } from "./api/workspaces";
 import useAuthStore from "./store/authStore";
 
 /* ══════════════════════════════════════════════════════════
@@ -20,31 +21,9 @@ const BADGE_STYLE = {
 };
 const BADGE_LABEL = { urgent:"URGENT", inprog:"IN PROGRESS", pending:"PENDING", completed:"COMPLETED", returned:"RETURNED", waiting:"WAITING" };
 
-const INCOMING_TODAY = [
-  { id:1, icon:"folder", color:"#EEF2FF", stroke:"#4F46E5", name:"Contract Agreement",  from:"Dana Alibekkyzy", action:"Review required",   badges:["urgent","inprog"], time:"2 min ago" },
-  { id:2, icon:"doc",    color:"#FFF7ED", stroke:"#EA580C", name:"HR Policy Draft",     from:"Ali Bekov",       action:"Approval required", badges:["pending"],         time:"1 h ago" },
-  { id:3, icon:"pen",    color:"#F0FDF4", stroke:"#16A34A", name:"Service Agreement",   from:"Dana Alibekkyzy", action:"Signature required", badges:["completed"],       time:"1 h ago" },
-  { id:4, icon:"alert",  color:"#FEF3C7", stroke:"#B45309", name:"Procurement Request", from:"Dana Alibekkyzy", action:"Edit required",      badges:["returned"],        time:"09:00 AM" },
-];
-const INCOMING_WEEK = [
-  { id:5, icon:"folder", color:"#EEF2FF", stroke:"#4F46E5", name:"Contract Agreement", from:"Dana Alibekkyzy", action:"Review required",  badges:["completed"], time:"5 Mar" },
-  { id:6, icon:"doc",    color:"#FFF7ED", stroke:"#EA580C", name:"Contract Agreement", from:"Ali Bekov",       action:"Approval required", badges:["completed"], time:"4 Mar" },
-];
-const OUTGOING_TODAY = [
-  { id:1, icon:"folder", color:"#EEF2FF", stroke:"#4F46E5", name:"Contract Agreement",  to:"Ali Bekov",       action:"Review",    badges:["waiting"],   time:"2 min ago" },
-  { id:2, icon:"doc",    color:"#FFF7ED", stroke:"#EA580C", name:"HR Policy Draft",     to:"Laila Abyzova",   action:"Approval",  badges:["waiting"],   time:"1 h ago" },
-  { id:3, icon:"pen",    color:"#F0FDF4", stroke:"#16A34A", name:"Service Agreement",   to:"Dana Alibekkyzy", action:"Signature", badges:["completed"], time:"1 h ago" },
-  { id:4, icon:"alert",  color:"#FEF3C7", stroke:"#B45309", name:"Procurement Request", to:"Dana Alibekkyzy", action:"Edit",      badges:["returned"],  time:"09:00 AM" },
-];
-const OUTGOING_WEEK = [
-  { id:5, icon:"folder", color:"#EEF2FF", stroke:"#4F46E5", name:"Contract Agreement", to:"Dana Alibekkyzy", action:"Review",   badges:["completed"], time:"5 Mar" },
-  { id:6, icon:"doc",    color:"#FFF7ED", stroke:"#EA580C", name:"Contract Agreement", to:"Ali Bekov",       action:"Approval", badges:["completed"], time:"4 Mar" },
-];
-
 const MONTHS       = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const WEEK_DAYS    = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
-const PROJECTS     = ["All projects","Project A","Project B"];
 const DATE_OPTS    = ["Today","Yesterday","Last 7 days","This month","Custom range"];
 
 /* ══════════════════════════════════════════════════════════
@@ -179,7 +158,7 @@ function FixedDropdown({ triggerRef, open, children }) {
 /* ══════════════════════════════════════════════════════════
    PROJECT FILTER
 ══════════════════════════════════════════════════════════ */
-function ProjectFilter({ value, onChange }) {
+function ProjectFilter({ value, onChange, projects }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
 
@@ -198,7 +177,7 @@ function ProjectFilter({ value, onChange }) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <FixedDropdown triggerRef={btnRef} open={open}>
-        {PROJECTS.map(p => (
+        {projects.map(p => (
           <div key={p} onClick={() => { onChange(p); setOpen(false); }}
             style={{ ...DD_ITEM_STYLE, color: p===value ? "#2563EB" : "#374151", fontWeight: p===value ? 500 : 400 }}>
             {p}
@@ -661,6 +640,11 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
   const user = useAuthStore(s => s.user);
   const queryClient = useQueryClient();
 
+  const { data: wsData } = useQuery({ queryKey: ["workspaces"], queryFn: getWorkspaces });
+  const orgName = wsData?.results?.[0]?.title || wsData?.[0]?.title || "Organization";
+  const wsNames = wsData?.results?.map(w => w.title) || wsData?.map(w => w.title) || [];
+  const projectOptions = ["All projects", ...wsNames];
+
   const isOut = tab === "outgoing";
 
   // Convert UI date label → API date_from / date_to params
@@ -812,7 +796,7 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
           </div>
           <div className="ib-org">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>SDU University</span>
+            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{orgName}</span>
             <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
@@ -852,7 +836,7 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
 
             {/* Filters */}
             <div className="ib-filters">
-              <ProjectFilter value={project} onChange={setProject}/>
+              <ProjectFilter value={project} onChange={setProject} projects={projectOptions}/>
               <DateFilter    value={date}    onChange={setDate}/>
               <button onClick={()=>{setProject("All projects");setDate("Last 7 days");}}
                 style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:4,fontSize:12,color:"#6B7280",background:"none",border:"none",fontFamily:"inherit",whiteSpace:"nowrap",flexShrink:0 }}>
