@@ -177,7 +177,7 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             "id", "email", "full_name", "phone",
             "organization", "organization_name",
-            "avatar_url",
+            "avatar_url", "signature_data",
             "is_active", "created_at", "last_login",
         ]
         read_only_fields = ["id", "email", "is_active", "created_at", "last_login", "avatar_url"]
@@ -188,7 +188,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["full_name", "phone"]
+        fields = ["full_name", "phone", "signature_data"]
 
 
 class UserListSerializer(serializers.ModelSerializer):

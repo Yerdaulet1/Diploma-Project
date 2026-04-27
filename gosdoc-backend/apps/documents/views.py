@@ -166,13 +166,17 @@ class DocumentListCreateView(generics.ListCreateAPIView):
             "workspace", "uploaded_by", "current_version"
         ).distinct().order_by("-created_at")
 
-        # Фильтрация по статусу и кабинету
+        # Фильтрация по статусу, кабинету, роли пользователя в кабинете
         status_filter = self.request.query_params.get("status")
         workspace_filter = self.request.query_params.get("workspace")
+        role_filter = self.request.query_params.get("role")
         if status_filter:
             qs = qs.filter(status=status_filter)
         if workspace_filter:
             qs = qs.filter(workspace_id=workspace_filter)
+        if role_filter:
+            roles = [r.strip() for r in role_filter.split(",") if r.strip()]
+            qs = qs.filter(workspace__members__user=self.request.user, workspace__members__role__in=roles)
         return qs
 
     def create(self, request, *args, **kwargs):
@@ -975,6 +979,46 @@ class AttachmentListCreateView(generics.ListCreateAPIView):
             "Вложение загружено: %s → документ %s (by %s)",
             attachment.title, document.title, request.user.email,
         )
+        return Response(
+            AttachmentSerializer(attachment, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AttachmentServerUploadView(APIView):
+    """
+    POST /api/v1/documents/{pk}/attachments/server-upload/
+    Server-side attachment upload (no presigned URL, no CORS).
+    multipart/form-data: file
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        import uuid as _uuid
+        document = get_object_or_404(
+            Document.objects.filter(workspace__members__user=request.user),
+            pk=pk,
+        )
+        assert_workspace_role(request.user, document.workspace, ["owner", "editor"])
+
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            return Response({"detail": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        storage_key = f"attachments/{document.id}/{_uuid.uuid4()}/{file_obj.name}"
+        content_type = getattr(file_obj, "content_type", None) or get_content_type(file_obj.name)
+        success = upload_to_s3(file_obj, storage_key, content_type=content_type)
+        if not success:
+            return Response({"detail": "Upload to storage failed."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        attachment = DocumentAttachment.objects.create(
+            document=document,
+            title=file_obj.name,
+            storage_key=storage_key,
+            file_size=file_obj.size,
+            uploaded_by=request.user,
+        )
+        logger.info("Вложение загружено (server-upload): %s → документ %s", attachment.title, document.title)
         return Response(
             AttachmentSerializer(attachment, context={"request": request}).data,
             status=status.HTTP_201_CREATED,

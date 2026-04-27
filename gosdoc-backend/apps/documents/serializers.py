@@ -192,18 +192,18 @@ class DocumentListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
         fields = [
-            "id", "title", "file_type", "status", "priority", "due_date",
+            "id", "workspace", "title", "file_type", "status", "priority", "due_date",
             "uploaded_by_name", "created_at", "updated_at",
         ]
         read_only_fields = fields
 
 
 class DocumentUpdateSerializer(serializers.ModelSerializer):
-    """Сериализатор для PATCH /api/v1/documents/{id}/ (title, priority, due_date)."""
+    """Сериализатор для PATCH /api/v1/documents/{id}/ (title, priority, due_date, status)."""
 
     class Meta:
         model = Document
-        fields = ["title", "priority", "due_date"]
+        fields = ["title", "priority", "due_date", "status"]
 
 
 class DocumentContentSerializer(serializers.ModelSerializer):

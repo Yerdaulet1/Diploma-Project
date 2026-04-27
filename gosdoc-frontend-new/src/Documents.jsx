@@ -10,6 +10,7 @@ import {
   serverUploadDocument, signDocument,
 } from "./api/documents";
 import { getWorkspaces } from "./api/workspaces";
+import { getMe, updateProfile } from "./api/users";
 import useAuthStore from "./store/authStore";
 
 /* ══════════════════════════════════════════════════════════
@@ -865,76 +866,150 @@ function XlsEditor({ doc, initialContent, onClose, onSave, onDownload }) {
 }
 
 /* ══════════════════════════════════════════════════════════
-   SIGNATURE MODAL
+   SIGNATURE PAD MODAL
+   existingSignature — base64 PNG или null (новая подпись)
+   onSave(base64)    — колбэк сохранения
 ══════════════════════════════════════════════════════════ */
-function SignatureModal({ docs, onClose }) {
-  const canvasRef = useRef(null);
-  const [drawing, setDrawing] = useState(false);
-  const [hasStroke, setHasStroke] = useState(false);
-  const [selectedDocId, setSelectedDocId] = useState(docs[0]?._apiId || "");
-  const [submitting, setSubmitting] = useState(false);
+function SignaturePadModal({ existingSignature, onSave, onClose }) {
+  const canvasRef   = useRef(null);
+  const drawing     = useRef(false);
+  const snapshots   = useRef([]);   // массив ImageData (история)
+  const cursor      = useRef(-1);   // текущая позиция в истории
 
-  const getPos = (e, canvas) => {
+  const [canUndo,   setCanUndo]   = useState(false);
+  const [canRedo,   setCanRedo]   = useState(false);
+  const [hasStroke, setHasStroke] = useState(false);
+  const [saving,    setSaving]    = useState(false);
+
+  const W = 456, H = 200;
+
+  const pushSnapshot = () => {
+    const ctx = canvasRef.current.getContext("2d");
+    const snap = ctx.getImageData(0, 0, W, H);
+    snapshots.current = snapshots.current.slice(0, cursor.current + 1);
+    snapshots.current.push(snap);
+    cursor.current = snapshots.current.length - 1;
+    setCanUndo(cursor.current > 0);
+    setCanRedo(false);
+  };
+
+  const restoreAt = (idx) => {
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.clearRect(0, 0, W, H);
+    ctx.putImageData(snapshots.current[idx], 0, 0);
+    cursor.current = idx;
+    setCanUndo(idx > 0);
+    setCanRedo(idx < snapshots.current.length - 1);
+    // проверяем есть ли непрозрачные пиксели
+    const data = snapshots.current[idx].data;
+    setHasStroke(data.some((v, i) => i % 4 === 3 && v > 0));
+  };
+
+  // Инициализация: загружаем существующую подпись или сохраняем пустой снимок
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (existingSignature) {
+      const img = new Image();
+      img.onload = () => {
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, W, H);
+        ctx.drawImage(img, 0, 0, W, H);
+        const snap = ctx.getImageData(0, 0, W, H);
+        snapshots.current = [snap];
+        cursor.current = 0;
+        setCanUndo(false);
+        setCanRedo(false);
+        setHasStroke(true);
+      };
+      img.src = existingSignature;
+    } else {
+      const ctx = canvas.getContext("2d");
+      const snap = ctx.getImageData(0, 0, W, H);
+      snapshots.current = [snap];
+      cursor.current = 0;
+      setCanUndo(false);
+      setCanRedo(false);
+    }
+  }, []);
+
+  const getPos = (e) => {
+    const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const scaleY = H / rect.height;
     const src = e.touches ? e.touches[0] : e;
-    return { x: src.clientX - rect.left, y: src.clientY - rect.top };
+    return { x: (src.clientX - rect.left) * scaleX, y: (src.clientY - rect.top) * scaleY };
   };
 
   const startDraw = (e) => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    const { x, y } = getPos(e, canvas);
+    const ctx = canvasRef.current.getContext("2d");
+    const { x, y } = getPos(e);
     ctx.beginPath();
     ctx.moveTo(x, y);
-    setDrawing(true);
+    drawing.current = true;
   };
 
-  const draw = (e) => {
-    if (!drawing) return;
+  const doDraw = (e) => {
+    if (!drawing.current) return;
     e.preventDefault();
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    ctx.lineWidth = 2;
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.lineWidth = 2.5;
     ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     ctx.strokeStyle = "#111827";
-    const { x, y } = getPos(e, canvas);
+    const { x, y } = getPos(e);
     ctx.lineTo(x, y);
     ctx.stroke();
     setHasStroke(true);
   };
 
-  const endDraw = () => setDrawing(false);
+  const endDraw = () => {
+    if (!drawing.current) return;
+    drawing.current = false;
+    pushSnapshot();
+  };
 
-  const clearCanvas = () => {
-    const canvas = canvasRef.current;
-    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+  const undo = () => { if (cursor.current > 0) restoreAt(cursor.current - 1); };
+  const redo = () => { if (cursor.current < snapshots.current.length - 1) restoreAt(cursor.current + 1); };
+
+  const clearAll = () => {
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.clearRect(0, 0, W, H);
+    pushSnapshot();
     setHasStroke(false);
   };
 
-  const handleSign = async () => {
-    if (!selectedDocId) { toast.error("Select a document to sign"); return; }
-    if (!hasStroke) { toast.error("Please draw your signature"); return; }
-    const signatureData = canvasRef.current.toDataURL("image/png");
-    setSubmitting(true);
+  const handleSave = async () => {
+    if (!hasStroke) { toast.error("Draw your signature first"); return; }
+    const base64 = canvasRef.current.toDataURL("image/png");
+    setSaving(true);
     try {
-      await signDocument(selectedDocId, { signature_data: signatureData });
-      toast.success("Document signed successfully");
+      await onSave(base64);
       onClose();
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Failed to sign document");
+    } catch {
+      toast.error("Failed to save signature");
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
+  const iconBtn = (disabled, onClick, title, children) => (
+    <button onClick={onClick} disabled={disabled} title={title}
+      style={{ display:"flex",alignItems:"center",gap:5,border:".5px solid #E5E7EB",borderRadius:7,padding:"5px 12px",fontSize:12,color:disabled?"#D1D5DB":"#374151",background:disabled?"#F9FAFB":"#fff",cursor:disabled?"not-allowed":"pointer",fontFamily:"inherit",transition:"all .15s" }}>
+      {children}
+    </button>
+  );
+
   return (
     <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:9000,display:"flex",alignItems:"center",justifyContent:"center" }}>
-      <div style={{ background:"#fff",borderRadius:16,width:480,maxWidth:"95vw",boxShadow:"0 16px 60px rgba(0,0,0,0.2)",overflow:"hidden" }}>
+      <div style={{ background:"#fff",borderRadius:16,width:520,maxWidth:"95vw",boxShadow:"0 16px 60px rgba(0,0,0,0.2)",overflow:"hidden" }}>
+
         {/* Header */}
         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 22px 14px",borderBottom:".5px solid #F3F4F6" }}>
           <div style={{ display:"flex",alignItems:"center",gap:8 }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="18" height="18"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            <span style={{ fontSize:15,fontWeight:700,color:"#111827" }}>Add Signature</span>
+            <span style={{ fontSize:15,fontWeight:700,color:"#111827" }}>{existingSignature ? "Edit Signature" : "Draw Signature"}</span>
           </div>
           <button onClick={onClose} style={{ background:"none",border:"none",cursor:"pointer",color:"#6B7280",padding:4,borderRadius:6,display:"flex",alignItems:"center" }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -942,41 +1017,44 @@ function SignatureModal({ docs, onClose }) {
         </div>
 
         <div style={{ padding:"20px 22px" }}>
-          {/* Document selector */}
-          <div style={{ marginBottom:16 }}>
-            <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:6 }}>Select document</label>
-            {docs.length === 0
-              ? <div style={{ fontSize:13,color:"#9CA3AF",padding:"10px 12px",border:".5px solid #E5E7EB",borderRadius:8 }}>No documents available</div>
-              : (
-                <select value={selectedDocId} onChange={e => setSelectedDocId(e.target.value)}
-                  style={{ width:"100%",border:".5px solid #E5E7EB",borderRadius:8,padding:"9px 12px",fontSize:13,color:"#374151",background:"#F9FAFB",outline:"none",fontFamily:"inherit",cursor:"pointer" }}>
-                  {docs.map(d => (
-                    <option key={d._apiId} value={d._apiId}>{d.name}</option>
-                  ))}
-                </select>
-              )
-            }
+          {/* Toolbar: Undo / Redo / Clear */}
+          <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:12 }}>
+            {iconBtn(!canUndo, undo, "Undo",
+              <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>Back</>
+            )}
+            {iconBtn(!canRedo, redo, "Redo",
+              <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>Forward</>
+            )}
+            <button onClick={clearAll}
+              style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:5,border:".5px solid #FECACA",borderRadius:7,padding:"5px 12px",fontSize:12,color:"#EF4444",background:"#FFF5F5",cursor:"pointer",fontFamily:"inherit" }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+              Clear All
+            </button>
           </div>
 
           {/* Canvas */}
-          <div style={{ marginBottom:14 }}>
-            <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6 }}>
-              <label style={{ fontSize:12,fontWeight:500,color:"#374151" }}>Draw your signature</label>
-              <button onClick={clearCanvas} style={{ fontSize:11.5,color:"#6B7280",background:"none",border:".5px solid #E5E7EB",borderRadius:5,padding:"2px 8px",cursor:"pointer",fontFamily:"inherit" }}>Clear</button>
-            </div>
-            <canvas ref={canvasRef} width={436} height={150}
-              style={{ width:"100%",height:150,border:".5px solid #E5E7EB",borderRadius:8,background:"#FAFAFA",cursor:"crosshair",touchAction:"none" }}
-              onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
-              onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}/>
-            {!hasStroke && <div style={{ fontSize:11.5,color:"#9CA3AF",marginTop:4,textAlign:"center" }}>Sign in the box above</div>}
+          <div style={{ position:"relative",marginBottom:8 }}>
+            <canvas ref={canvasRef} width={W} height={H}
+              style={{ width:"100%",height:H,border:"1.5px dashed #D1D5DB",borderRadius:10,cursor:"crosshair",touchAction:"none",display:"block",background:"transparent" }}
+              onMouseDown={startDraw} onMouseMove={doDraw} onMouseUp={endDraw} onMouseLeave={endDraw}
+              onTouchStart={startDraw} onTouchMove={doDraw} onTouchEnd={endDraw}/>
+            {!hasStroke && (
+              <div style={{ position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none" }}>
+                <span style={{ fontSize:13,color:"#D1D5DB" }}>Draw your signature here</span>
+              </div>
+            )}
           </div>
+          <p style={{ fontSize:11,color:"#9CA3AF",marginBottom:18 }}>Signature will be saved without background (transparent PNG)</p>
 
           {/* Actions */}
           <div style={{ display:"flex",gap:10,justifyContent:"flex-end" }}>
-            <button onClick={onClose} style={{ border:".5px solid #E5E7EB",borderRadius:8,padding:"9px 20px",fontSize:13,background:"#fff",color:"#6B7280",cursor:"pointer",fontFamily:"inherit" }}>Cancel</button>
-            <button onClick={handleSign} disabled={submitting || !hasStroke || !selectedDocId}
-              style={{ background: (!hasStroke||!selectedDocId||submitting) ? "#93C5FD" : "#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"9px 24px",fontSize:13,fontWeight:500,cursor:(!hasStroke||!selectedDocId||submitting)?"not-allowed":"pointer",fontFamily:"inherit" }}>
-              {submitting ? "Signing…" : "Sign Document"}
+            <button onClick={onClose}
+              style={{ border:".5px solid #E5E7EB",borderRadius:8,padding:"9px 20px",fontSize:13,background:"#fff",color:"#6B7280",cursor:"pointer",fontFamily:"inherit" }}>
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={!hasStroke || saving}
+              style={{ background:(!hasStroke||saving)?"#93C5FD":"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"9px 24px",fontSize:13,fontWeight:500,cursor:(!hasStroke||saving)?"not-allowed":"pointer",fontFamily:"inherit" }}>
+              {saving ? "Saving…" : "Save Signature"}
             </button>
           </div>
         </div>
@@ -995,12 +1073,35 @@ export default function Documents({ onGoToAuth, onNavigate }) {
   const [view,            setView]            = useState("list");
   const [activeDoc,       setActiveDoc]       = useState(null);
   const [showTypeModal,   setShowTypeModal]   = useState(false);
-  const [showSignModal,   setShowSignModal]   = useState(false);
+  const [showSignModal,   setShowSignModal]   = useState(false); // false | "new" | "edit"
+  const [showSigMenu,     setShowSigMenu]     = useState(false);
   const [page,            setPage]            = useState(1);
   const [saving,          setSaving]          = useState(false);
 
-  const user = useAuthStore(s => s.user);
+  const user    = useAuthStore(s => s.user);
+  const setUser = useAuthStore(s => s.setUser);
   const queryClient = useQueryClient();
+
+  const savedSig = user?.signature_data || null;
+
+  const handleSaveSignature = async (base64) => {
+    await updateProfile({ signature_data: base64 });
+    const freshUser = await getMe();
+    setUser(freshUser);
+    toast.success("Signature saved");
+  };
+
+  const handleResetSignature = async () => {
+    try {
+      await updateProfile({ signature_data: null });
+      const freshUser = await getMe();
+      setUser(freshUser);
+      toast.success("Signature removed");
+    } catch {
+      toast.error("Failed to remove signature");
+    }
+    setShowSigMenu(false);
+  };
 
   const { data: docsData } = useQuery({
     queryKey: ["documents"],
@@ -1195,7 +1296,13 @@ export default function Documents({ onGoToAuth, onNavigate }) {
     <div className="dc-page">
       <style>{docCss}</style>
       {showTypeModal && <TypeSelectModal onSelect={handleTypeSelect} onUpload={handleUpload} onClose={()=>setShowTypeModal(false)}/>}
-      {showSignModal && <SignatureModal docs={docs.filter(d => d._apiId)} onClose={()=>setShowSignModal(false)}/>}
+      {showSignModal && (
+        <SignaturePadModal
+          existingSignature={showSignModal === "edit" ? savedSig : null}
+          onSave={handleSaveSignature}
+          onClose={() => setShowSignModal(false)}
+        />
+      )}
       <ProfileController show={!!profileView} view={profileView} setView={setProfileView} onLogOut={onGoToAuth}/>
 
       {/* ── HEADER ── */}
@@ -1308,10 +1415,45 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                       <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" width="22" height="22"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>New document</span>
                     </div>
-                    <div className="dc-action-card sig" onClick={() => setShowSignModal(true)}>
+                    <div className="dc-action-card sig" onClick={() => setShowSignModal("new")}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" width="22" height="22"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>Add signature</span>
                     </div>
+
+                    {savedSig && (
+                      <div style={{ position:"relative" }}>
+                        <div className="dc-action-card" style={{ borderColor:"#DBEAFE",background:"#EFF6FF" }}
+                          onClick={() => setShowSigMenu(v => !v)}>
+                          <img src={savedSig} alt="signature"
+                            style={{ height:22,maxWidth:80,objectFit:"contain",filter:"invert(1) sepia(1) saturate(5) hue-rotate(190deg)" }}/>
+                          <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>Your signature</span>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="12" height="12"><polyline points="6 9 12 15 18 9"/></svg>
+                        </div>
+                        {showSigMenu && (
+                          <>
+                            <div style={{ position:"fixed",inset:0,zIndex:900 }} onClick={() => setShowSigMenu(false)}/>
+                            <div style={{ position:"absolute",top:"calc(100% + 6px)",left:0,background:"#fff",border:".5px solid #E5E7EB",borderRadius:10,boxShadow:"0 4px 18px rgba(0,0,0,.12)",zIndex:950,minWidth:160,padding:"6px 0",fontFamily:"inherit" }}>
+                              <button onClick={() => { setShowSigMenu(false); setShowSignModal("edit"); }}
+                                style={{ width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",border:"none",background:"none",fontSize:13,color:"#374151",cursor:"pointer",fontFamily:"inherit",textAlign:"left" }}>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                Edit
+                              </button>
+                              <button onClick={handleResetSignature}
+                                style={{ width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",border:"none",background:"none",fontSize:13,color:"#EF4444",cursor:"pointer",fontFamily:"inherit",textAlign:"left" }}>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                                Reset
+                              </button>
+                              <div style={{ height:".5px",background:"#F3F4F6",margin:"4px 0" }}/>
+                              <button onClick={() => setShowSigMenu(false)}
+                                style={{ width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",border:"none",background:"none",fontSize:13,color:"#9CA3AF",cursor:"pointer",fontFamily:"inherit",textAlign:"left" }}>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                Cancel
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 

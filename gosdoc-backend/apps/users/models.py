@@ -86,6 +86,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     avatar_key = models.TextField(null=True, blank=True, verbose_name="Ключ аватара S3")
     avatar_url = models.TextField(null=True, blank=True, verbose_name="URL аватара")
+    signature_data = models.TextField(null=True, blank=True, verbose_name="Данные подписи (base64 PNG)")
     is_active = models.BooleanField(default=True, verbose_name="Активен")
     is_staff = models.BooleanField(default=False, verbose_name="Сотрудник")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")

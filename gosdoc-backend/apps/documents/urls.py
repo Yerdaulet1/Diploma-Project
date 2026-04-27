@@ -35,6 +35,7 @@ from .views import (
     AttachmentDownloadView,
     AttachmentListCreateView,
     AttachmentRequestUploadView,
+    AttachmentServerUploadView,
     CommentListCreateView,
     DocumentApproveView,
     DocumentContentView,
@@ -115,6 +116,11 @@ urlpatterns = [
         "<uuid:pk>/attachments/request-upload/",
         AttachmentRequestUploadView.as_view(),
         name="document-attachment-request-upload",
+    ),
+    path(
+        "<uuid:pk>/attachments/server-upload/",
+        AttachmentServerUploadView.as_view(),
+        name="document-attachment-server-upload",
     ),
     path("<uuid:pk>/attachments/", AttachmentListCreateView.as_view(), name="document-attachment-list"),
     path(

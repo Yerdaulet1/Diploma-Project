@@ -144,6 +144,14 @@ export const serverUploadDocument = (workspaceId, title, file) => {
   }).then((r) => r.data);
 };
 
+export const serverUploadAttachment = (docId, file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post(`/documents/${docId}/attachments/server-upload/`, fd, {
+    headers: { "Content-Type": "multipart/form-data" },
+  }).then((r) => r.data);
+};
+
 // --- Content (Phase 7/8) ---
 export const getDocumentContent = (id) =>
   api.get(`/documents/${id}/content/`).then((r) => r.data);

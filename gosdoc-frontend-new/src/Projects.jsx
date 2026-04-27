@@ -7,9 +7,9 @@ import {
   getSubtasks, createSubtask,
   updateSubtask as apiUpdateSubtask,
   deleteSubtask as apiDeleteSubtask,
-  getAttachments, requestAttachmentUpload, confirmAttachmentUpload,
+  getAttachments, serverUploadAttachment,
   deleteAttachment as apiDeleteAttachment,
-  serverUploadDocument, copyDocument,
+  serverUploadDocument, copyDocument, getSignatures,
 } from "./api/documents";
 import { getWorkspaces, createWorkspace, addMember, getMembers } from "./api/workspaces";
 import useAuthStore from "./store/authStore";
@@ -169,7 +169,8 @@ const FILE_TYPE_INFO = {
 const fileTypeInfo = (ft) =>
   FILE_TYPE_INFO[ft?.toLowerCase()] || { ext:(ft?.toUpperCase()||"FILE").slice(0,4), color:"#6366F1", bg:"#EEF2FF" };
 
-const DOC_STATUS_DISPLAY = { draft:"TO DO", review:"IN PROGRESS", approved:"COMPLETED", archived:"RETURNED" };
+const DOC_STATUS_DISPLAY = { draft:"TO DO", review:"IN PROGRESS", signed:"COMPLETED", archived:"RETURNED" };
+const DISPLAY_TO_API_STATUS = { "TO DO":"draft", "IN PROGRESS":"review", "COMPLETED":"signed", "RETURNED":"archived" };
 const docStatusDisplay = (s) => DOC_STATUS_DISPLAY[s] || s?.toUpperCase() || "TO DO";
 const docStatusClass = (s) => {
   const d = docStatusDisplay(s);
@@ -594,13 +595,141 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
 /* ══════════════════════════════════════════════════════════
    WORKFLOW TAB
 ══════════════════════════════════════════════════════════ */
-function WorkflowTab() {
-  return (
-    <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"40px 0",color:"#9CA3AF",fontSize:13 }}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="1.5" width="40" height="40" style={{ marginBottom:12 }}>
-        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploaderName = "" }) {
+  const rawMembers = Array.isArray(members) ? members : (members?.results ?? []);
+  const rawSigs    = Array.isArray(signatures) ? signatures : (signatures?.results ?? []);
+
+  // Stage state derived from docStatus
+  // draft → stage1 done, stage2 active
+  // review → stage1+2 done, stage3 active
+  // signed / archived → all done
+  const stageIdx = docStatus === "draft" ? 1
+    : docStatus === "review"   ? 2
+    : docStatus === "signed"   ? 3
+    : docStatus === "archived" ? 3
+    : 1;
+
+  const editors = rawMembers
+    .filter(m => m.role === "editor")
+    .sort((a, b) => (a.step_order ?? 999) - (b.step_order ?? 999));
+
+  const signers = rawMembers
+    .filter(m => m.role === "owner" || m.role === "signer")
+    .sort((a, b) => (a.step_order ?? 999) - (b.step_order ?? 999));
+
+  const signedUserIds = new Set(rawSigs.filter(s => s.is_valid).map(s => String(s.user)));
+
+  const stages = [
+    { label: "Document Created", icon: "doc", sub: uploaderName ? [{ name: uploaderName, done: true }] : [] },
+    { label: "Review",           icon: "eye", sub: editors.map(m => ({ name: m.user_name || m.user_email || "Member", done: stageIdx > 2 })) },
+    { label: "Signing",          icon: "pen", sub: signers.map(m => ({ name: m.user_name || m.user_email || "Member", done: signedUserIds.has(String(m.user)) })) },
+    { label: "Completed",        icon: "check", sub: [] },
+  ];
+
+  const stageIcons = {
+    doc: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
       </svg>
-      No workflow steps yet.
+    ),
+    eye: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+      </svg>
+    ),
+    pen: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+        <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+      </svg>
+    ),
+    check: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+    ),
+  };
+
+  return (
+    <div style={{ padding:"24px 8px" }}>
+      {stages.map((stage, si) => {
+        const isDone    = si < stageIdx;
+        const isActive  = si === stageIdx;
+        const isPending = si > stageIdx;
+        const dotColor  = isDone ? "#10B981" : isActive ? "#2563EB" : "#D1D5DB";
+        const lineColor = isDone ? "#10B981" : "#E5E7EB";
+        const isLast    = si === stages.length - 1;
+
+        return (
+          <div key={si} style={{ display:"flex", gap:14 }}>
+            {/* Left column: dot + line */}
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", width:28, flexShrink:0 }}>
+              <div style={{
+                width:28, height:28, borderRadius:"50%",
+                background: isDone ? "#D1FAE5" : isActive ? "#DBEAFE" : "#F3F4F6",
+                border: `2px solid ${dotColor}`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                color: dotColor, flexShrink:0,
+              }}>
+                {isDone
+                  ? <svg viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
+                  : <span style={{ color: dotColor }}>{stageIcons[stage.icon]}</span>
+                }
+              </div>
+              {!isLast && (
+                <div style={{ width:2, flex:1, minHeight:20, background: lineColor, marginTop:2, marginBottom:2 }}/>
+              )}
+            </div>
+
+            {/* Right column: stage content */}
+            <div style={{ flex:1, paddingBottom: isLast ? 0 : 20 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom: stage.sub.length ? 10 : 0 }}>
+                <span style={{ fontSize:14, fontWeight:600, color: isPending ? "#9CA3AF" : "#111827" }}>
+                  {stage.label}
+                </span>
+                <span style={{
+                  fontSize:11, fontWeight:500, padding:"2px 8px", borderRadius:999,
+                  background: isDone ? "#D1FAE5" : isActive ? "#DBEAFE" : "#F3F4F6",
+                  color: isDone ? "#065F46" : isActive ? "#1D4ED8" : "#9CA3AF",
+                }}>
+                  {isDone ? "Done" : isActive ? "In Progress" : "Pending"}
+                </span>
+              </div>
+
+              {/* Sub-steps (people) */}
+              {stage.sub.map((person, pi) => (
+                <div key={pi} style={{
+                  display:"flex", alignItems:"center", gap:8,
+                  padding:"6px 10px", marginBottom:4, borderRadius:8,
+                  background: person.done ? "#F0FDF4" : "#F9FAFB",
+                  border: `1px solid ${person.done ? "#A7F3D0" : "#E5E7EB"}`,
+                }}>
+                  <div style={{
+                    width:24, height:24, borderRadius:"50%",
+                    background: person.done ? "#10B981" : "#E5E7EB",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:10, fontWeight:700, color: person.done ? "#fff" : "#6B7280", flexShrink:0,
+                  }}>
+                    {(person.name || "?").split(" ").map(p => p[0]).join("").toUpperCase().slice(0,2)}
+                  </div>
+                  <span style={{ fontSize:13, color: person.done ? "#065F46" : "#374151", flex:1 }}>
+                    {person.name}
+                  </span>
+                  {person.done
+                    ? <svg viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
+                    : <svg viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="2" width="14" height="14"><circle cx="12" cy="12" r="10"/></svg>
+                  }
+                </div>
+              ))}
+
+              {stage.sub.length === 0 && !isLast && (
+                <div style={{ fontSize:12, color:"#9CA3AF", marginBottom:4 }}>
+                  {si === 1 ? "No reviewers assigned" : si === 2 ? "No signers assigned" : ""}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -755,6 +884,11 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
     queryFn: () => getMembers(workspaceId),
     enabled: !!workspaceId,
   });
+  const { data: signaturesData } = useQuery({
+    queryKey: ["signatures", docId],
+    queryFn: () => getSignatures(docId),
+    enabled: !!docId,
+  });
   const membersList = (membersData?.results ?? (Array.isArray(membersData) ? membersData : [])).map((m, i) => ({
     id: m.user?.id || m.id,
     name: m.user?.full_name || m.user?.email || "Member",
@@ -789,6 +923,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
   useEffect(() => {
     if (apiDoc) {
       setTitle(apiDoc.title || "");
+      setStatus(docStatusDisplay(apiDoc.status));
       setPriority(priFromApi(apiDoc.priority));
       setDueDate(apiDoc.due_date || null);
     }
@@ -833,6 +968,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
       if (!readOnly && docId) {
         await updateDocument(docId, {
           title,
+          status: DISPLAY_TO_API_STATUS[status] || "draft",
           ...(priority !== "Empty" && { priority: priToApi(priority) }),
           due_date: dueDate || null,
         });
@@ -904,13 +1040,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
     }
     setUploading(true);
     try {
-      const presigned = await requestAttachmentUpload(docId, { file_name: f.name, file_size: f.size });
-      await uploadFileToS3(presigned, f);
-      const att = await confirmAttachmentUpload(docId, {
-        storage_key: presigned.storage_key,
-        file_name: f.name,
-        file_size: f.size,
-      });
+      const att = await serverUploadAttachment(docId, f);
       setAttachments(a => [...a, {
         _apiId: att.id,
         name: att.title,
@@ -921,7 +1051,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
       qc.invalidateQueries({ queryKey: ["attachments", docId] });
       toast.success("File uploaded");
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Upload failed — check S3 config");
+      toast.error(err?.response?.data?.detail || "Upload failed");
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -1188,7 +1318,14 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
               </>
             )}
 
-            {activeTab==="workflow" && <WorkflowTab/>}
+            {activeTab==="workflow" && (
+              <WorkflowTab
+                members={membersData}
+                signatures={signaturesData}
+                docStatus={apiDoc?.status || doc?.status}
+                uploaderName={apiDoc?.uploaded_by_name || ""}
+              />
+            )}
           </div>
 
           {/* RIGHT — Activity */}
@@ -1552,48 +1689,46 @@ function AssignedDocsEmpty() {
   ASSIGNED DOCS TABLE
 ══════════════════════════════════════════════════════════ */
 function AssignedDocsTable({ docs, onOpen }) {
-  const action = (d) => d.status === "COMPLETED" ? "View >" : d.type % 2 === 0 ? "Sign >" : "Approve >";
   return (
     <div style={{ padding:"0 4px 20px" }}>
       <table className="pr-table">
         <thead>
           <tr>
             <th>Document</th>
-            <th>Team Members</th>
+            <th>Uploaded by</th>
             <th>Deadline</th>
             <th>Status</th>
-            <th>Progress</th>
             <th>Action</th>
           </tr>
         </thead>
         <tbody>
-          {docs.map((d, i) => {
+          {docs.map((d) => {
             const dt = fileTypeInfo(d.file_type);
+            const statusLabel = docStatusDisplay(d.status);
+            const isDone = statusLabel === "COMPLETED";
             return (
-              <tr key={i} style={{ cursor:"pointer" }} onClick={() => onOpen && onOpen(d)}>
+              <tr key={d.id} style={{ cursor:"pointer" }} onClick={() => onOpen && onOpen(d)}>
                 <td>
                   <div style={{ display:"flex",alignItems:"center",gap:10 }}>
                     <div className="ad-file-icon" style={{ background:dt.bg,color:dt.color }}>{dt.ext}</div>
                     <div>
-                      <div style={{ fontWeight:500,fontSize:13,color:"#111827" }}>{d.name}.{dt.ext.toLowerCase()}</div>
-                      <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>{d.size} · {d.date}</div>
+                      <div style={{ fontWeight:500,fontSize:13,color:"#111827" }}>{d.title}</div>
+                      <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>
+                        {new Date(d.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                      </div>
                     </div>
                   </div>
                 </td>
-                <td><AvatarStack members={d.members}/></td>
-                <td style={{ fontSize:12.5,color:"#6B7280",whiteSpace:"nowrap" }}>{d.deadline}</td>
-                <td>
-                  <span className={d.status === "COMPLETED" ? "ad-badge-done" : "ad-badge-ip"}>{d.status}</span>
+                <td style={{ fontSize:12.5,color:"#6B7280" }}>{d.uploaded_by_name || "—"}</td>
+                <td style={{ fontSize:12.5,color:"#6B7280",whiteSpace:"nowrap" }}>
+                  {d.due_date ? fmtDeadline(d.due_date) : "—"}
                 </td>
                 <td>
-                  <div style={{ fontSize:11.5,color:"#6B7280",marginBottom:4 }}>{d.progress}%</div>
-                  <div className="ad-prog-bar">
-                    <div className="ad-prog-fill" style={{ width:`${d.progress}%`,background:d.status==="COMPLETED"?"#22c55e":"#2563EB" }}/>
-                  </div>
+                  <span className={isDone ? "ad-badge-done" : "ad-badge-ip"}>{statusLabel}</span>
                 </td>
                 <td>
                   <button style={{ background:"none",border:"none",color:"#2563EB",fontSize:13,fontWeight:600,padding:0,cursor:"pointer",whiteSpace:"nowrap" }}>
-                    {action(d)}
+                    {isDone ? "View >" : "Open >"}
                   </button>
                 </td>
               </tr>
@@ -2124,7 +2259,7 @@ function ProjectDetail({ project }) {
               const statusLabel=docStatusDisplay(doc.status);
               const dscCls=dsc(doc.status);
               return(
-                <div key={doc.id} onClick={()=>setOpenDoc(doc)}
+                <div key={doc.id} onClick={()=>setOpenDoc({ ...doc, workspace: doc.workspace || project.id })}
                   style={{ border:"1.5px solid #F3F4F6",borderRadius:12,padding:16,cursor:"pointer",background:"#fff",transition:"box-shadow .15s,border-color .15s",display:"flex",flexDirection:"column",gap:10 }}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor="#DBEAFE";e.currentTarget.style.boxShadow="0 4px 16px rgba(37,99,235,.1)";}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor="#F3F4F6";e.currentTarget.style.boxShadow="none";}}>
@@ -2169,7 +2304,7 @@ function ProjectDetail({ project }) {
               const statusLabel=docStatusDisplay(doc.status);
               const pri=priFromApi(doc.priority);
               return(
-                <tr key={doc.id} style={{ cursor:"pointer" }} onClick={()=>setOpenDoc(doc)}>
+                <tr key={doc.id} style={{ cursor:"pointer" }} onClick={()=>setOpenDoc({ ...doc, workspace: doc.workspace || project.id })}>
                   <td>
                     <div style={{ display:"flex",alignItems:"center",gap:8 }}>
                       <div style={{ width:32,height:36,borderRadius:6,background:dt.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
@@ -2190,7 +2325,7 @@ function ProjectDetail({ project }) {
                   <td>
                     <div style={{ display:"flex",gap:8 }} onClick={e=>e.stopPropagation()}>
                       <button style={{ background:"none",border:"none",color:"#6B7280",padding:0,display:"flex" }}
-                        onClick={()=>setOpenDoc(doc)}>
+                        onClick={()=>setOpenDoc({ ...doc, workspace: doc.workspace || project.id })}>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       </button>
                     </div>
@@ -2201,7 +2336,7 @@ function ProjectDetail({ project }) {
           </tbody>
         </table>
       )}
-      {view==="timeline"&&<TimelineView/>}
+      {view==="timeline"&&<TimelineView docs={docs}/>}
     </div>
   );
 }
@@ -2209,42 +2344,107 @@ function ProjectDetail({ project }) {
 /* ══════════════════════════════════════════════════════════
    TIMELINE
 ══════════════════════════════════════════════════════════ */
-function TimelineView() {
-  const [month,setMonth]=useState(11);const[year,setYear]=useState(2025);
-  const today=new Date();
-  const first=new Date(year,month,1).getDay();const days=new Date(year,month+1,0).getDate();const prevDays=new Date(year,month,0).getDate();
-  const cells=[];for(let i=0;i<first;i++)cells.push({day:prevDays-first+1+i,out:true});for(let d=1;d<=days;d++)cells.push({day:d,out:false});while(cells.length%7!==0)cells.push({day:cells.length-days-first+1,out:true});
-  const MN=["January","February","March","April","May","June","July","August","September","October","November","December"];
-  const evts=[];
-  const getE=(day,out)=>!out?evts.filter(e=>e.day===day):[];
-  const prev=()=>{if(month===0){setMonth(11);setYear(y=>y-1);}else setMonth(m=>m-1);};
-  const next=()=>{if(month===11){setMonth(0);setYear(y=>y+1);}else setMonth(m=>m+1);};
-  return(
+function TimelineView({ docs = [] }) {
+  const todayRaw = new Date();
+  todayRaw.setHours(0, 0, 0, 0);
+  const [month, setMonth] = useState(todayRaw.getMonth());
+  const [year,  setYear]  = useState(todayRaw.getFullYear());
+
+  const MN = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+  const first    = new Date(year, month, 1).getDay();
+  const days     = new Date(year, month + 1, 0).getDate();
+  const prevDays = new Date(year, month, 0).getDate();
+  const cells    = [];
+  for (let i = 0; i < first; i++) cells.push({ day: prevDays - first + 1 + i, out: true });
+  for (let d = 1; d <= days; d++) cells.push({ day: d, out: false });
+  while (cells.length % 7 !== 0) cells.push({ day: cells.length - days - first + 1, out: true });
+
+  // Build deadline events from docs
+  const events = docs
+    .filter(d => d.due_date)
+    .map(d => {
+      const due      = new Date(d.due_date);
+      const daysLeft = Math.floor((due - todayRaw) / (1000 * 60 * 60 * 24));
+      let color = "#2563EB", bg = "#DBEAFE";           // > 1 day → blue
+      if (daysLeft <= 0)      { color = "#EF4444"; bg = "#FEE2E2"; } // overdue → red
+      else if (daysLeft === 1){ color = "#F97316"; bg = "#FFEDD5"; } // 1 day   → orange
+      return { day: due.getDate(), month: due.getMonth(), year: due.getFullYear(), name: d.title, color, bg, daysLeft };
+    });
+
+  const unscheduled = docs.filter(d => !d.due_date).length;
+  const overdue     = events.filter(e => e.daysLeft <= 0).length;
+
+  const getEvts = (day, out) =>
+    out ? [] : events.filter(e => e.day === day && e.month === month && e.year === year);
+
+  const prev = () => { if (month === 0) { setMonth(11); setYear(y => y - 1); } else setMonth(m => m - 1); };
+  const next = () => { if (month === 11) { setMonth(0); setYear(y => y + 1); } else setMonth(m => m + 1); };
+
+  return (
     <div>
-      <div style={{ display:"flex",alignItems:"center",gap:12,marginBottom:14 }}>
-        <button onClick={prev} style={{ background:"none",border:"none",cursor:"pointer",color:"#6B7280",display:"flex",alignItems:"center" }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><polyline points="15 18 9 12 15 6"/></svg></button>
-        <span style={{ fontSize:14,fontWeight:600,color:"#111827" }}>{MN[month]}</span>
-        <span style={{ fontSize:13,color:"#374151" }}>{year}</span>
-        <button onClick={next} style={{ background:"none",border:"none",cursor:"pointer",color:"#6B7280",display:"flex",alignItems:"center" }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><polyline points="9 6 15 12 9 18"/></svg></button>
-        <div style={{ marginLeft:"auto",display:"flex",gap:8 }}>
-          <span style={{ fontSize:12,color:"#9CA3AF",background:"#F9FAFB",border:".5px solid #E5E7EB",borderRadius:6,padding:"3px 10px" }}>3 Unscheduled</span>
-          <span style={{ fontSize:12,color:"#EF4444",background:"#FEF2F2",border:".5px solid #FECACA",borderRadius:6,padding:"3px 10px" }}>1 Overdue</span>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:14 }}>
+        <button onClick={prev} style={{ background:"none", border:"none", cursor:"pointer", color:"#6B7280", display:"flex", alignItems:"center" }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span style={{ fontSize:14, fontWeight:600, color:"#111827" }}>{MN[month]}</span>
+        <span style={{ fontSize:13, color:"#374151" }}>{year}</span>
+        <button onClick={next} style={{ background:"none", border:"none", cursor:"pointer", color:"#6B7280", display:"flex", alignItems:"center" }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><polyline points="9 6 15 12 9 18"/></svg>
+        </button>
+        <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+          {unscheduled > 0 && (
+            <span style={{ fontSize:12, color:"#9CA3AF", background:"#F9FAFB", border:".5px solid #E5E7EB", borderRadius:6, padding:"3px 10px" }}>
+              {unscheduled} Unscheduled
+            </span>
+          )}
+          {overdue > 0 && (
+            <span style={{ fontSize:12, color:"#EF4444", background:"#FEF2F2", border:".5px solid #FECACA", borderRadius:6, padding:"3px 10px" }}>
+              {overdue} Overdue
+            </span>
+          )}
         </div>
       </div>
-      <div style={{ display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderLeft:".5px solid #E5E7EB",borderTop:".5px solid #E5E7EB" }}>
-        {["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map(d=>(
-          <div key={d} style={{ fontSize:11,color:"#9CA3AF",fontWeight:500,padding:"8px 0",textAlign:"center",borderRight:".5px solid #E5E7EB",borderBottom:".5px solid #E5E7EB" }}>{d}</div>
+
+      {/* Grid */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", borderLeft:".5px solid #E5E7EB", borderTop:".5px solid #E5E7EB" }}>
+        {["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map(d => (
+          <div key={d} style={{ fontSize:11, color:"#9CA3AF", fontWeight:500, padding:"8px 0", textAlign:"center", borderRight:".5px solid #E5E7EB", borderBottom:".5px solid #E5E7EB" }}>{d}</div>
         ))}
-        {cells.map((cell,i)=>{
-          const ev=getE(cell.day,cell.out);
-          const isTd=!cell.out&&cell.day===today.getDate()&&month===today.getMonth()&&year===today.getFullYear();
-          return(
-            <div key={i} className="cal-cell" style={{ background:isTd?"#F0F9FF":"#fff" }}>
-              <div style={{ fontSize:12,color:cell.out?"#D1D5DB":"#374151",fontWeight:500,textAlign:"right",marginBottom:4,...(isTd?{background:"#2563EB",color:"#fff",borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",marginLeft:"auto"}:{}) }}>{cell.day}</div>
-              {ev.map((e,j)=>(<div key={j} className="cal-event"><div style={{ fontWeight:500,fontSize:10.5,marginBottom:2 }}>{e.name}</div><AvatarStack members={e.members}/></div>))}
+        {cells.map((cell, i) => {
+          const ev = getEvts(cell.day, cell.out);
+          const isTd = !cell.out && cell.day === todayRaw.getDate() && month === todayRaw.getMonth() && year === todayRaw.getFullYear();
+          return (
+            <div key={i} className="cal-cell" style={{ background: isTd ? "#F0F9FF" : "#fff" }}>
+              <div style={{ fontSize:12, color:cell.out?"#D1D5DB":"#374151", fontWeight:500, textAlign:"right", marginBottom:4,
+                ...(isTd ? { background:"#2563EB", color:"#fff", borderRadius:"50%", width:22, height:22, display:"flex", alignItems:"center", justifyContent:"center", marginLeft:"auto" } : {}) }}>
+                {cell.day}
+              </div>
+              {ev.map((e, j) => (
+                <div key={j} title={e.name} style={{ background:e.bg, borderRadius:6, padding:"3px 6px", fontSize:10.5, color:e.color, marginBottom:3, borderLeft:`2px solid ${e.color}`, fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {e.name}
+                </div>
+              ))}
             </div>
           );
         })}
+      </div>
+
+      {/* Legend */}
+      <div style={{ display:"flex", gap:16, marginTop:12, fontSize:11.5, color:"#6B7280" }}>
+        <span style={{ display:"flex", alignItems:"center", gap:5 }}>
+          <span style={{ width:10, height:10, borderRadius:2, background:"#DBEAFE", border:"1.5px solid #2563EB", display:"inline-block" }}/>
+          More than 1 day left
+        </span>
+        <span style={{ display:"flex", alignItems:"center", gap:5 }}>
+          <span style={{ width:10, height:10, borderRadius:2, background:"#FFEDD5", border:"1.5px solid #F97316", display:"inline-block" }}/>
+          1 day left
+        </span>
+        <span style={{ display:"flex", alignItems:"center", gap:5 }}>
+          <span style={{ width:10, height:10, borderRadius:2, background:"#FEE2E2", border:"1.5px solid #EF4444", display:"inline-block" }}/>
+          Overdue
+        </span>
       </div>
     </div>
   );
@@ -2280,6 +2480,12 @@ export default function Projects({ onGoToAuth, onNavigate }) {
     queryFn: getWorkspaces,
   });
 
+  const { data: assignedDocsData, isLoading: assignedLoading } = useQuery({
+    queryKey: ["documents", "assigned"],
+    queryFn: () => getDocuments({ role: "editor,signer" }),
+    enabled: tab === "assigned",
+  });
+
   const { data: archivedDocsData } = useQuery({
     queryKey: ["documents", "archived"],
     queryFn: () => getDocuments({ status: "archived" }),
@@ -2289,19 +2495,25 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   const allWs = wsData?.results ?? (Array.isArray(wsData) ? wsData : []);
   const orgName = allWs[0]?.title || "Organization";
 
-  const projects = allWs.map(ws => ({
+  const wsToRow = ws => ({
     id: ws.id,
     name: ws.title,
-    status: ws.status === "active" ? "Active" : ws.status === "closed" ? "Inactive" : "Completed",
+    status: ws.status === "active" ? "Active" : ws.status === "archived" ? "Archived" : ws.status === "closed" ? "Inactive" : "Completed",
     members: [],
     extra: 0,
     files: 0,
     updated: ws.created_at
       ? new Date(ws.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })
       : "—",
-  }));
+  });
 
-  const archivedProjects = projects.filter(p => p.status === "Inactive");
+  // Managed: only workspaces the user owns
+  const managedProjects = allWs.filter(ws => ws.user_role === "owner").map(wsToRow);
+
+  // Archive: workspaces that are closed or archived
+  const archivedProjects = allWs.filter(ws => ws.status === "archived" || ws.status === "closed").map(wsToRow);
+
+  const assignedDocs = assignedDocsData?.results ?? (Array.isArray(assignedDocsData) ? assignedDocsData : []);
   const archivedDocs = archivedDocsData?.results ?? (Array.isArray(archivedDocsData) ? archivedDocsData : []);
 
   const handleCreate = (data) => {
@@ -2453,12 +2665,18 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                 <div className="pr-inner" style={{ flex:1 }}>
                   {tab==="managed" && (
                     wsLoading
-                      ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>Loading workspaces…</div>
-                      : projects.length===0
+                      ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>Loading…</div>
+                      : managedProjects.length===0
                         ? <EmptyState/>
-                        : <ProjectTable projects={projects} onManage={p=>setSelected(p)}/>
+                        : <ProjectTable projects={managedProjects} onManage={p=>setSelected(p)}/>
                   )}
-                  {tab==="assigned" && <AssignedDocsEmpty/>}
+                  {tab==="assigned" && (
+                    assignedLoading
+                      ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>Loading…</div>
+                      : assignedDocs.length===0
+                        ? <AssignedDocsEmpty/>
+                        : <AssignedDocsTable docs={assignedDocs} onOpen={d=>setSelectedDoc({ ...d, workspace: d.workspace })}/>
+                  )}
                   {tab==="archived" && (archivedProjects.length===0 && archivedDocs.length===0 ? <ArchivedEmpty/> : <ArchivedSection projects={archivedProjects} docs={archivedDocs}/>)}
                 </div>
               </>
