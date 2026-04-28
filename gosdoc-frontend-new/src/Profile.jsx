@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import useAuthStore from "./store/authStore";
 import {
   getMe, updateProfile, changePassword, deleteAccount,
@@ -712,11 +713,20 @@ export function ChangeEmailModal({ onClose }) {
    SETTINGS MODAL
 ══════════════════════════════════════════════════════════ */
 export function SettingsModal({ onClose }) {
+  const { t, i18n } = useTranslation();
   const [notifEmail, setNotifEmail] = useState(true);
   const [notifPush,  setNotifPush]  = useState(true);
   const [theme,      setTheme]      = useState("light");
+  const [lang,       setLang]       = useState(i18n.language || "en");
   const [loaded,     setLoaded]     = useState(false);
   const saveRef = useRef(null);
+
+  const changeLang = (l) => {
+    setLang(l);
+    i18n.changeLanguage(l);
+    localStorage.setItem("gosdoc_lang", l);
+    persist({ language: l });
+  };
 
   // Load settings on mount
   useEffect(() => {
@@ -762,26 +772,26 @@ export function SettingsModal({ onClose }) {
           </svg>
         </button>
         <div style={{ padding:"36px 36px 32px" }}>
-          <h2 style={{ fontSize:22,fontWeight:700,color:"#111827",textAlign:"center",marginBottom:28 }}>Settings</h2>
+          <h2 style={{ fontSize:22,fontWeight:700,color:"#111827",textAlign:"center",marginBottom:28 }}>{t("settings.title")}</h2>
 
           {/* Notifications */}
           <div style={{ marginBottom:22 }}>
-            <div style={{ fontSize:15,fontWeight:600,color:"#111827",marginBottom:4 }}>Notifications</div>
+            <div style={{ fontSize:15,fontWeight:600,color:"#111827",marginBottom:4 }}>{t("settings.notifications")}</div>
             <div className="pf-toggle-row">
-              <span className="pf-toggle-label">Email notifications</span>
+              <span className="pf-toggle-label">{t("settings.emailNotif")}</span>
               <Toggle checked={notifEmail} onChange={v=>{ setNotifEmail(v); persist({ notification_email: v }); }}/>
             </div>
             <div className="pf-toggle-row">
-              <span className="pf-toggle-label">Push notifications</span>
+              <span className="pf-toggle-label">{t("settings.pushNotif")}</span>
               <Toggle checked={notifPush} onChange={v=>{ setNotifPush(v); persist({ notification_push: v }); }}/>
             </div>
           </div>
 
           {/* Appearance */}
-          <div>
-            <div style={{ fontSize:15,fontWeight:600,color:"#111827",marginBottom:12 }}>Appearance</div>
+          <div style={{ marginBottom:22 }}>
+            <div style={{ fontSize:15,fontWeight:600,color:"#111827",marginBottom:12 }}>{t("settings.appearance")}</div>
             <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
-              <span className="pf-toggle-label">Theme</span>
+              <span className="pf-toggle-label">{t("settings.theme")}</span>
               <div className="pf-theme-sel">
                 <button className={`pf-theme-btn${theme==="light"?" active":""}`} onClick={()=>{ setTheme("light"); persist({ theme:"light" }); }} title="Light">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
@@ -793,6 +803,29 @@ export function SettingsModal({ onClose }) {
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                 </button>
               </div>
+            </div>
+          </div>
+
+          {/* Language */}
+          <div>
+            <div style={{ fontSize:15,fontWeight:600,color:"#111827",marginBottom:12 }}>{t("settings.language")}</div>
+            <div style={{ display:"flex", gap:8 }}>
+              {[
+                { code:"en", label:"English" },
+                { code:"ru", label:"Русский" },
+                { code:"kk", label:"Қазақша" },
+              ].map(l => (
+                <button key={l.code} onClick={() => changeLang(l.code)}
+                  style={{
+                    flex:1, padding:"8px 0", borderRadius:8, fontSize:13, fontWeight:500,
+                    cursor:"pointer", fontFamily:"inherit", transition:"all .15s",
+                    border: lang === l.code ? "2px solid #2563EB" : "1.5px solid #E5E7EB",
+                    background: lang === l.code ? "#EEF2FF" : "#fff",
+                    color: lang === l.code ? "#2563EB" : "#6B7280",
+                  }}>
+                  {l.label}
+                </button>
+              ))}
             </div>
           </div>
         </div>

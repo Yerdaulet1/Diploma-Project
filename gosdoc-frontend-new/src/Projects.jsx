@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import {
   getDocuments, getDocument, updateDocument,
   getComments, addComment as apiAddComment,
@@ -357,7 +358,7 @@ function DescEditor({ value, onChange }) {
 /* ══════════════════════════════════════════════════════════
    DEADLINE PICKER (single-date calendar popup)
 ══════════════════════════════════════════════════════════ */
-function DeadlinePicker({ value, onChange, onClose, pos }) {
+function DeadlinePicker({ value, onChange, onClose, pos, maxDate }) {
   const today   = new Date();
   const init    = isoToDate(value) || today;
   const [vm, setVm]         = useState(init.getMonth());
@@ -365,6 +366,16 @@ function DeadlinePicker({ value, onChange, onClose, pos }) {
   const [sel, setSel]       = useState(isoToDate(value));
   const [picker, setPicker] = useState(null); // "month"|"year"
   const ref = useRef(null);
+  const PICKER_H = 320;
+
+  // Flip above the button if not enough space below
+  const top = pos.top + PICKER_H > window.innerHeight
+    ? pos.top - PICKER_H - (pos.buttonHeight || 32) - 6
+    : pos.top;
+  const left = Math.min(pos.left, window.innerWidth - 300);
+
+  const maxD = maxDate ? isoToDate(maxDate) : null;
+  const isDisabled = (d) => maxD && new Date(vy, vm, d) > maxD;
 
   useEffect(() => {
     const h = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
@@ -387,9 +398,9 @@ function DeadlinePicker({ value, onChange, onClose, pos }) {
   const yrStart = vy - (vy % 12);
 
   return (
-    <div ref={ref} style={{ position:"fixed", top:pos.top, left:pos.left, zIndex:10000,
+    <div ref={ref} style={{ position:"fixed", top, left, zIndex:99999,
       background:"#fff", borderRadius:14, padding:16, width:292,
-      boxShadow:"0 8px 32px rgba(0,0,0,0.18)", fontFamily:"'DM Sans','Segoe UI',sans-serif" }}>
+      boxShadow:"0 8px 40px rgba(0,0,0,0.22)", fontFamily:"'DM Sans','Segoe UI',sans-serif" }}>
 
       {/* Month/Year overlay */}
       {picker && (
@@ -463,15 +474,18 @@ function DeadlinePicker({ value, onChange, onClose, pos }) {
           <div key={d} style={{ fontSize:10,color:"#9CA3AF",textAlign:"center",padding:"3px 0",fontWeight:500 }}>{d}</div>
         ))}
         {cells.map((day, i) => day === null ? <div key={`e${i}`}/> : (
-          <div key={day} onClick={() => setSel(new Date(vy,vm,day))}
+          <div key={day}
+            onClick={() => { if (!isDisabled(day)) setSel(new Date(vy,vm,day)); }}
             style={{
               width:34,height:34,margin:"1px auto",display:"flex",alignItems:"center",justifyContent:"center",
-              fontSize:12.5,cursor:"pointer",userSelect:"none",borderRadius:"50%",
-              ...(calSame(new Date(vy,vm,day), sel)
-                ? { background:"#2563EB",color:"#fff" }
-                : calSame(new Date(vy,vm,day), today)
-                  ? { boxShadow:"0 0 0 1.5px #2563EB",color:"#2563EB",fontWeight:600 }
-                  : { color:"#374151" })
+              fontSize:12.5,userSelect:"none",borderRadius:"50%",
+              ...(isDisabled(day)
+                ? { color:"#D1D5DB",cursor:"not-allowed" }
+                : calSame(new Date(vy,vm,day), sel)
+                  ? { background:"#2563EB",color:"#fff",cursor:"pointer" }
+                  : calSame(new Date(vy,vm,day), today)
+                    ? { boxShadow:"0 0 0 1.5px #2563EB",color:"#2563EB",fontWeight:600,cursor:"pointer" }
+                    : { color:"#374151",cursor:"pointer" })
             }}>
             {day}
           </div>
@@ -490,7 +504,7 @@ function DeadlinePicker({ value, onChange, onClose, pos }) {
 /* ══════════════════════════════════════════════════════════
    SUBTASK ROW
 ══════════════════════════════════════════════════════════ */
-function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndClose, isFirst, members = [] }) {
+function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndClose, isFirst, members = [], maxDate }) {
   const [showAssignee, setShowAssignee] = useState(false);
   const [showDl,       setShowDl]       = useState(false);
   const [dlPos,        setDlPos]        = useState({ top:0, left:0 });
@@ -500,7 +514,7 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
   const openDl = () => {
     if (dlBtnRef.current) {
       const r = dlBtnRef.current.getBoundingClientRect();
-      setDlPos({ top: r.bottom + 6, left: r.left });
+      setDlPos({ top: r.bottom + 6, left: r.left, buttonHeight: r.height });
     }
     setShowDl(v => !v);
   };
@@ -539,6 +553,7 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
           <DeadlinePicker
             value={subtask.deadline}
             pos={dlPos}
+            maxDate={maxDate}
             onChange={iso => onChange({ ...subtask, deadline: iso })}
             onClose={() => setShowDl(false)}
           />
@@ -853,21 +868,22 @@ function ActivityPanel({ comments, onComment, apiComments }) {
 /* ══════════════════════════════════════════════════════════
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
-function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
+function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole = null }) {
   const qc = useQueryClient();
   const docId = doc?.id;
   const workspaceId = doc?.workspace?.id || doc?.workspace;
+  const isEditor = userRole === "editor";
 
   // API queries — only when we have a real document id
   const { data: apiDoc } = useQuery({
     queryKey: ["document", docId],
     queryFn: () => getDocument(docId),
-    enabled: !readOnly && !!docId,
+    enabled: (!readOnly || isEditor) && !!docId,
   });
   const { data: apiSubtasks } = useQuery({
     queryKey: ["subtasks", docId],
     queryFn: () => getSubtasks(docId),
-    enabled: !readOnly && !!docId,
+    enabled: (!readOnly || isEditor) && !!docId,
   });
   const { data: apiAttachments } = useQuery({
     queryKey: ["attachments", docId],
@@ -926,6 +942,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
       setStatus(docStatusDisplay(apiDoc.status));
       setPriority(priFromApi(apiDoc.priority));
       setDueDate(apiDoc.due_date || null);
+      if (apiDoc.description) setDesc(apiDoc.description);
     }
   }, [apiDoc]);
 
@@ -962,7 +979,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
   const snapshot = useRef({ status:"TO DO", priority:"Empty", assignee:null, dueDate:null, desc:"", title:doc?.title||doc?.name||"", subtasks:[{id:1,name:"",mode:"action",assignee:null,deadline:null}], attachments:[] });
 
   const handleSave = async () => {
-    if (saving) return;
+    if (saving || isEditor) return;
     setSaving(true);
     try {
       if (!readOnly && docId) {
@@ -1094,7 +1111,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
           <span>Managed Projects</span>
           <span className="dm-header-sep">/</span>
           <span className="active">{projectName || "Contract Approval Workflow"} Projects</span>
-          {!readOnly && (
+          {!readOnly && !isEditor && (
             <button onClick={handleSave} disabled={saving}
               style={{ display:"flex",alignItems:"center",gap:4,padding:"4px 12px",background:saved?"#16A34A":"#2563EB",color:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:600,cursor:saving?"not-allowed":"pointer",marginRight:8,transition:"background .2s" }}>
               {saving ? "Saving…" : saved ? "Saved ✓" : "Save"}
@@ -1110,11 +1127,11 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
           <div className="dm-left">
             {/* Title */}
             <div className="dm-title-row">
-              {readOnly
+              {(readOnly || isEditor)
                 ? <div className="dm-title" style={{ cursor:"default",border:"none" }}>{title}</div>
                 : <input className="dm-title" value={title} onChange={e=>setTitle(e.target.value)}/>
               }
-              {!readOnly && <svg viewBox="0 0 24 24" fill="none" stroke="#FBBF24" strokeWidth="2" width="16" height="16"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>}
+              {!readOnly && !isEditor && <svg viewBox="0 0 24 24" fill="none" stroke="#FBBF24" strokeWidth="2" width="16" height="16"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>}
             </div>
 
             {/* Meta */}
@@ -1122,16 +1139,16 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
               <div className="dm-meta-row">
                 <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="14" height="14"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
                 <span className="dm-meta-label">Status</span>
-                {readOnly
-                  ? <span className={doc?.status==="COMPLETED"?"ad-badge-done":"ad-badge-ip"}>{doc?.status||"IN PROGRESS"}</span>
+                {(readOnly || isEditor)
+                  ? <span className={status==="COMPLETED"||status==="Completed"?"ad-badge-done":"ad-badge-ip"}>{status||doc?.status||"IN PROGRESS"}</span>
                   : <StatusPicker value={status} onChange={setStatus}/>
                 }
               </div>
               <div className="dm-meta-row">
                 <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="14" height="14"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/></svg>
                 <span className="dm-meta-label">Priority</span>
-                {readOnly
-                  ? <span className="dm-meta-btn" style={{ cursor:"default" }}>Medium</span>
+                {(readOnly || isEditor)
+                  ? <span className="dm-meta-btn" style={{ cursor:"default" }}>{priority || "Empty"}</span>
                   : <div style={{ position:"relative" }}>
                       <button className="dm-meta-btn" onClick={()=>setShowPriDd(v=>!v)}>
                         {priority}
@@ -1156,10 +1173,10 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
               <div className="dm-meta-row">
                 <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="14" height="14"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
                 <span className="dm-meta-label">Due date</span>
-                {readOnly
+                {(readOnly || isEditor)
                   ? <span className="dm-deadline-btn" style={{ cursor:"default" }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                      {doc?.deadline || "—"}
+                      {dueDate ? fmtDeadline(dueDate) : (doc?.deadline || "—")}
                     </span>
                   : <div style={{ position:"relative" }}>
                       <button ref={dueBtnRef}
@@ -1167,7 +1184,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
                         onClick={() => {
                           if (dueBtnRef.current) {
                             const r = dueBtnRef.current.getBoundingClientRect();
-                            setDueDlPos({ top: r.bottom + 6, left: r.left });
+                            setDueDlPos({ top: r.bottom + 6, left: r.left, buttonHeight: r.height });
                           }
                           setShowDueDl(v => !v);
                         }}>
@@ -1184,7 +1201,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
               <div className="dm-meta-row">
                 <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="14" height="14"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                 <span className="dm-meta-label">Assignees</span>
-                {readOnly
+                {(readOnly || isEditor)
                   ? <AvatarStack members={doc?.members||[]}/>
                   : <div style={{ position:"relative" }}>
                       <button className="dm-meta-btn" onClick={()=>setShowAsnDd(v=>!v)} style={{ display:"flex",alignItems:"center",gap:5 }}>
@@ -1237,9 +1254,9 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
                     <svg viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" width="14" height="14"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="15" y2="18"/></svg>
                     Description
                   </div>
-                  {readOnly
+                  {(readOnly || isEditor)
                     ? <div className="dm-desc-view" style={{ cursor:"default",padding:"8px 0",minHeight:50,color:"#6B7280" }}>
-                        This document manages the contract approval process, where multiple documents are reviewed and approved through several stages before finalization.
+                        {desc || "No description."}
                       </div>
                     : <DescEditor value={desc} onChange={setDesc}/>
                   }
@@ -1267,7 +1284,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
                   );
                 })()}
 
-                {/* Attachments (only shown when editable) */}
+                {/* Attachments */}
                 {!readOnly && <div className="dm-section">
                   <div className="dm-section-title">
                     <svg viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" width="14" height="14"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
@@ -1284,19 +1301,27 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
                           <div style={{ fontSize:13,fontWeight:500,color:"#374151" }}>{a.name}</div>
                           <div style={{ fontSize:11,color:"#9CA3AF" }}>{a.size} · {a.date}</div>
                         </div>
-                        <button className="dm-attach-del" onClick={async()=>{
-                          const att=attachments[i];
-                          if(att?._apiId&&docId){try{await apiDeleteAttachment(docId,att._apiId);qc.invalidateQueries({queryKey:["attachments",docId]});}catch{}}
-                          setAttachments(at=>at.filter((_,j)=>j!==i));
-                        }}>Delete</button>
+                        {isEditor
+                          ? <a href={a.downloadUrl} target="_blank" rel="noreferrer"
+                              style={{ marginLeft:"auto",padding:"3px 10px",background:"#EFF6FF",color:"#2563EB",border:"1px solid #BFDBFE",borderRadius:6,fontSize:12,fontWeight:500,cursor:"pointer",textDecoration:"none",flexShrink:0 }}>
+                              View
+                            </a>
+                          : <button className="dm-attach-del" onClick={async()=>{
+                              const att=attachments[i];
+                              if(att?._apiId&&docId){try{await apiDeleteAttachment(docId,att._apiId);qc.invalidateQueries({queryKey:["attachments",docId]});}catch{}}
+                              setAttachments(at=>at.filter((_,j)=>j!==i));
+                            }}>Delete</button>
+                        }
                       </div>
                     );
                   })}
-                  <input ref={fileRef} type="file" style={{ display:"none" }} onChange={handleFileUpload}/>
-                  <button className="dm-attach-link" disabled={uploading} onClick={()=>!uploading&&fileRef.current?.click()}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="14" height="14"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-                    {uploading ? "Uploading…" : "Select or drag your file here"}
-                  </button>
+                  {!isEditor && <>
+                    <input ref={fileRef} type="file" style={{ display:"none" }} onChange={handleFileUpload}/>
+                    <button className="dm-attach-link" disabled={uploading} onClick={()=>!uploading&&fileRef.current?.click()}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="14" height="14"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                      {uploading ? "Uploading…" : "Select or drag your file here"}
+                    </button>
+                  </>}
                 </div>}
 
                 {/* Subtasks */}
@@ -1305,15 +1330,31 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false }) {
                     <svg viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
                     Subtasks
                   </div>
-                  {subtasks.map((st, i) => (
-                    <SubtaskRow key={st.id} subtask={st} index={i}
-                      isFirst={i === 0}
-                      onChange={data => updateSubtask(st.id, data)}
-                      onDelete={() => deleteSubtask(st.id)}
-                      onAddNext={addSubtask}
-                      onSaveAndClose={() => { handleSave(); setTimeout(onClose, 300); }}
-                      members={membersList}/>
-                  ))}
+                  {isEditor
+                    ? subtasks.filter(st => st.name?.trim()).map((st, i) => (
+                        <div key={st.id} style={{ display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:".5px solid #F3F4F6" }}>
+                          <span style={{ fontSize:12,color:"#9CA3AF",minWidth:18 }}>{i + 1}</span>
+                          <span style={{ flex:1,fontSize:13,color:"#374151",fontWeight:500 }}>{st.name}</span>
+                          {st.deadline && (
+                            <span style={{ fontSize:11,color:"#6B7280",display:"flex",alignItems:"center",gap:4 }}>
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                              {fmtDeadline(st.deadline)}
+                            </span>
+                          )}
+                          {st.assignee && <MiniAv member={st.assignee} size={22}/>}
+                        </div>
+                      ))
+                    : subtasks.map((st, i) => (
+                        <SubtaskRow key={st.id} subtask={st} index={i}
+                          isFirst={i === 0}
+                          onChange={data => updateSubtask(st.id, data)}
+                          onDelete={() => deleteSubtask(st.id)}
+                          onAddNext={addSubtask}
+                          onSaveAndClose={() => { handleSave(); setTimeout(onClose, 300); }}
+                          members={membersList}
+                          maxDate={dueDate}/>
+                      ))
+                  }
                 </div>
               </>
             )}
@@ -1509,14 +1550,15 @@ function AvatarStack({ members, extra=0 }) {
 }
 
 function MemberInvite({ members, setMembers, errors, setErrors }) {
+  const { t } = useTranslation();
   const update=(i,f,v)=>{setMembers(m=>m.map((x,j)=>j===i?{...x,[f]:v}:x));if(errors)setErrors(e=>e.map((x,j)=>j===i?{...x,[f]:""}:x));};
   const add=()=>{if(members.length<7)setMembers(m=>[...m,{email:"",role:"viewer"}]);};
   const remove=(i)=>{if(members.length<=1)return;setMembers(m=>m.filter((_,j)=>j!==i));if(errors)setErrors(e=>e.filter((_,j)=>j!==i));};
   return (
     <div>
       <div style={{ display:"flex",gap:10,marginBottom:6 }}>
-        <div style={{ flex:1,fontSize:12,fontWeight:500,color:"#374151" }}>Email <span style={{ color:"#EF4444" }}>*</span></div>
-        <div style={{ flex:1,fontSize:12,fontWeight:500,color:"#374151" }}>Role</div>
+        <div style={{ flex:1,fontSize:12,fontWeight:500,color:"#374151" }}>{t("auth.email")} <span style={{ color:"#EF4444" }}>*</span></div>
+        <div style={{ flex:1,fontSize:12,fontWeight:500,color:"#374151" }}>{t("projects.role")}</div>
         <div style={{ width:36 }}/>
       </div>
       {members.map((m,i)=>(
@@ -1529,9 +1571,9 @@ function MemberInvite({ members, setMembers, errors, setErrors }) {
           </div>
           <select value={m.role||"viewer"} onChange={e=>update(i,"role",e.target.value)}
             style={{ flex:1,border:"1.5px solid #E5E7EB",borderRadius:8,padding:"9px 10px",fontSize:13,color:"#374151",fontFamily:"inherit",background:"#fff",cursor:"pointer",outline:"none" }}>
-            <option value="viewer">Viewer</option>
-            <option value="editor">Editor</option>
-            <option value="signer">Signer</option>
+            <option value="viewer">{t("projects.roles.viewer")}</option>
+            <option value="editor">{t("projects.roles.editor")}</option>
+            <option value="signer">{t("projects.roles.signer")}</option>
           </select>
           <button className="pr-m-rm" onClick={()=>remove(i)} disabled={members.length<=1}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -1541,7 +1583,7 @@ function MemberInvite({ members, setMembers, errors, setErrors }) {
       {members.length<7&&(
         <button className="pr-m-add" onClick={add}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Add member
+          {t("projects.addMember")}
         </button>
       )}
     </div>
@@ -1552,6 +1594,7 @@ function MemberInvite({ members, setMembers, errors, setErrors }) {
   NEW PROJECT MODAL
 ══════════════════════════════════════════════════════════ */
 function NewProjectModal({ onClose, onCreate }) {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [step,setStep]=useState(1);
   const [form,setForm]=useState({name:"",desc:"",docName:""});
@@ -1601,22 +1644,22 @@ function NewProjectModal({ onClose, onCreate }) {
         <button className="pr-modal-x" onClick={onClose}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
-        <h2>{step===1?"New Project":"Invite Members"}</h2>
+        <h2>{step===1?t("projects.newProjectTitle"):t("projects.inviteMembers")}</h2>
         {step===1&&(
           <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
             <div>
-              <label className="pr-label">Project Name <span style={{ color:"#EF4444" }}>*</span></label>
+              <label className="pr-label">{t("projects.projectName")} <span style={{ color:"#EF4444" }}>*</span></label>
               <input className="pr-input" placeholder="ex: Contract Approval Workflow" value={form.name}
                 onChange={e=>{setForm(f=>({...f,name:e.target.value}));setFormErr(er=>({...er,name:""}));}}
                 style={{ borderColor:formErr.name?"#EF4444":"#E5E7EB" }}/>
               {formErr.name&&<span style={{ fontSize:11,color:"#EF4444" }}>{formErr.name}</span>}
             </div>
             <div>
-              <label className="pr-label">Description</label>
+              <label className="pr-label">{t("projects.description")}</label>
               <textarea className="pr-textarea" placeholder="ex: A project…" value={form.desc} onChange={e=>setForm(f=>({...f,desc:e.target.value}))}/>
             </div>
             <div>
-              <label className="pr-label">First Document Name <span style={{ color:"#EF4444" }}>*</span></label>
+              <label className="pr-label">{t("projects.firstDocumentName")} <span style={{ color:"#EF4444" }}>*</span></label>
               <input className="pr-input" placeholder="ex: Service Agreement" value={form.docName}
                 onChange={e=>{setForm(f=>({...f,docName:e.target.value}));setFormErr(er=>({...er,docName:""}));}}
                 style={{ borderColor:formErr.docName?"#EF4444":"#E5E7EB" }}/>
@@ -1635,11 +1678,11 @@ function NewProjectModal({ onClose, onCreate }) {
                     <polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/>
                     <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
                   </svg>
-                  <span style={{ fontSize:13,color:"#6B7280" }}>Drag &amp; drop or click to upload the document</span>
+                  <span style={{ fontSize:13,color:"#6B7280" }}>{t("projects.dragDrop")}</span>
                 </>
               )}
             </div>
-            <button className="pr-btn" onClick={next}>Next →</button>
+            <button className="pr-btn" onClick={next}>{t("common.next")} →</button>
           </div>
         )}
         {step===2&&(
@@ -1647,8 +1690,8 @@ function NewProjectModal({ onClose, onCreate }) {
             <p style={{ fontSize:13,color:"#6B7280" }}>Invite team members to <strong style={{ color:"#111827" }}>{form.name}</strong>.</p>
             <MemberInvite members={members} setMembers={setMembers} errors={errors} setErrors={setErrors}/>
             <div style={{ display:"flex",gap:10,marginTop:4 }}>
-              <button onClick={()=>setStep(1)} style={{ flex:1,border:"1.5px solid #E5E7EB",borderRadius:8,padding:11,fontSize:13,fontWeight:500,background:"#fff",color:"#374151",fontFamily:"inherit" }}>← Back</button>
-              <button className="pr-btn" style={{ flex:2,marginTop:0 }} onClick={create} disabled={creating}>{creating?"Creating…":"Create Project"}</button>
+              <button onClick={()=>setStep(1)} style={{ flex:1,border:"1.5px solid #E5E7EB",borderRadius:8,padding:11,fontSize:13,fontWeight:500,background:"#fff",color:"#374151",fontFamily:"inherit" }}>← {t("common.back")}</button>
+              <button className="pr-btn" style={{ flex:2,marginTop:0 }} onClick={create} disabled={creating}>{creating?t("projects.creating"):t("projects.createProject")}</button>
             </div>
           </div>
         )}
@@ -1664,6 +1707,7 @@ function NewProjectModal({ onClose, onCreate }) {
   ASSIGNED DOCS EMPTY STATE
 ══════════════════════════════════════════════════════════ */
 function AssignedDocsEmpty() {
+  const { t } = useTranslation();
   return (
     <div className="pr-empty">
       <svg viewBox="0 0 140 120" fill="none" width="200" height="160" style={{ marginBottom:20 }}>
@@ -1679,8 +1723,8 @@ function AssignedDocsEmpty() {
         <line x1="62" y1="21" x2="62" y2="27" stroke="#D1D5DB" strokeWidth="1.5" strokeLinecap="round"/>
         <line x1="59" y1="24" x2="65" y2="24" stroke="#D1D5DB" strokeWidth="1.5" strokeLinecap="round"/>
       </svg>
-      <p style={{ fontSize:14,fontWeight:600,color:"#374151",marginBottom:6 }}>No documents assigned to you yet.</p>
-      <p style={{ fontSize:13,color:"#9CA3AF" }}>Documents will appear here once assigned.</p>
+      <p style={{ fontSize:14,fontWeight:600,color:"#374151",marginBottom:6 }}>{t("projects.noAssignedYet")}</p>
+      <p style={{ fontSize:13,color:"#9CA3AF" }}>{t("projects.assignedHint")}</p>
     </div>
   );
 }
@@ -1689,16 +1733,17 @@ function AssignedDocsEmpty() {
   ASSIGNED DOCS TABLE
 ══════════════════════════════════════════════════════════ */
 function AssignedDocsTable({ docs, onOpen }) {
+  const { t } = useTranslation();
   return (
     <div style={{ padding:"0 4px 20px" }}>
       <table className="pr-table">
         <thead>
           <tr>
-            <th>Document</th>
-            <th>Uploaded by</th>
-            <th>Deadline</th>
-            <th>Status</th>
-            <th>Action</th>
+            <th>{t("projects.table.document")}</th>
+            <th>{t("projects.table.uploadedBy")}</th>
+            <th>{t("projects.table.deadline")}</th>
+            <th>{t("projects.table.status")}</th>
+            <th>{t("projects.table.action")}</th>
           </tr>
         </thead>
         <tbody>
@@ -1728,7 +1773,7 @@ function AssignedDocsTable({ docs, onOpen }) {
                 </td>
                 <td>
                   <button style={{ background:"none",border:"none",color:"#2563EB",fontSize:13,fontWeight:600,padding:0,cursor:"pointer",whiteSpace:"nowrap" }}>
-                    {isDone ? "View >" : "Open >"}
+                    {isDone ? `${t("common.view")} >` : `${t("common.open")} >`}
                   </button>
                 </td>
               </tr>
@@ -1744,6 +1789,7 @@ function AssignedDocsTable({ docs, onOpen }) {
    ARCHIVED EMPTY STATE
 ══════════════════════════════════════════════════════════ */
 function ArchivedEmpty() {
+  const { t } = useTranslation();
   return (
     <div className="pr-empty">
       <svg viewBox="0 0 140 120" fill="none" width="200" height="160" style={{ marginBottom:20 }}>
@@ -1757,8 +1803,8 @@ function ArchivedEmpty() {
         <path d="M60 38 L70 28 L80 38" fill="#F9FAFB" stroke="#D1D5DB" strokeWidth="1.5" strokeLinejoin="round"/>
         <rect x="64" y="28" width="12" height="10" rx="1" fill="#F9FAFB" stroke="#D1D5DB" strokeWidth="1.5"/>
       </svg>
-      <p style={{ fontSize:14,fontWeight:600,color:"#374151",marginBottom:6 }}>No archived items yet.</p>
-      <p style={{ fontSize:13,color:"#9CA3AF" }}>Projects and documents will appear here 3 days after completion.</p>
+      <p style={{ fontSize:14,fontWeight:600,color:"#374151",marginBottom:6 }}>{t("projects.noArchivedYet")}</p>
+      <p style={{ fontSize:13,color:"#9CA3AF" }}>{t("projects.archivedHint")}</p>
     </div>
   );
 }
@@ -1767,21 +1813,22 @@ function ArchivedEmpty() {
    ARCHIVED DATA + SECTION
 ══════════════════════════════════════════════════════════ */
 function ArchivedSection({ projects = [], docs = [] }) {
+  const { t } = useTranslation();
   return (
     <div style={{ padding:"0 4px 28px" }}>
       <div className="ar-section-title">
         <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="16" height="16"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-        Completed projects
+        {t("projects.completedProjects")}
         <span style={{ color:"#9CA3AF",fontWeight:400 }}>({projects.length})</span>
-        <span style={{ marginLeft:4,fontSize:11,color:"#9CA3AF",fontWeight:400,background:"#F3F4F6",borderRadius:4,padding:"1px 6px" }}>View only</span>
+        <span style={{ marginLeft:4,fontSize:11,color:"#9CA3AF",fontWeight:400,background:"#F3F4F6",borderRadius:4,padding:"1px 6px" }}>{t("projects.viewOnly")}</span>
       </div>
       {projects.length === 0
-        ? <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>No completed projects</div>
+        ? <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>{t("projects.noCompletedProjects")}</div>
         : (
           <table className="pr-table">
             <thead>
               <tr>
-                <th>Project</th><th>Documents</th><th>Last Updated</th>
+                <th>{t("projects.table.project")}</th><th>{t("projects.table.documents")}</th><th>{t("projects.table.lastUpdated")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1799,17 +1846,17 @@ function ArchivedSection({ projects = [], docs = [] }) {
 
       <div className="ar-section-title" style={{ marginTop:28 }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="16" height="16"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Archived documents
+        {t("projects.archivedDocuments")}
         <span style={{ color:"#9CA3AF",fontWeight:400 }}>({docs.length})</span>
-        <span style={{ marginLeft:4,fontSize:11,color:"#9CA3AF",fontWeight:400,background:"#F3F4F6",borderRadius:4,padding:"1px 6px" }}>View only</span>
+        <span style={{ marginLeft:4,fontSize:11,color:"#9CA3AF",fontWeight:400,background:"#F3F4F6",borderRadius:4,padding:"1px 6px" }}>{t("projects.viewOnly")}</span>
       </div>
       {docs.length === 0
-        ? <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>No archived documents</div>
+        ? <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>{t("projects.noArchivedDocs")}</div>
         : (
           <table className="pr-table">
             <thead>
               <tr>
-                <th>Document</th><th>Last Updated</th>
+                <th>{t("projects.table.document")}</th><th>{t("projects.table.lastUpdated")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1841,6 +1888,7 @@ function ArchivedSection({ projects = [], docs = [] }) {
    MANAGED PROJECTS EMPTY STATE
 ══════════════════════════════════════════════════════════ */
 function EmptyState() {
+  const { t } = useTranslation();
   return (
     <div className="pr-empty">
       <svg viewBox="0 0 140 120" fill="none" width="200" height="160" style={{ marginBottom:20 }}>
@@ -1854,8 +1902,8 @@ function EmptyState() {
         <text x="18" y="88" fontSize="9" fill="#D1D5DB">·</text>
         <text x="128" y="52" fontSize="9" fill="#D1D5DB">·</text>
       </svg>
-      <p style={{ fontSize:14,fontWeight:600,color:"#374151",marginBottom:6 }}>Your managed projects are empty.</p>
-      <p style={{ fontSize:13,color:"#9CA3AF" }}>Start by creating your first project.</p>
+      <p style={{ fontSize:14,fontWeight:600,color:"#374151",marginBottom:6 }}>{t("projects.managedEmpty")}</p>
+      <p style={{ fontSize:13,color:"#9CA3AF" }}>{t("projects.managedEmptyHint")}</p>
     </div>
   );
 }
@@ -1864,6 +1912,7 @@ function EmptyState() {
    PROJECT TABLE
 ══════════════════════════════════════════════════════════ */
 function ProjectTable({ projects, onManage }) {
+  const { t } = useTranslation();
   const sc=(s)=>s==="Active"?"s-active":s==="Completed"?"s-completed":"s-inactive";
   const sd=(s)=>s==="Active"?"#22c55e":s==="Completed"?"#2563EB":"#EF4444";
   return (
@@ -1871,9 +1920,9 @@ function ProjectTable({ projects, onManage }) {
       <table className="pr-table">
         <thead>
           <tr>
-            <th style={{ width:32 }}>#</th>
-            <th>Project</th><th>Status</th><th>Members</th>
-            <th>Documents</th><th>Last Updated</th><th>Actions</th>
+            <th style={{ width:32 }}>{t("projects.table.num")}</th>
+            <th>{t("projects.table.project")}</th><th>{t("projects.table.status")}</th><th>{t("projects.table.members")}</th>
+            <th>{t("projects.table.documents")}</th><th>{t("projects.table.lastUpdated")}</th><th>{t("projects.table.actions")}</th>
           </tr>
         </thead>
         <tbody>
@@ -1887,7 +1936,7 @@ function ProjectTable({ projects, onManage }) {
               <td style={{ color:"#6B7280",fontSize:12 }}>{p.updated}</td>
               <td>
                 <button onClick={()=>onManage(p)} style={{ background:"none",border:"none",color:"#2563EB",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:3,padding:0 }}>
-                  {p.status==="Completed"?"View":"Manage"}
+                  {p.status==="Completed"?t("common.view"):t("common.edit")}
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
                 </button>
               </td>
@@ -1903,6 +1952,7 @@ function ProjectTable({ projects, onManage }) {
    NEW DOCUMENT MODAL  (upload from PC  |  pick from cloud)
 ══════════════════════════════════════════════════════════ */
 function NewDocModal({ project, onClose }) {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [tab, setTab] = useState("upload");  // "upload" | "cloud"
   const [saving, setSaving] = useState(false);
@@ -1975,14 +2025,14 @@ function NewDocModal({ project, onClose }) {
         <button className="pr-modal-x" onClick={onClose}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
-        <h2 style={{ marginBottom:14 }}>Add Document</h2>
+        <h2 style={{ marginBottom:14 }}>{t("projects.addDocumentTitle")}</h2>
 
         {/* Tab switcher */}
         <div style={{ display:"flex",gap:8,marginBottom:18 }}>
-          {tabBtn("upload", "Upload from computer",
+          {tabBtn("upload", t("projects.uploadFromComputer"),
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
           )}
-          {tabBtn("cloud", "From cloud",
+          {tabBtn("cloud", t("projects.fromCloud"),
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
           )}
         </div>
@@ -1991,7 +2041,7 @@ function NewDocModal({ project, onClose }) {
         {tab==="upload" && (
           <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
             <div>
-              <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:5 }}>Document Title *</label>
+              <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:5 }}>{t("projects.documentTitle")} *</label>
               <input className="pr-input" placeholder="e.g. Contract Draft" value={title}
                 onChange={e=>setTitle(e.target.value)}
                 onKeyDown={e=>{ if(e.key==="Enter") handleUpload(); }}
@@ -2020,7 +2070,7 @@ function NewDocModal({ project, onClose }) {
               ) : (
                 <div style={{ color:"#9CA3AF",fontSize:13 }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" width="22" height="22" style={{ display:"block",margin:"0 auto 6px" }}><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-                  Click or drag to attach a file <span style={{ color:"#9CA3AF",fontSize:11 }}>(optional)</span>
+                  {t("documents.dropFileHere")} <span style={{ color:"#9CA3AF",fontSize:11 }}>(optional)</span>
                   <div style={{ fontSize:11,marginTop:3 }}>pdf · docx · xlsx</div>
                 </div>
               )}
@@ -2029,20 +2079,20 @@ function NewDocModal({ project, onClose }) {
             {/* File type selector (only when no file attached) */}
             {!pickedFile && (
               <div>
-                <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:5 }}>Create as</label>
+                <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:5 }}>{t("projects.createAs")}</label>
                 <select value={fileType} onChange={e=>setFileType(e.target.value)}
                   style={{ width:"100%",border:"1.5px solid #E5E7EB",borderRadius:8,padding:"9px 12px",fontSize:13,color:"#374151",outline:"none",background:"#fff",fontFamily:"inherit",cursor:"pointer" }}>
-                  <option value="docx">DOCX — Word Document</option>
-                  <option value="xlsx">XLSX — Spreadsheet</option>
+                  <option value="docx">{t("projects.wordDocument")}</option>
+                  <option value="xlsx">{t("projects.excelSpreadsheet")}</option>
                 </select>
               </div>
             )}
 
             <div style={{ display:"flex",justifyContent:"flex-end",gap:10,marginTop:4 }}>
-              <button onClick={onClose} style={{ padding:"9px 18px",fontSize:13,fontWeight:500,border:"1.5px solid #E5E7EB",borderRadius:8,background:"#fff",color:"#374151",fontFamily:"inherit",cursor:"pointer" }}>Cancel</button>
+              <button onClick={onClose} style={{ padding:"9px 18px",fontSize:13,fontWeight:500,border:"1.5px solid #E5E7EB",borderRadius:8,background:"#fff",color:"#374151",fontFamily:"inherit",cursor:"pointer" }}>{t("common.cancel")}</button>
               <button onClick={handleUpload} disabled={!title.trim()||saving}
                 style={{ padding:"9px 20px",fontSize:13,fontWeight:600,border:"none",borderRadius:8,background:"#2563EB",color:"#fff",fontFamily:"inherit",cursor:(!title.trim()||saving)?"not-allowed":"pointer",opacity:(!title.trim()||saving)?0.5:1 }}>
-                {saving?"Uploading…":"Upload"}
+                {saving?t("projects.uploading"):t("projects.upload")}
               </button>
             </div>
           </div>
@@ -2051,15 +2101,15 @@ function NewDocModal({ project, onClose }) {
         {/* ── Cloud tab ── */}
         {tab==="cloud" && (
           <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
-            <input className="pr-input" placeholder="Search documents…" value={search}
+            <input className="pr-input" placeholder={t("projects.searchDocuments")} value={search}
               onChange={e=>setSearch(e.target.value)} autoFocus/>
 
             <div style={{ maxHeight:280,overflowY:"auto",borderRadius:10,border:"1.5px solid #F3F4F6" }}>
               {cloudLoading && (
-                <div style={{ padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13 }}>Loading…</div>
+                <div style={{ padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13 }}>{t("common.loading")}</div>
               )}
               {!cloudLoading && filteredCloud.length===0 && (
-                <div style={{ padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13 }}>No documents found</div>
+                <div style={{ padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13 }}>{t("projects.noDocumentsFound")}</div>
               )}
               {filteredCloud.map(doc=>{
                 const dt = fileTypeInfo(doc.file_type);
@@ -2088,10 +2138,10 @@ function NewDocModal({ project, onClose }) {
             </div>
 
             <div style={{ display:"flex",justifyContent:"flex-end",gap:10,marginTop:4 }}>
-              <button onClick={onClose} style={{ padding:"9px 18px",fontSize:13,fontWeight:500,border:"1.5px solid #E5E7EB",borderRadius:8,background:"#fff",color:"#374151",fontFamily:"inherit",cursor:"pointer" }}>Cancel</button>
+              <button onClick={onClose} style={{ padding:"9px 18px",fontSize:13,fontWeight:500,border:"1.5px solid #E5E7EB",borderRadius:8,background:"#fff",color:"#374151",fontFamily:"inherit",cursor:"pointer" }}>{t("common.cancel")}</button>
               <button onClick={handleAddFromCloud} disabled={!selectedDoc||saving}
                 style={{ padding:"9px 20px",fontSize:13,fontWeight:600,border:"none",borderRadius:8,background:"#2563EB",color:"#fff",fontFamily:"inherit",cursor:(!selectedDoc||saving)?"not-allowed":"pointer",opacity:(!selectedDoc||saving)?0.5:1 }}>
-                {saving?"Adding…":"Add to Project"}
+                {saving?t("projects.adding"):t("projects.addToProject")}
               </button>
             </div>
           </div>
@@ -2105,6 +2155,7 @@ function NewDocModal({ project, onClose }) {
    MANAGE MEMBERS MODAL
 ══════════════════════════════════════════════════════════ */
 function ManageMembersModal({ project, onClose }) {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [newMembers, setNewMembers] = useState([{ email: "", role: "viewer" }]);
   const [errors, setErrors] = useState([]);
@@ -2146,7 +2197,7 @@ function ManageMembersModal({ project, onClose }) {
       <div className="pr-modal" onClick={e => e.stopPropagation()}
         style={{ maxWidth: 520, padding: "28px 28px 24px" }}>
         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20 }}>
-          <h2 style={{ fontSize:17,fontWeight:700,color:"#111827",margin:0 }}>Manage Members</h2>
+          <h2 style={{ fontSize:17,fontWeight:700,color:"#111827",margin:0 }}>{t("projects.manageMembersTitle")}</h2>
           <button onClick={onClose} style={{ background:"none",border:"none",cursor:"pointer",color:"#6B7280",padding:4,borderRadius:6,display:"flex",alignItems:"center" }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -2154,11 +2205,11 @@ function ManageMembersModal({ project, onClose }) {
 
         {/* Current members */}
         <div style={{ marginBottom:20 }}>
-          <div style={{ fontSize:12,fontWeight:600,color:"#6B7280",textTransform:"uppercase",letterSpacing:.5,marginBottom:10 }}>Current Members</div>
+          <div style={{ fontSize:12,fontWeight:600,color:"#6B7280",textTransform:"uppercase",letterSpacing:.5,marginBottom:10 }}>{t("projects.currentMembers")}</div>
           {isLoading
-            ? <div style={{ fontSize:13,color:"#9CA3AF" }}>Loading…</div>
+            ? <div style={{ fontSize:13,color:"#9CA3AF" }}>{t("common.loading")}</div>
             : existing.length === 0
-              ? <div style={{ fontSize:13,color:"#9CA3AF" }}>No members yet</div>
+              ? <div style={{ fontSize:13,color:"#9CA3AF" }}>{t("projects.noProjects")}</div>
               : existing.map((m, i) => (
                   <div key={i} style={{ display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:".5px solid #F3F4F6" }}>
                     <div style={{ width:32,height:32,borderRadius:"50%",background:AV_COLORS[i%AV_COLORS.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0 }}>
@@ -2177,14 +2228,14 @@ function ManageMembersModal({ project, onClose }) {
         </div>
 
         {/* Invite new */}
-        <div style={{ fontSize:12,fontWeight:600,color:"#6B7280",textTransform:"uppercase",letterSpacing:.5,marginBottom:10 }}>Invite New Members</div>
+        <div style={{ fontSize:12,fontWeight:600,color:"#6B7280",textTransform:"uppercase",letterSpacing:.5,marginBottom:10 }}>{t("projects.inviteNew")}</div>
         <MemberInvite members={newMembers} setMembers={setNewMembers} errors={errors} setErrors={setErrors}/>
 
         <div style={{ display:"flex",gap:10,justifyContent:"flex-end",marginTop:20 }}>
-          <button onClick={onClose} style={{ border:".5px solid #E5E7EB",borderRadius:8,padding:"9px 20px",fontSize:13,background:"#fff",color:"#6B7280",cursor:"pointer",fontFamily:"inherit" }}>Cancel</button>
+          <button onClick={onClose} style={{ border:".5px solid #E5E7EB",borderRadius:8,padding:"9px 20px",fontSize:13,background:"#fff",color:"#6B7280",cursor:"pointer",fontFamily:"inherit" }}>{t("common.cancel")}</button>
           <button onClick={handleAdd} disabled={saving}
             style={{ background:saving?"#93C5FD":"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"9px 24px",fontSize:13,fontWeight:500,cursor:saving?"not-allowed":"pointer",fontFamily:"inherit" }}>
-            {saving ? "Inviting…" : "Send Invites"}
+            {saving ? t("projects.inviting") : t("projects.sendInvites")}
           </button>
         </div>
       </div>
@@ -2196,6 +2247,8 @@ function ManageMembersModal({ project, onClose }) {
    PROJECT DETAIL
 ══════════════════════════════════════════════════════════ */
 function ProjectDetail({ project }) {
+  const { t } = useTranslation();
+  const user = useAuthStore(s => s.user);
   const [view,setView]=useState("table");
   const [openDoc,setOpenDoc]=useState(null);
   const [showNewDoc,setShowNewDoc]=useState(false);
@@ -2208,50 +2261,60 @@ function ProjectDetail({ project }) {
   });
   const docs = docsData?.results ?? (Array.isArray(docsData) ? docsData : []);
 
+  const { data: projectMembers } = useQuery({
+    queryKey: ["members", project.id],
+    queryFn: () => getMembers(project.id),
+    enabled: !!project.id,
+  });
+  const rawProjectMembers = projectMembers?.results ?? (Array.isArray(projectMembers) ? projectMembers : []);
+  const currentUserRole = rawProjectMembers.find(m => (m.user?.id || m.id) === user?.id)?.role || null;
+
   const dsc=(s)=>docStatusClass(s);
   return (
     <div style={{ padding:"20px",flex:1,overflow:"auto" }}>
-      {openDoc && <DocumentModal doc={openDoc} projectName={project.name} onClose={()=>setOpenDoc(null)}/>}
+      {openDoc && <DocumentModal doc={openDoc} projectName={project.name} onClose={()=>setOpenDoc(null)} userRole={currentUserRole}/>}
       {showNewDoc && <NewDocModal project={project} onClose={()=>setShowNewDoc(false)}/>}
       {showMembers && <ManageMembersModal project={project} onClose={()=>setShowMembers(false)}/>}
       <div style={{ display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:4 }}>
         <div>
           <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:6 }}>
             <h1 style={{ fontSize:22,fontWeight:700,color:"#111827" }}>{project.name}</h1>
-            <span className="s-active"><span style={{ width:6,height:6,borderRadius:"50%",background:"#22c55e" }}/>Active</span>
+            <span className="s-active"><span style={{ width:6,height:6,borderRadius:"50%",background:"#22c55e" }}/>{t("projects.active")}</span>
           </div>
           <p style={{ fontSize:13,color:"#6B7280",maxWidth:600 }}>{project.description || "Document management workspace."}</p>
         </div>
-        <div style={{ display:"flex",alignItems:"center",gap:10,flexShrink:0 }}>
-          <button onClick={()=>setShowMembers(true)}
-            style={{ background:"#fff",color:"#374151",border:".5px solid #E5E7EB",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:500,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            Members
-          </button>
-          <button onClick={()=>setShowNewDoc(true)} style={{ background:"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Add Document
-          </button>
-        </div>
+        {currentUserRole !== "editor" && (
+          <div style={{ display:"flex",alignItems:"center",gap:10,flexShrink:0 }}>
+            <button onClick={()=>setShowMembers(true)}
+              style={{ background:"#fff",color:"#374151",border:".5px solid #E5E7EB",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:500,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              {t("projects.members")}
+            </button>
+            <button onClick={()=>setShowNewDoc(true)} style={{ background:"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              {t("projects.addDocument")}
+            </button>
+          </div>
+        )}
       </div>
       <div style={{ display:"flex",gap:0,borderBottom:".5px solid #E5E7EB",margin:"16px 0" }}>
         {[
-          { v:"cards",    icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="2" y="3" width="9" height="9" rx="1"/><rect x="13" y="3" width="9" height="9" rx="1"/><rect x="2" y="14" width="9" height="7" rx="1"/><rect x="13" y="14" width="9" height="7" rx="1"/></svg> },
-          { v:"table",    icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg> },
-          { v:"timeline", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
-        ].map(({v,icon})=>(
+          { v:"cards",    label:t("projects.view.cards"),    icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="2" y="3" width="9" height="9" rx="1"/><rect x="13" y="3" width="9" height="9" rx="1"/><rect x="2" y="14" width="9" height="7" rx="1"/><rect x="13" y="14" width="9" height="7" rx="1"/></svg> },
+          { v:"table",    label:t("projects.view.table"),    icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg> },
+          { v:"timeline", label:t("projects.view.timeline"), icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
+        ].map(({v,label,icon})=>(
           <button key={v} onClick={()=>setView(v)}
             style={{ padding:"8px 16px",fontSize:13,fontWeight:500,background:"none",border:"none",fontFamily:"inherit",color:view===v?"#2563EB":"#9CA3AF",borderBottom:view===v?"2px solid #2563EB":"2px solid transparent",marginBottom:-1,display:"flex",alignItems:"center",gap:5,cursor:"pointer" }}>
             {icon}
-            {v.charAt(0).toUpperCase()+v.slice(1)}
+            {label}
           </button>
         ))}
       </div>
       {view==="cards"&&(
         docsLoading ? (
-          <div style={{ textAlign:"center",color:"#9CA3AF",padding:40 }}>Loading…</div>
+          <div style={{ textAlign:"center",color:"#9CA3AF",padding:40 }}>{t("common.loading")}</div>
         ) : docs.length===0 ? (
-          <div style={{ textAlign:"center",color:"#9CA3AF",padding:40 }}>No documents yet</div>
+          <div style={{ textAlign:"center",color:"#9CA3AF",padding:40 }}>{t("projects.noDocumentsYet")}</div>
         ) : (
           <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:14 }}>
             {docs.map(doc=>{
@@ -2291,13 +2354,13 @@ function ProjectDetail({ project }) {
       )}
       {view==="table"&&(
         <table className="pr-table" style={{ width:"100%" }}>
-          <thead><tr><th>Documents</th><th>Uploaded by</th><th>Deadline</th><th>Status</th><th>Priority</th><th>Action</th></tr></thead>
+          <thead><tr><th>{t("projects.table.documents")}</th><th>{t("projects.table.uploadedBy")}</th><th>{t("projects.table.deadline")}</th><th>{t("projects.table.status")}</th><th>{t("projects.table.priority")}</th><th>{t("projects.table.action")}</th></tr></thead>
           <tbody>
             {docsLoading && (
-              <tr><td colSpan={6} style={{ textAlign:"center",color:"#9CA3AF",padding:24 }}>Loading…</td></tr>
+              <tr><td colSpan={6} style={{ textAlign:"center",color:"#9CA3AF",padding:24 }}>{t("common.loading")}</td></tr>
             )}
             {!docsLoading && docs.length===0 && (
-              <tr><td colSpan={6} style={{ textAlign:"center",color:"#9CA3AF",padding:24 }}>No documents yet</td></tr>
+              <tr><td colSpan={6} style={{ textAlign:"center",color:"#9CA3AF",padding:24 }}>{t("projects.noDocumentsYet")}</td></tr>
             )}
             {docs.map((doc)=>{
               const dt=fileTypeInfo(doc.file_type);
@@ -2345,12 +2408,13 @@ function ProjectDetail({ project }) {
    TIMELINE
 ══════════════════════════════════════════════════════════ */
 function TimelineView({ docs = [] }) {
+  const { t } = useTranslation();
   const todayRaw = new Date();
   todayRaw.setHours(0, 0, 0, 0);
   const [month, setMonth] = useState(todayRaw.getMonth());
   const [year,  setYear]  = useState(todayRaw.getFullYear());
 
-  const MN = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const MN = t("timeline.months", { returnObjects: true });
 
   const first    = new Date(year, month, 1).getDay();
   const days     = new Date(year, month + 1, 0).getDate();
@@ -2396,12 +2460,12 @@ function TimelineView({ docs = [] }) {
         <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
           {unscheduled > 0 && (
             <span style={{ fontSize:12, color:"#9CA3AF", background:"#F9FAFB", border:".5px solid #E5E7EB", borderRadius:6, padding:"3px 10px" }}>
-              {unscheduled} Unscheduled
+              {unscheduled} {t("timeline.unscheduled")}
             </span>
           )}
           {overdue > 0 && (
             <span style={{ fontSize:12, color:"#EF4444", background:"#FEF2F2", border:".5px solid #FECACA", borderRadius:6, padding:"3px 10px" }}>
-              {overdue} Overdue
+              {overdue} {t("timeline.overdue")}
             </span>
           )}
         </div>
@@ -2409,7 +2473,7 @@ function TimelineView({ docs = [] }) {
 
       {/* Grid */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", borderLeft:".5px solid #E5E7EB", borderTop:".5px solid #E5E7EB" }}>
-        {["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map(d => (
+        {(t("timeline.days", { returnObjects: true })).map(d => (
           <div key={d} style={{ fontSize:11, color:"#9CA3AF", fontWeight:500, padding:"8px 0", textAlign:"center", borderRight:".5px solid #E5E7EB", borderBottom:".5px solid #E5E7EB" }}>{d}</div>
         ))}
         {cells.map((cell, i) => {
@@ -2435,15 +2499,15 @@ function TimelineView({ docs = [] }) {
       <div style={{ display:"flex", gap:16, marginTop:12, fontSize:11.5, color:"#6B7280" }}>
         <span style={{ display:"flex", alignItems:"center", gap:5 }}>
           <span style={{ width:10, height:10, borderRadius:2, background:"#DBEAFE", border:"1.5px solid #2563EB", display:"inline-block" }}/>
-          More than 1 day left
+          {t("timeline.moreThanOneDay")}
         </span>
         <span style={{ display:"flex", alignItems:"center", gap:5 }}>
           <span style={{ width:10, height:10, borderRadius:2, background:"#FFEDD5", border:"1.5px solid #F97316", display:"inline-block" }}/>
-          1 day left
+          {t("timeline.oneDayLeft")}
         </span>
         <span style={{ display:"flex", alignItems:"center", gap:5 }}>
           <span style={{ width:10, height:10, borderRadius:2, background:"#FEE2E2", border:"1.5px solid #EF4444", display:"inline-block" }}/>
-          Overdue
+          {t("timeline.overdue")}
         </span>
       </div>
     </div>
@@ -2454,17 +2518,18 @@ function TimelineView({ docs = [] }) {
    NAV ITEMS
 ══════════════════════════════════════════════════════════ */
 const NAV = [
-  { label:"Inbox",     icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg> },
-  { label:"Projects",  active:true, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> },
-  { label:"Documents", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
-  { label:"Analytics",      icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
-  { label:"Help & Support", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
+  { key:"inbox",     navKey:"inbox",     icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg> },
+  { key:"projects",  navKey:"projects",  active:true, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> },
+  { key:"documents", navKey:"documents", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
+  { key:"analytics", navKey:"analytics", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
+  { key:"help",      navKey:"help",      icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
 ];
 
 /* ══════════════════════════════════════════════════════════
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
 export default function Projects({ onGoToAuth, onNavigate }) {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const user = useAuthStore(s => s.user);
   const [sbOpen,    setSbOpen]    = useState(true);
@@ -2498,7 +2563,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   const wsToRow = ws => ({
     id: ws.id,
     name: ws.title,
-    status: ws.status === "active" ? "Active" : ws.status === "archived" ? "Archived" : ws.status === "closed" ? "Inactive" : "Completed",
+    status: ws.status === "active" ? t("projects.active") : ws.status === "archived" ? t("projects.archive") : ws.status === "closed" ? t("workflow.done") : t("workflow.completed"),
     members: [],
     extra: 0,
     files: 0,
@@ -2521,8 +2586,8 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   };
 
   const breadcrumb = selected
-    ? ["Projects", "Managed Projects", selected.name]
-    : ["Projects", "Managed Projects"];
+    ? [t("projects.title"), t("projects.managed"), selected.name]
+    : [t("projects.title"), t("projects.managed")];
 
   return (
     <div className="pr-page">
@@ -2568,7 +2633,10 @@ export default function Projects({ onGoToAuth, onNavigate }) {
               <div onClick={()=>setProfileMenuOpen(v=>!v)} title="Menu"
                 style={{ position:"relative",width:30,height:30,cursor:"pointer",flexShrink:0 }}>
                 <div style={{ width:30,height:30,borderRadius:"50%",overflow:"hidden" }}>
-                  <svg viewBox="0 0 30 30" fill="none" width="30" height="30"><rect width="30" height="30" fill="#CBD5E1"/><circle cx="15" cy="11" r="5" fill="#94A3B8"/><ellipse cx="15" cy="26" rx="10" ry="6" fill="#94A3B8"/></svg>
+                  {user?.avatar_url
+                    ? <img src={user.avatar_url} alt="avatar" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
+                    : <svg viewBox="0 0 30 30" fill="none" width="30" height="30"><rect width="30" height="30" fill="#CBD5E1"/><circle cx="15" cy="11" r="5" fill="#94A3B8"/><ellipse cx="15" cy="26" rx="10" ry="6" fill="#94A3B8"/></svg>
+                  }
                 </div>
                 <div style={{ position:"absolute",top:-2,right:-2,width:8,height:8,background:"#22c55e",borderRadius:"50%",border:"1.5px solid #fff" }}/>
               </div>
@@ -2593,7 +2661,10 @@ export default function Projects({ onGoToAuth, onNavigate }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
             </button>
             <div className="pr-avatar">
-              <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
+              {user?.avatar_url
+                ? <img src={user.avatar_url} alt="avatar" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
+                : <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
+              }
             </div>
           </div>
           <div className="pr-profile-info">
@@ -2609,14 +2680,9 @@ export default function Projects({ onGoToAuth, onNavigate }) {
           <div className="pr-navlist">
             {NAV.map((n,i) => (
               <button key={i} className={`pr-navitem${n.active ? " active" : ""}`}
-                onClick={() => {
-                  if (n.label === "Inbox" && onNavigate) onNavigate("inbox");
-                  else if (n.label === "Documents" && onNavigate) onNavigate("documents");
-                  else if (n.label === "Analytics" && onNavigate) onNavigate("analytics");
-                  else if (n.label === "Help & Support" && onNavigate) onNavigate("help");
-                }}>
+                onClick={() => { if (!n.active && onNavigate) onNavigate(n.navKey); }}>
                 {n.icon}
-                <span className="pr-navlabel">{n.label}</span>
+                <span className="pr-navlabel">{t(`nav.${n.key}`)}</span>
                 <svg className="pr-navchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
               </button>
             ))}
@@ -2624,7 +2690,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
           <div className="pr-sbbottom">
             <button className="pr-addbtn" onClick={() => setShowModal(true)}>
               <svg className="pr-addbtn-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              <span className="pr-addbtn-label">New project</span>
+              <span className="pr-addbtn-label">{t("inbox.newProject")}</span>
             </button>
           </div>
         </aside>
@@ -2643,21 +2709,21 @@ export default function Projects({ onGoToAuth, onNavigate }) {
               <>
                 <div style={{ padding:"20px 20px 0",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:16,flexWrap:"wrap",flexShrink:0 }}>
                   <div>
-                    <h1 style={{ fontSize:22,fontWeight:700,color:"#111827",marginBottom:4 }}>Project Workspace</h1>
-                    <p style={{ fontSize:13,color:"#9CA3AF" }}>Workflow monitoring and management dashboard</p>
+                    <h1 style={{ fontSize:22,fontWeight:700,color:"#111827",marginBottom:4 }}>{t("projects.workspaceTitle")}</h1>
+                    <p style={{ fontSize:13,color:"#9CA3AF" }}>{t("projects.workspaceDesc")}</p>
                   </div>
                   <div style={{ display:"flex",alignItems:"center",gap:10 }}>
                     <div style={{ display:"flex",alignItems:"center",gap:6,border:".5px solid #E5E7EB",borderRadius:8,padding:"7px 12px",background:"#F9FAFB",minWidth:220 }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                      <input placeholder="Search projects, tasks, or files..." style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",width:190,fontFamily:"inherit" }}/>
+                      <input placeholder={t("projects.searchHint")} style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",width:190,fontFamily:"inherit" }}/>
                     </div>
                   </div>
                 </div>
 
                 <div className="pr-tabs" style={{ marginTop:12 }}>
-                  {["managed","assigned","archived"].map(t => (
-                    <button key={t} className={`pr-tab${tab===t?" active":""}`} onClick={()=>setTab(t)}>
-                      {t==="managed"?"Managed Projects":t==="assigned"?"Assigned Documents":"Archived"}
+                  {["managed","assigned","archived"].map(tabKey => (
+                    <button key={tabKey} className={`pr-tab${tab===tabKey?" active":""}`} onClick={()=>setTab(tabKey)}>
+                      {tabKey==="managed" ? t("projects.managed") : tabKey==="assigned" ? t("projects.assigned") : t("projects.archive")}
                     </button>
                   ))}
                 </div>
@@ -2665,14 +2731,14 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                 <div className="pr-inner" style={{ flex:1 }}>
                   {tab==="managed" && (
                     wsLoading
-                      ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>Loading…</div>
+                      ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>{t("common.loading")}</div>
                       : managedProjects.length===0
                         ? <EmptyState/>
                         : <ProjectTable projects={managedProjects} onManage={p=>setSelected(p)}/>
                   )}
                   {tab==="assigned" && (
                     assignedLoading
-                      ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>Loading…</div>
+                      ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>{t("common.loading")}</div>
                       : assignedDocs.length===0
                         ? <AssignedDocsEmpty/>
                         : <AssignedDocsTable docs={assignedDocs} onOpen={d=>setSelectedDoc({ ...d, workspace: d.workspace })}/>

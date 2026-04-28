@@ -1,6 +1,7 @@
 import './App.css'
 import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { login, register, verifyEmail, resendCode, resetPasswordRequest, resetPasswordConfirm } from "./api/auth";
 import { createWorkspace, addMember } from "./api/workspaces";
 import useAuthStore from "./store/authStore";
@@ -245,6 +246,7 @@ function RightPanel({ activePage, onNavigate }) {
    SIGN IN PAGE
 ═══════════════════════════════════════════════════════ */
 function SignInPage({ onNavigate }) {
+  const { t } = useTranslation();
   const [form, setForm] = useState({ email: "", password: "" });
   const [showPw, setShowPw] = useState(false);
   const [remember, setRemember] = useState(false);
@@ -288,11 +290,11 @@ function SignInPage({ onNavigate }) {
       {/* Form */}
       <div className="auth-formwrap">
         <div className="auth-inner">
-          <h1 className="auth-heading" style={{ ...s.heading, textAlign: "center" }}>Sign In</h1>
+          <h1 className="auth-heading" style={{ ...s.heading, textAlign: "center" }}>{t("auth.signIn")}</h1>
           <p style={{ ...s.subtext, textAlign: "center" }}>Welcome back! Please enter your details.</p>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <FieldGroup label="Email Address" required error={errors.email}>
+            <FieldGroup label={t("auth.email")} required error={errors.email}>
               <InputWrap error={errors.email}>
                 <MailIcon />
                 <input
@@ -304,12 +306,12 @@ function SignInPage({ onNavigate }) {
               </InputWrap>
             </FieldGroup>
 
-            <FieldGroup label="Password" required error={errors.password}>
+            <FieldGroup label={t("auth.password")} required error={errors.password}>
               <InputWrap error={errors.password}>
                 <LockIcon />
                 <input
                   name="password" type={showPw ? "text" : "password"} style={s.input}
-                  placeholder="Enter your password"
+                  placeholder={t("auth.password")}
                   value={form.password} onChange={change}
                   onKeyDown={e => e.key === "Enter" && submit()}
                 />
@@ -331,7 +333,7 @@ function SignInPage({ onNavigate }) {
               <span style={{ fontSize: 13, color: "#6B7280" }}>Remember me</span>
             </label>
             <button onClick={() => onNavigate("forgot")} style={{ ...s.ghostBtn, color: "#2563EB", fontSize: 13 }}>
-              Forgot password?
+              {t("auth.forgotPassword")}
             </button>
           </div>
 
@@ -341,19 +343,19 @@ function SignInPage({ onNavigate }) {
             onClick={submit}
             disabled={loading}
           >
-            {loading ? "Signing in…" : "Sign In"}
+            {loading ? "Signing in…" : t("auth.signIn")}
           </button>
 
           <Divider />
           <SocialButtons />
 
           <p style={{ textAlign: "center", fontSize: 13, color: "#6B7280", marginTop: 20 }}>
-            Don't have an account?{" "}
+            {t("auth.noAccount")}{" "}
             <button
               onClick={() => onNavigate("signup")}
               style={{ ...s.ghostBtn, color: "#2563EB", fontSize: 13, fontWeight: 600 }}
             >
-              Sign Up
+              {t("auth.signUp")}
             </button>
           </p>
         </div>
@@ -366,6 +368,7 @@ function SignInPage({ onNavigate }) {
    SIGN UP — STEP 1
 ═══════════════════════════════════════════════════════ */
 function SignUpStep1({ onNext, onNavigate }) {
+  const { t } = useTranslation();
   const [form, setForm] = useState({ fullName: "", email: "", orgName: "", password: "", agreed: false });
   const [showPw, setShowPw] = useState(false);
   const [errors, setErrors] = useState({});
@@ -418,18 +421,18 @@ function SignUpStep1({ onNext, onNavigate }) {
       </div>
       <div className="auth-formwrap">
         <div className="auth-inner">
-          <h1 className="auth-heading" style={s.heading}>Sign Up</h1>
+          <h1 className="auth-heading" style={s.heading}>{t("auth.signUp")}</h1>
           <p style={s.stepLabel}>STEP 1 OF 4</p>
           <p style={s.subtext}>Please fill in the form to create an account.</p>
 
           <div className="auth-row-split">
-            <FieldGroup label="Full name" required error={errors.fullName}>
+            <FieldGroup label={t("auth.fullName")} required error={errors.fullName}>
               <InputWrap error={errors.fullName}>
                 <PersonIcon />
                 <input name="fullName" style={s.input} placeholder="ex: John Doe" value={form.fullName} onChange={change} />
               </InputWrap>
             </FieldGroup>
-            <FieldGroup label="Email Address" required error={errors.email}>
+            <FieldGroup label={t("auth.email")} required error={errors.email}>
               <InputWrap error={errors.email}>
                 <MailIcon />
                 <input name="email" type="email" style={s.input} placeholder="ex: example@gmail.com" value={form.email} onChange={change} />
@@ -437,7 +440,7 @@ function SignUpStep1({ onNext, onNavigate }) {
             </FieldGroup>
           </div>
 
-          <FieldGroup label="Organization Name" optional>
+          <FieldGroup label={t("auth.orgName")} optional>
             <InputWrap>
               <BuildingIcon />
               <input name="orgName" style={s.input} placeholder="ex: Adeli Corp" value={form.orgName} onChange={change} />
@@ -445,7 +448,7 @@ function SignUpStep1({ onNext, onNavigate }) {
           </FieldGroup>
 
           <div style={{ marginTop: 14 }}>
-            <FieldGroup label="Password" required error={errors.password}>
+            <FieldGroup label={t("auth.password")} required error={errors.password}>
               <InputWrap error={errors.password}>
                 <LockIcon />
                 <input name="password" type={showPw ? "text" : "password"} style={s.input} placeholder="Create a password" value={form.password} onChange={change} />
@@ -471,16 +474,16 @@ function SignUpStep1({ onNext, onNavigate }) {
           {errors.agreed && <span style={{ fontSize: 11, color: "#EF4444" }}>{errors.agreed}</span>}
 
           <button style={{ ...s.ctaBtn, marginTop: 14, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
-            {loading ? "Creating account…" : "Create Account"}
+            {loading ? "Creating account…" : t("auth.register")}
           </button>
           <Divider />
           <SocialButtons />
 
           <p style={{ textAlign: "center", fontSize: 13, color: "#6B7280", marginTop: 20 }}>
-            Already have an account?{" "}
+            {t("auth.hasAccount")}{" "}
             <button onClick={() => onNavigate("signin")}
               style={{ ...s.ghostBtn, color: "#2563EB", fontSize: 13, fontWeight: 600 }}>
-              Sign In
+              {t("auth.signIn")}
             </button>
           </p>
         </div>

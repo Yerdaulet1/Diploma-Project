@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
 import {
@@ -224,6 +225,7 @@ const NAV = [
    TYPE SELECT MODAL
 ══════════════════════════════════════════════════════════ */
 function TypeSelectModal({ onSelect, onUpload, onClose }) {
+  const { t } = useTranslation();
   const [sel, setSel]       = useState(null);
   const [file, setFile]     = useState(null);
   const [title, setTitle]   = useState("");
@@ -253,8 +255,8 @@ function TypeSelectModal({ onSelect, onUpload, onClose }) {
         <button className="dc-modal-close" onClick={onClose}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
-        <div style={{ fontSize:17,fontWeight:700,color:"#111827",marginBottom:4 }}>New Document</div>
-        <div style={{ fontSize:13,color:"#9CA3AF",marginBottom:2 }}>Create a blank document or upload from your computer</div>
+        <div style={{ fontSize:17,fontWeight:700,color:"#111827",marginBottom:4 }}>{t("documents.newDocumentTitle")}</div>
+        <div style={{ fontSize:13,color:"#9CA3AF",marginBottom:2 }}>{t("documents.newDocumentSubtitle")}</div>
 
         {/* Create cards */}
         <div className="dc-type-cards">
@@ -268,8 +270,8 @@ function TypeSelectModal({ onSelect, onUpload, onClose }) {
               <line x1="13" y1="28" x2="35" y2="28" stroke="#93C5FD" strokeWidth="1.5" strokeLinecap="round"/>
               <line x1="13" y1="34" x2="27" y2="34" stroke="#93C5FD" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
-            <div style={{ fontWeight:600,fontSize:13,color:"#111827" }}>Word Document</div>
-            <div style={{ fontSize:11,color:"#9CA3AF" }}>.docx — rich text</div>
+            <div style={{ fontWeight:600,fontSize:13,color:"#111827" }}>{t("documents.wordDocument")}</div>
+            <div style={{ fontSize:11,color:"#9CA3AF" }}>{t("documents.wordDocumentDesc")}</div>
           </div>
           <div className={`dc-type-card xls${sel==="xls"?" sel":""}`} onClick={()=>{ setSel("xls"); setFile(null); }}>
             <svg viewBox="0 0 48 48" fill="none" width="48" height="48">
@@ -283,8 +285,8 @@ function TypeSelectModal({ onSelect, onUpload, onClose }) {
               <line x1="22" y1="20" x2="22" y2="41" stroke="#16A34A" strokeWidth="1" opacity=".5"/>
               <line x1="30" y1="20" x2="30" y2="41" stroke="#16A34A" strokeWidth="1" opacity=".5"/>
             </svg>
-            <div style={{ fontWeight:600,fontSize:13,color:"#111827" }}>Excel Spreadsheet</div>
-            <div style={{ fontSize:11,color:"#9CA3AF" }}>.xlsx — spreadsheet</div>
+            <div style={{ fontWeight:600,fontSize:13,color:"#111827" }}>{t("documents.excelSpreadsheet")}</div>
+            <div style={{ fontSize:11,color:"#9CA3AF" }}>{t("documents.excelSpreadsheetDesc")}</div>
           </div>
         </div>
 
@@ -299,11 +301,11 @@ function TypeSelectModal({ onSelect, onUpload, onClose }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="#6B7280" strokeWidth="1.8" width="18" height="18"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
             </div>
             <div style={{ flex:1 }}>
-              <div style={{ fontSize:13,fontWeight:500,color:"#374151" }}>Upload from computer</div>
+              <div style={{ fontSize:13,fontWeight:500,color:"#374151" }}>{t("documents.uploadFromComputer")}</div>
               <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>pdf · docx · xlsx</div>
             </div>
             {sel==="upload" && !file && (
-              <span style={{ fontSize:11.5,color:"#2563EB",fontWeight:500 }}>Click to browse</span>
+              <span style={{ fontSize:11.5,color:"#2563EB",fontWeight:500 }}>{t("documents.clickToBrowse")}</span>
             )}
           </div>
 
@@ -327,7 +329,7 @@ function TypeSelectModal({ onSelect, onUpload, onClose }) {
               ) : (
                 <div style={{ fontSize:12.5,color:"#9CA3AF" }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="1.5" width="24" height="24" style={{ display:"block",margin:"0 auto 6px" }}><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-                  Drop file here or click to browse
+                  {t("documents.dropFileHere")}
                 </div>
               )}
             </div>
@@ -350,7 +352,7 @@ function TypeSelectModal({ onSelect, onUpload, onClose }) {
           onClick={handleGo}
           disabled={!canGo}
           style={{ width:"100%",marginTop:16,background:canGo?btnColor:"#E5E7EB",color:canGo?"#fff":"#9CA3AF",border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:600,cursor:canGo?"pointer":"not-allowed",fontFamily:"inherit",transition:"all .15s" }}>
-          {sel==="upload" ? "Upload Document" : sel==="docs" ? "Create Document" : sel==="xls" ? "Create Spreadsheet" : "Select an option above"}
+          {sel==="upload" ? t("documents.upload") : sel==="docs" ? t("documents.createDocument") : sel==="xls" ? t("documents.createSpreadsheet") : t("documents.selectOption")}
         </button>
       </div>
     </div>
@@ -361,6 +363,7 @@ function TypeSelectModal({ onSelect, onUpload, onClose }) {
    SAVE MODAL
 ══════════════════════════════════════════════════════════ */
 function SaveModal({ defaultName, docType, onSave, onClose }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(defaultName || "");
   const ref = useRef(null);
   useEffect(()=>{ ref.current?.focus(); ref.current?.select(); },[]);
@@ -370,14 +373,14 @@ function SaveModal({ defaultName, docType, onSave, onClose }) {
         <button className="dc-modal-close" onClick={onClose}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
-        <div style={{ fontSize:16,fontWeight:700,color:"#111827",marginBottom:4 }}>Save document</div>
-        <div style={{ fontSize:13,color:"#9CA3AF",marginBottom:2 }}>Enter a name for your document</div>
+        <div style={{ fontSize:16,fontWeight:700,color:"#111827",marginBottom:4 }}>{t("documents.saveDocumentTitle")}</div>
+        <div style={{ fontSize:13,color:"#9CA3AF",marginBottom:2 }}>{t("documents.enterDocName")}</div>
         <input ref={ref} className="dc-save-input" value={name} onChange={e=>setName(e.target.value)}
-          placeholder="Document name..." onKeyDown={e=>{ if(e.key==="Enter"&&name.trim()) onSave(name.trim()); }}/>
+          placeholder={t("documents.documentNamePlaceholder")} onKeyDown={e=>{ if(e.key==="Enter"&&name.trim()) onSave(name.trim()); }}/>
         <div className="dc-btn-row">
-          <button className="dc-btn-cancel" onClick={onClose}>Cancel</button>
+          <button className="dc-btn-cancel" onClick={onClose}>{t("common.cancel")}</button>
           <button className={`dc-btn-save${docType==="xls"?" green":""}`} onClick={()=>name.trim()&&onSave(name.trim())} disabled={!name.trim()}>
-            Save
+            {t("common.save")}
           </button>
         </div>
       </div>
@@ -389,28 +392,29 @@ function SaveModal({ defaultName, docType, onSave, onClose }) {
    INSERT TABLE MODAL
 ══════════════════════════════════════════════════════════ */
 function InsertTableModal({ onInsert, onClose }) {
+  const { t } = useTranslation();
   const [rows, setRows] = useState(3);
   const [cols, setCols] = useState(3);
   return (
     <div className="dc-overlay" onClick={onClose}>
       <div className="dc-modal" onClick={e=>e.stopPropagation()} style={{ maxWidth:300 }}>
         <button className="dc-modal-close" onClick={onClose}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        <div style={{ fontSize:15,fontWeight:700,color:"#111827",marginBottom:16 }}>Insert Table</div>
+        <div style={{ fontSize:15,fontWeight:700,color:"#111827",marginBottom:16 }}>{t("documents.insertTable")}</div>
         <div style={{ display:"flex",gap:14,marginBottom:16 }}>
           <div style={{ flex:1 }}>
-            <label style={{ fontSize:12,color:"#6B7280",display:"block",marginBottom:4 }}>Rows</label>
+            <label style={{ fontSize:12,color:"#6B7280",display:"block",marginBottom:4 }}>{t("documents.rows")}</label>
             <input type="number" min={1} max={20} value={rows} onChange={e=>setRows(+e.target.value)}
               style={{ width:"100%",border:"1.5px solid #E5E7EB",borderRadius:7,padding:"7px 10px",fontSize:13,outline:"none",fontFamily:"inherit" }}/>
           </div>
           <div style={{ flex:1 }}>
-            <label style={{ fontSize:12,color:"#6B7280",display:"block",marginBottom:4 }}>Columns</label>
+            <label style={{ fontSize:12,color:"#6B7280",display:"block",marginBottom:4 }}>{t("documents.columns")}</label>
             <input type="number" min={1} max={20} value={cols} onChange={e=>setCols(+e.target.value)}
               style={{ width:"100%",border:"1.5px solid #E5E7EB",borderRadius:7,padding:"7px 10px",fontSize:13,outline:"none",fontFamily:"inherit" }}/>
           </div>
         </div>
         <div className="dc-btn-row">
-          <button className="dc-btn-cancel" onClick={onClose}>Cancel</button>
-          <button className="dc-btn-save" onClick={()=>onInsert(rows,cols)}>Insert</button>
+          <button className="dc-btn-cancel" onClick={onClose}>{t("common.cancel")}</button>
+          <button className="dc-btn-save" onClick={()=>onInsert(rows,cols)}>{t("documents.insert")}</button>
         </div>
       </div>
     </div>
@@ -452,7 +456,7 @@ function PdfViewer({ doc, onClose, onDownload }) {
 /* ══════════════════════════════════════════════════════════
    DOCS EDITOR
 ══════════════════════════════════════════════════════════ */
-function DocsEditor({ doc, initialContent, onClose, onSave, onDownload }) {
+function DocsEditor({ doc, initialContent, onClose, onSave, onDownload, signature }) {
   const [font,    setFont]    = useState("DM Sans");
   const [fsize,   setFsize]   = useState("13");
   const [bold,    setBold]    = useState(false);
@@ -505,6 +509,12 @@ function DocsEditor({ doc, initialContent, onClose, onSave, onDownload }) {
       reader.readAsDataURL(file);
     };
     input.click();
+  };
+
+  const insertSignature = () => {
+    if (!signature) return;
+    editorRef.current?.focus();
+    exec("insertHTML", `<img src="${signature}" style="max-width:220px;height:auto;display:inline-block;vertical-align:middle;margin:2px 0;" />`);
   };
 
   return (
@@ -605,6 +615,12 @@ function DocsEditor({ doc, initialContent, onClose, onSave, onDownload }) {
         {Array.from({length:pages},(_,pi)=>(
           <div key={pi} className="dc-page-sheet">
             <div className="dc-top-actions">
+              {signature && (
+                <button className="dc-top-act-btn" title="Insert Signature" onClick={insertSignature}
+                  style={{ background:"#EFF6FF",color:"#2563EB",border:"1px solid #BFDBFE" }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+              )}
               {onDownload && (
                 <button className="dc-top-act-btn" title="Download" onClick={onDownload}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -871,6 +887,7 @@ function XlsEditor({ doc, initialContent, onClose, onSave, onDownload }) {
    onSave(base64)    — колбэк сохранения
 ══════════════════════════════════════════════════════════ */
 function SignaturePadModal({ existingSignature, onSave, onClose }) {
+  const { t } = useTranslation();
   const canvasRef   = useRef(null);
   const drawing     = useRef(false);
   const snapshots   = useRef([]);   // массив ImageData (история)
@@ -1009,7 +1026,7 @@ function SignaturePadModal({ existingSignature, onSave, onClose }) {
         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 22px 14px",borderBottom:".5px solid #F3F4F6" }}>
           <div style={{ display:"flex",alignItems:"center",gap:8 }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="18" height="18"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            <span style={{ fontSize:15,fontWeight:700,color:"#111827" }}>{existingSignature ? "Edit Signature" : "Draw Signature"}</span>
+            <span style={{ fontSize:15,fontWeight:700,color:"#111827" }}>{existingSignature ? t("documents.editSignatureTitle") : t("documents.drawSignatureTitle")}</span>
           </div>
           <button onClick={onClose} style={{ background:"none",border:"none",cursor:"pointer",color:"#6B7280",padding:4,borderRadius:6,display:"flex",alignItems:"center" }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -1020,15 +1037,15 @@ function SignaturePadModal({ existingSignature, onSave, onClose }) {
           {/* Toolbar: Undo / Redo / Clear */}
           <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:12 }}>
             {iconBtn(!canUndo, undo, "Undo",
-              <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>Back</>
+              <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>{t("common.back")}</>
             )}
             {iconBtn(!canRedo, redo, "Redo",
-              <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>Forward</>
+              <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>{t("common.forward")}</>
             )}
             <button onClick={clearAll}
               style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:5,border:".5px solid #FECACA",borderRadius:7,padding:"5px 12px",fontSize:12,color:"#EF4444",background:"#FFF5F5",cursor:"pointer",fontFamily:"inherit" }}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-              Clear All
+              {t("documents.clearAll")}
             </button>
           </div>
 
@@ -1040,21 +1057,21 @@ function SignaturePadModal({ existingSignature, onSave, onClose }) {
               onTouchStart={startDraw} onTouchMove={doDraw} onTouchEnd={endDraw}/>
             {!hasStroke && (
               <div style={{ position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none" }}>
-                <span style={{ fontSize:13,color:"#D1D5DB" }}>Draw your signature here</span>
+                <span style={{ fontSize:13,color:"#D1D5DB" }}>{t("documents.drawHere")}</span>
               </div>
             )}
           </div>
-          <p style={{ fontSize:11,color:"#9CA3AF",marginBottom:18 }}>Signature will be saved without background (transparent PNG)</p>
+          <p style={{ fontSize:11,color:"#9CA3AF",marginBottom:18 }}>{t("documents.signatureTransparent")}</p>
 
           {/* Actions */}
           <div style={{ display:"flex",gap:10,justifyContent:"flex-end" }}>
             <button onClick={onClose}
               style={{ border:".5px solid #E5E7EB",borderRadius:8,padding:"9px 20px",fontSize:13,background:"#fff",color:"#6B7280",cursor:"pointer",fontFamily:"inherit" }}>
-              Cancel
+              {t("common.cancel")}
             </button>
             <button onClick={handleSave} disabled={!hasStroke || saving}
               style={{ background:(!hasStroke||saving)?"#93C5FD":"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"9px 24px",fontSize:13,fontWeight:500,cursor:(!hasStroke||saving)?"not-allowed":"pointer",fontFamily:"inherit" }}>
-              {saving ? "Saving…" : "Save Signature"}
+              {saving ? t("common.saving") : t("documents.saveSignature")}
             </button>
           </div>
         </div>
@@ -1067,6 +1084,7 @@ function SignaturePadModal({ existingSignature, onSave, onClose }) {
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
 export default function Documents({ onGoToAuth, onNavigate }) {
+  const { t } = useTranslation();
   const [sbOpen,          setSbOpen]         = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView,     setProfileView]     = useState(null);
@@ -1280,7 +1298,12 @@ export default function Documents({ onGoToAuth, onNavigate }) {
     if (!d._apiId) return;
     try {
       await deleteDocument(d._apiId);
-      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      queryClient.setQueryData(["documents"], (old) => {
+        if (!old) return old;
+        const results = Array.isArray(old) ? old : (old.results ?? []);
+        const filtered = results.filter(doc => doc.id !== d._apiId);
+        return Array.isArray(old) ? filtered : { ...old, results: filtered };
+      });
       setPage(1);
       toast.success("Document deleted");
     } catch {
@@ -1331,7 +1354,10 @@ export default function Documents({ onGoToAuth, onNavigate }) {
             <svg onClick={()=>setProfileMenuOpen(v=>!v)} style={{ cursor:"pointer" }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
             <div onClick={()=>setProfileMenuOpen(v=>!v)} title="Menu" style={{ position:"relative",width:30,height:30,cursor:"pointer",flexShrink:0 }}>
               <div style={{ width:30,height:30,borderRadius:"50%",overflow:"hidden" }}>
-                <svg viewBox="0 0 30 30" fill="none" width="30" height="30"><rect width="30" height="30" fill="#CBD5E1"/><circle cx="15" cy="11" r="5" fill="#94A3B8"/><ellipse cx="15" cy="26" rx="10" ry="6" fill="#94A3B8"/></svg>
+                {user?.avatar_url
+                  ? <img src={user.avatar_url} alt="avatar" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
+                  : <svg viewBox="0 0 30 30" fill="none" width="30" height="30"><rect width="30" height="30" fill="#CBD5E1"/><circle cx="15" cy="11" r="5" fill="#94A3B8"/><ellipse cx="15" cy="26" rx="10" ry="6" fill="#94A3B8"/></svg>
+                }
               </div>
               <div style={{ position:"absolute",top:-2,right:-2,width:8,height:8,background:"#22c55e",borderRadius:"50%",border:"1.5px solid #fff" }}/>
             </div>
@@ -1355,7 +1381,10 @@ export default function Documents({ onGoToAuth, onNavigate }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
             </button>
             <div className="dc-av">
-              <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
+              {user?.avatar_url
+                ? <img src={user.avatar_url} alt="avatar" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
+                : <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
+              }
             </div>
           </div>
           <div className="dc-pinfo">
@@ -1378,7 +1407,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                   if(n.key==="help"      && onNavigate) onNavigate("help");
                 }}>
                 {n.icon}
-                <span className="dc-navlabel">{n.label}</span>
+                <span className="dc-navlabel">{t(`nav.${n.key}`)}</span>
                 <svg className="dc-navchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
               </button>
             ))}
@@ -1386,7 +1415,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
           <div className="dc-sbbottom">
             <button className="dc-addbtn" onClick={()=>setShowTypeModal(true)}>
               <svg className="dc-addbtn-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              <span className="dc-addbtn-label">New document</span>
+              <span className="dc-addbtn-label">{t("documents.newDocument")}</span>
             </button>
           </div>
         </aside>
@@ -1401,23 +1430,23 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                 <div style={{ padding:"22px 24px 0",flexShrink:0 }}>
                   <div style={{ display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:16,flexWrap:"wrap",marginBottom:16 }}>
                     <div>
-                      <h1 style={{ fontSize:21,fontWeight:700,color:"#111827",marginBottom:3 }}>My Documents</h1>
-                      <p style={{ fontSize:13,color:"#9CA3AF" }}>Manage and organize your files and documents in one place.</p>
+                      <h1 style={{ fontSize:21,fontWeight:700,color:"#111827",marginBottom:3 }}>{t("documents.myDocuments")}</h1>
+                      <p style={{ fontSize:13,color:"#9CA3AF" }}>{t("documents.manageFilesDesc")}</p>
                     </div>
                     <div style={{ display:"flex",alignItems:"center",gap:8,border:".5px solid #E5E7EB",borderRadius:8,padding:"7px 14px",background:"#F9FAFB",minWidth:240 }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                      <input placeholder="Search files..." style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",fontFamily:"inherit",flex:1 }}/>
+                      <input placeholder={t("documents.searchFiles")} style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",fontFamily:"inherit",flex:1 }}/>
                     </div>
                   </div>
                   {/* Action cards */}
                   <div className="dc-action-cards">
                     <div className="dc-action-card" onClick={()=>setShowTypeModal(true)}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" width="22" height="22"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                      <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>New document</span>
+                      <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>{t("documents.newDocument")}</span>
                     </div>
                     <div className="dc-action-card sig" onClick={() => setShowSignModal("new")}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" width="22" height="22"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                      <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>Add signature</span>
+                      <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>{t("documents.addSignature")}</span>
                     </div>
 
                     {savedSig && (
@@ -1426,7 +1455,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                           onClick={() => setShowSigMenu(v => !v)}>
                           <img src={savedSig} alt="signature"
                             style={{ height:22,maxWidth:80,objectFit:"contain",filter:"invert(1) sepia(1) saturate(5) hue-rotate(190deg)" }}/>
-                          <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>Your signature</span>
+                          <span style={{ fontSize:13,fontWeight:500,color:"#2563EB" }}>{t("documents.yourSignature")}</span>
                           <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="12" height="12"><polyline points="6 9 12 15 18 9"/></svg>
                         </div>
                         {showSigMenu && (
@@ -1436,18 +1465,18 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                               <button onClick={() => { setShowSigMenu(false); setShowSignModal("edit"); }}
                                 style={{ width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",border:"none",background:"none",fontSize:13,color:"#374151",cursor:"pointer",fontFamily:"inherit",textAlign:"left" }}>
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                                Edit
+                                {t("common.edit")}
                               </button>
                               <button onClick={handleResetSignature}
                                 style={{ width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",border:"none",background:"none",fontSize:13,color:"#EF4444",cursor:"pointer",fontFamily:"inherit",textAlign:"left" }}>
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                                Reset
+                                {t("common.reset")}
                               </button>
                               <div style={{ height:".5px",background:"#F3F4F6",margin:"4px 0" }}/>
                               <button onClick={() => setShowSigMenu(false)}
                                 style={{ width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",border:"none",background:"none",fontSize:13,color:"#9CA3AF",cursor:"pointer",fontFamily:"inherit",textAlign:"left" }}>
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                                Cancel
+                                {t("common.cancel")}
                               </button>
                             </div>
                           </>
@@ -1461,10 +1490,10 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                 {docs.length === 0 ? (
                   <div style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,padding:40 }}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="1.5" width="56" height="56"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    <div style={{ fontSize:15,fontWeight:600,color:"#374151" }}>No documents yet</div>
-                    <div style={{ fontSize:13,color:"#9CA3AF" }}>Create your first document using the button above.</div>
+                    <div style={{ fontSize:15,fontWeight:600,color:"#374151" }}>{t("documents.noDocuments")}</div>
+                    <div style={{ fontSize:13,color:"#9CA3AF" }}>{t("documents.noDocumentsDesc")}</div>
                     <button onClick={()=>setShowTypeModal(true)} style={{ marginTop:4,background:"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"9px 20px",fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:"inherit" }}>
-                      + New document
+                      + {t("documents.newDocument")}
                     </button>
                   </div>
                 ) : (
@@ -1473,16 +1502,16 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                       <table className="dc-table">
                         <thead>
                           <tr>
-                            <th>Name</th>
+                            <th>{t("documents.colName")}</th>
                             <th>
                               <button className="dc-sort-btn">
-                                Owned by anyone
+                                {t("documents.colOwner")}
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="10" height="10"><polyline points="6 9 12 15 18 9"/></svg>
                               </button>
                             </th>
-                            <th>Last opened by me</th>
-                            <th>File size</th>
-                            <th>Action</th>
+                            <th>{t("documents.colLastOpened")}</th>
+                            <th>{t("documents.colSize")}</th>
+                            <th>{t("documents.colAction")}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1541,7 +1570,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
 
             {/* DOCS EDITOR VIEW */}
             {view==="docs" && (
-              <DocsEditor doc={activeDoc} initialContent={activeDoc?._content?.html || ""} onClose={()=>{ setView("list"); setActiveDoc(null); }} onSave={handleSave} onDownload={activeDoc?._apiId ? handleDownload : null}/>
+              <DocsEditor doc={activeDoc} initialContent={activeDoc?._content?.html || ""} onClose={()=>{ setView("list"); setActiveDoc(null); }} onSave={handleSave} onDownload={activeDoc?._apiId ? handleDownload : null} signature={savedSig}/>
             )}
 
             {/* XLS EDITOR VIEW */}

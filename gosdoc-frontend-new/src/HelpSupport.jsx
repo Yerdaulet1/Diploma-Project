@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import ProfileController, { ProfileMenu } from "./Profile";
 import useAuthStore from "./store/authStore";
 import { getFaqs, sendHelpChat } from "./api/help";
@@ -330,6 +331,7 @@ const NAV = [
    AI ASSISTANT PILL + MODAL
 ══════════════════════════════════════════════════════════ */
 function AIAssistant() {
+  const { t } = useTranslation();
   const { user } = useAuthStore();
   const [pillVisible, setPillVisible] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -353,7 +355,7 @@ function AIAssistant() {
       const { reply } = await sendHelpChat(text);
       setMessages(m => [...m, { role: "bot", text: reply }]);
     } catch {
-      setMessages(m => [...m, { role: "bot", text: "Sorry, I couldn't get a response right now. Please try again." }]);
+      setMessages(m => [...m, { role: "bot", text: t("help.errorMsg") }]);
     } finally {
       setSending(false);
     }
@@ -378,8 +380,7 @@ function AIAssistant() {
           <div className="hs-ai-body">
             <div className="hs-ai-greeting">Hi, {user?.full_name?.split(" ")[0] || "there"}!</div>
             <div className="hs-ai-helptext">
-              I'm your assistant to help you navigate and use this platform.<br/>
-              How can I help you today?
+              {t("help.greeting").split("\n").map((line, i) => <span key={i}>{line}{i === 0 && <br/>}</span>)}
             </div>
           </div>
         ) : (
@@ -395,14 +396,14 @@ function AIAssistant() {
         )}
 
         <div className="hs-ai-input-area">
-          <textarea className="hs-ai-input" placeholder="✦ Ask anything"
+          <textarea className="hs-ai-input" placeholder={`✦ ${t("help.askAnything")}`}
             value={input} onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); } }}
             rows={1} disabled={sending}/>
           <div className="hs-ai-actions">
             <button className="hs-ai-action">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="14" height="14"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-              Attach
+              {t("help.attach")}
             </button>
             <button className="hs-ai-mic" title="Voice">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="13" height="13"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -444,12 +445,12 @@ function AIAssistant() {
             <line x1="15" y1="9" x2="15.01" y2="9"/>
           </svg>
         </div>
-        <span className="hs-ai-title-pill">AI Assistant</span>
+        <span className="hs-ai-title-pill">{t("help.aiAssistant")}</span>
       </div>
       <div className="hs-ai-desc">
-        Using this feature, you can ask questions or report issues related to your projects, and tasks.
+        {t("help.aiDesc")}
       </div>
-      <button className="hs-ai-start" onClick={() => setModalOpen(true)}>Start</button>
+      <button className="hs-ai-start" onClick={() => setModalOpen(true)}>{t("help.start")}</button>
     </div>
   );
 }
@@ -474,28 +475,29 @@ function FaqItem({ q, a }) {
    HELP CENTER (topic cards)
 ══════════════════════════════════════════════════════════ */
 function HelpCenter({ onSelectTopic }) {
+  const { t } = useTranslation();
   return (
     <>
-      <h1 className="hs-title">... Help Center</h1>
+      <h1 className="hs-title">{t("help.helpCenter")}</h1>
       <p className="hs-subtitle">
-        To get familiar with ... and learn how to work with it, you can find everything you need here — from getting started to managing your workspace and projects, and answers to common questions.
+        To get familiar with GosDoc and learn how to work with it, you can find everything you need here — from getting started to managing your workspace and projects, and answers to common questions.
       </p>
       <div className="hs-search-wrap">
         <div className="hs-search">
           <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="15" height="15"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input placeholder="Search for articles..."/>
+          <input placeholder={t("help.searchArticles")}/>
         </div>
       </div>
 
       <div className="hs-cards">
-        {TOPICS.map(t => (
-          <div key={t.id} className="hs-card" onClick={() => onSelectTopic(t.id)}>
-            <div className="hs-card-icon" style={{ background: t.color }}>
-              {t.icon}
+        {TOPICS.map(tp => (
+          <div key={tp.id} className="hs-card" onClick={() => onSelectTopic(tp.id)}>
+            <div className="hs-card-icon" style={{ background: tp.color }}>
+              {tp.icon}
             </div>
-            <div className="hs-card-title">{t.title}</div>
-            <div className="hs-card-desc">{t.desc}</div>
-            <button className="hs-card-btn" onClick={e=>{ e.stopPropagation(); onSelectTopic(t.id); }}>Learn More</button>
+            <div className="hs-card-title">{tp.title}</div>
+            <div className="hs-card-desc">{tp.desc}</div>
+            <button className="hs-card-btn" onClick={e=>{ e.stopPropagation(); onSelectTopic(tp.id); }}>{t("help.learnMore")}</button>
           </div>
         ))}
       </div>
@@ -507,7 +509,8 @@ function HelpCenter({ onSelectTopic }) {
    TOPIC DETAIL (FAQ accordion)
 ══════════════════════════════════════════════════════════ */
 function TopicDetail({ topicId }) {
-  const meta = TOPICS.find(t => t.id === topicId);
+  const { t } = useTranslation();
+  const meta = TOPICS.find(tp => tp.id === topicId);
   const [search, setSearch] = useState("");
 
   const { data: faqs = [], isLoading } = useQuery({
@@ -529,7 +532,7 @@ function TopicDetail({ topicId }) {
       <div className="hs-detail-search">
         <div className="hs-search">
           <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="15" height="15"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input placeholder="Search for articles..." value={search} onChange={e=>setSearch(e.target.value)}/>
+          <input placeholder={t("help.searchArticles")} value={search} onChange={e=>setSearch(e.target.value)}/>
         </div>
       </div>
       <div style={{ maxWidth:820, margin:"0 auto" }}>
@@ -537,11 +540,11 @@ function TopicDetail({ topicId }) {
         <p className="hs-detail-sub">{meta.subtitle}</p>
       </div>
       {isLoading ? (
-        <div style={{ textAlign:"center", color:"#9CA3AF", fontSize:13, padding:40 }}>Loading…</div>
+        <div style={{ textAlign:"center", color:"#9CA3AF", fontSize:13, padding:40 }}>{t("help.loading")}</div>
       ) : (
         <div className="hs-faq-list">
           {filtered.length === 0
-            ? <div style={{ textAlign:"center", color:"#9CA3AF", fontSize:13, padding:40 }}>No results found.</div>
+            ? <div style={{ textAlign:"center", color:"#9CA3AF", fontSize:13, padding:40 }}>{t("help.noResults")}</div>
             : filtered.map(faq => <FaqItem key={faq.id} q={faq.question} a={faq.answer}/>)
           }
         </div>
@@ -554,6 +557,7 @@ function TopicDetail({ topicId }) {
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
 export default function HelpSupport({ onGoToAuth, onNavigate }) {
+  const { t } = useTranslation();
   const { user } = useAuthStore();
   const [selectedTopic, setSelectedTopic] = useState(null);
   const { data: wsData } = useQuery({ queryKey: ["workspaces"], queryFn: getWorkspaces });
@@ -562,7 +566,7 @@ export default function HelpSupport({ onGoToAuth, onNavigate }) {
   const [profileView, setProfileView] = useState(null);
   const [sbOpen, setSbOpen] = useState(true);
 
-  const topicTitle = selectedTopic ? TOPICS.find(t => t.id === selectedTopic)?.title : null;
+  const topicTitle = selectedTopic ? TOPICS.find(tp => tp.id === selectedTopic)?.title : null;
 
   return (
     <div className="hs-page">
@@ -623,7 +627,10 @@ export default function HelpSupport({ onGoToAuth, onNavigate }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
             </button>
             <div className="hs-avatar">
-              <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
+              {user?.avatar_url
+                ? <img src={user.avatar_url} alt="avatar" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
+                : <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
+              }
             </div>
           </div>
           <div className="hs-profile-info">
@@ -641,7 +648,7 @@ export default function HelpSupport({ onGoToAuth, onNavigate }) {
               <button key={i} className={`hs-navitem${n.active?" active":""}`}
                 onClick={() => { if(n.nav && n.nav !== "help" && onNavigate) onNavigate(n.nav); }}>
                 {n.icon}
-                <span className="hs-navlabel">{n.label}</span>
+                <span className="hs-navlabel">{t(`nav.${n.nav}`)}</span>
                 <svg className="hs-navchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
               </button>
             ))}

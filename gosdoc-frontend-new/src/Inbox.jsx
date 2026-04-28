@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
 import { getTasks, completeTask, skipTask } from "./api/tasks";
@@ -447,6 +448,7 @@ const CAL_SELECT = {
    CONTEXT MENU
 ══════════════════════════════════════════════════════════ */
 function ContextMenu({ onClear, onOpenTask, onClose }) {
+  const { t } = useTranslation();
   const ref = useRef(null);
   useEffect(() => {
     const h = (e) => { if(ref.current&&!ref.current.contains(e.target)) onClose(); };
@@ -462,11 +464,11 @@ function ContextMenu({ onClear, onOpenTask, onClose }) {
     }}>
       <div onClick={()=>{onClear();onClose();}} style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 16px",fontSize:13,cursor:"pointer",color:"#374151" }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
-        Clear
+        {t("inbox.clear")}
       </div>
       <div onClick={()=>{onOpenTask();onClose();}} style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 16px",fontSize:13,cursor:"pointer",color:"#374151" }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" width="14" height="14"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-        Open task
+        {t("inbox.openTask")}
       </div>
     </div>
   );
@@ -518,16 +520,17 @@ function CardRow({ item, isOut, onClearReq, onOpenTask }) {
    CONFIRM MODAL
 ══════════════════════════════════════════════════════════ */
 function ConfirmModal({ onClose, onConfirm }) {
+  const { t } = useTranslation();
   return (
     <div onClick={onClose} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.25)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center" }}>
       <div onClick={e=>e.stopPropagation()} style={{ background:"#fff",borderRadius:14,padding:"28px 28px 22px",width:340,textAlign:"center",position:"relative",boxShadow:"0 8px 32px rgba(0,0,0,0.15)" }}>
         <button onClick={onClose} style={{ position:"absolute",top:14,right:14,background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",display:"flex",alignItems:"center" }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
-        <h3 style={{ fontSize:18,fontWeight:600,color:"#111827",marginBottom:10 }}>Are you sure?</h3>
-        <p style={{ fontSize:13,color:"#6B7280",lineHeight:1.6,marginBottom:22 }}>This action will permanently delete all notifications. You cannot restore them later.</p>
+        <h3 style={{ fontSize:18,fontWeight:600,color:"#111827",marginBottom:10 }}>{t("inbox.confirmDeleteTitle")}</h3>
+        <p style={{ fontSize:13,color:"#6B7280",lineHeight:1.6,marginBottom:22 }}>{t("inbox.confirmDeleteMsg")}</p>
         <button onClick={()=>{onConfirm();onClose();}} style={{ width:"100%",background:"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:12,fontSize:14,fontWeight:500,cursor:"pointer",fontFamily:"inherit" }}>
-          Yes
+          {t("inbox.yes")}
         </button>
       </div>
     </div>
@@ -537,12 +540,12 @@ function ConfirmModal({ onClose, onConfirm }) {
 /* ══════════════════════════════════════════════════════════
    NAV ITEMS
 ══════════════════════════════════════════════════════════ */
-const NAV_ITEMS = [
-  { label:"Inbox", active:true, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg> },
-  { label:"Projects", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> },
-  { label:"Documents", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
-  { label:"Analytics", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
-  { label:"Help & Support", icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
+const NAV_KEYS = [
+  { key:"inbox",    navKey:"inbox",    active:true,  icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg> },
+  { key:"projects", navKey:"projects", active:false, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> },
+  { key:"documents",navKey:"documents",active:false, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
+  { key:"analytics",navKey:"analytics",active:false, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> },
+  { key:"help",     navKey:"help",     active:false, icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
 ];
 
 /* ══════════════════════════════════════════════════════════
@@ -629,6 +632,7 @@ const css = `
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
 export default function Inbox({ onGoToAuth, onNavigate }) {
+  const { t } = useTranslation();
   const [sbOpen,   setSbOpen]   = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
@@ -787,7 +791,10 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
             </button>
             <div className="ib-avatar">
-              <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
+              {user?.avatar_url
+                ? <img src={user.avatar_url} alt="avatar" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
+                : <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
+              }
             </div>
           </div>
           <div className="ib-profile-info">
@@ -801,16 +808,11 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
           <div className="ib-navlist">
-            {NAV_ITEMS.map((n,i)=>(
+            {NAV_KEYS.map((n,i)=>(
               <button key={i} className={`ib-navitem${n.active?" active":""}`}
-                onClick={() => {
-                  if (n.label==="Projects" && onNavigate) onNavigate("projects");
-                  else if (n.label==="Documents" && onNavigate) onNavigate("documents");
-                  else if (n.label==="Analytics" && onNavigate) onNavigate("analytics");
-                  else if (n.label==="Help & Support" && onNavigate) onNavigate("help");
-                }}>
+                onClick={() => { if (n.navKey !== "inbox" && onNavigate) onNavigate(n.navKey); }}>
                 {n.icon}
-                <span className="ib-navlabel">{n.label}</span>
+                <span className="ib-navlabel">{t(`nav.${n.key}`)}</span>
                 <svg className="ib-navchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
               </button>
             ))}
@@ -818,7 +820,7 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
           <div className="ib-sbbottom">
             <button className="ib-addbtn" onClick={() => onNavigate && onNavigate("projects")}>
               <svg className="ib-addbtn-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              <span className="ib-addbtn-label">New project</span>
+              <span className="ib-addbtn-label">{t("inbox.newProject")}</span>
             </button>
           </div>
         </aside>
@@ -830,8 +832,8 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
           <div className="ib-container">
             {/* Tabs */}
             <div className="ib-tabs">
-              <button className={`ib-tab${tab==="incoming"?" active":""}`} onClick={()=>setTab("incoming")}>Incoming</button>
-              <button className={`ib-tab${tab==="outgoing"?" active":""}`} onClick={()=>setTab("outgoing")}>Outgoing</button>
+              <button className={`ib-tab${tab==="incoming"?" active":""}`} onClick={()=>setTab("incoming")}>{t("inbox.incoming")}</button>
+              <button className={`ib-tab${tab==="outgoing"?" active":""}`} onClick={()=>setTab("outgoing")}>{t("inbox.outgoing")}</button>
             </div>
 
             {/* Filters */}
@@ -841,15 +843,15 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
               <button onClick={()=>{setProject("All projects");setDate("Last 7 days");}}
                 style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:4,fontSize:12,color:"#6B7280",background:"none",border:"none",fontFamily:"inherit",whiteSpace:"nowrap",flexShrink:0 }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
-                Clear all
+                {t("inbox.clearAll")}
               </button>
             </div>
 
             {/* Scrollable content */}
             <div className="ib-inner">
               <div className="ib-content">
-                <div className="ib-sec">Today</div>
-                {todayData.length === 0 && <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>No items</div>}
+                <div className="ib-sec">{t("inbox.today")}</div>
+                {todayData.length === 0 && <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>{t("inbox.noItems")}</div>}
                 {todayData.map(item=>(
                   <CardRow
                     key={item.id}
@@ -859,8 +861,8 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
                     onOpenTask={() => handleComplete(item._taskId, item._status)}
                   />
                 ))}
-                <div className="ib-sec" style={{ marginTop:20 }}>Last 7 days</div>
-                {weekData.length === 0 && <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>No items</div>}
+                <div className="ib-sec" style={{ marginTop:20 }}>{t("inbox.lastWeek")}</div>
+                {weekData.length === 0 && <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>{t("inbox.noItems")}</div>}
                 {weekData.map(item=>(
                   <CardRow
                     key={item.id}
@@ -880,20 +882,20 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
       <nav className="ib-mob-nav">
         <button className="ib-mob-btn active">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg>
-          Inbox
+          {t("nav.inbox")}
         </button>
         <button className="ib-mob-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-          Projects
+          {t("nav.projects")}
         </button>
         <button className="ib-mob-add"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
         <button className="ib-mob-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          Docs
+          {t("nav.documents")}
         </button>
         <button className="ib-mob-btn" onClick={onGoToAuth}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          Profile
+          {t("profile.title")}
         </button>
       </nav>
     </div>

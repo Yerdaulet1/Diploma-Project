@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import ProfileController, { ProfileMenu } from "./Profile";
 import useAuthStore from "./store/authStore";
 import { getReports, generateReport, exportReport, downloadBlob } from "./api/reports";
@@ -133,6 +134,7 @@ const css = `
    REPORT CARD
 ══════════════════════════════════════════════════════════ */
 function ReportCard({ report, selected, onClick }) {
+  const { t } = useTranslation();
   const month = MONTHS[(report.period_month - 1)] || report.period_month;
   return (
     <div className={`an-card${selected ? " selected" : ""}`} onClick={onClick}>
@@ -141,19 +143,19 @@ function ReportCard({ report, selected, onClick }) {
       <div className="an-card-stats">
         <div className="an-stat-chip">
           <div className="an-stat-val">{report.docs_total}</div>
-          <div className="an-stat-lbl">Documents</div>
+          <div className="an-stat-lbl">{t("analytics.documents")}</div>
         </div>
         <div className="an-stat-chip">
           <div className="an-stat-val">{report.docs_signed}</div>
-          <div className="an-stat-lbl">Signed</div>
+          <div className="an-stat-lbl">{t("analytics.signed")}</div>
         </div>
         <div className="an-stat-chip">
           <div className="an-stat-val">{report.tasks_completed}</div>
-          <div className="an-stat-lbl">Tasks done</div>
+          <div className="an-stat-lbl">{t("analytics.tasksDone")}</div>
         </div>
         <div className="an-stat-chip">
           <div className="an-stat-val">{report.avg_completion_days != null ? `${parseFloat(report.avg_completion_days).toFixed(1)}d` : "—"}</div>
-          <div className="an-stat-lbl">Avg. days</div>
+          <div className="an-stat-lbl">{t("analytics.avgDays")}</div>
         </div>
       </div>
     </div>
@@ -164,6 +166,7 @@ function ReportCard({ report, selected, onClick }) {
    REPORT DETAIL
 ══════════════════════════════════════════════════════════ */
 function ReportDetail({ report }) {
+  const { t } = useTranslation();
   const [exporting, setExporting] = useState(null);
 
   const handleExport = async (fmt) => {
@@ -187,16 +190,16 @@ function ReportDetail({ report }) {
       <div className="an-detail-header">
         <div>
           <div className="an-detail-title">{month} {report.period_year}</div>
-          <div className="an-detail-sub">{report.workspace_title} · Generated {genDate}</div>
+          <div className="an-detail-sub">{report.workspace_title} · {t("analytics.generated", { date: genDate })}</div>
         </div>
         <div className="an-export-row">
           <button className="an-export-btn" disabled={exporting === "pdf"} onClick={() => handleExport("pdf")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="13" height="13"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            {exporting === "pdf" ? "Exporting…" : "PDF"}
+            {exporting === "pdf" ? t("analytics.exporting") : "PDF"}
           </button>
           <button className="an-export-btn" disabled={exporting === "xlsx"} onClick={() => handleExport("xlsx")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="13" height="13"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-            {exporting === "xlsx" ? "Exporting…" : "XLSX"}
+            {exporting === "xlsx" ? t("analytics.exporting") : "XLSX"}
           </button>
         </div>
       </div>
@@ -204,23 +207,23 @@ function ReportDetail({ report }) {
       <div className="an-metrics">
         <div className="an-metric">
           <div className="an-metric-val">{report.docs_total}</div>
-          <div className="an-metric-lbl">Total documents created this period</div>
+          <div className="an-metric-lbl">{t("analytics.totalDocumentsDesc")}</div>
         </div>
         <div className="an-metric">
           <div className="an-metric-val">{report.docs_completed}</div>
-          <div className="an-metric-lbl">Completed documents (signed + archived)</div>
+          <div className="an-metric-lbl">{t("analytics.completedDocsDesc")}</div>
         </div>
         <div className="an-metric">
           <div className="an-metric-val">{report.docs_signed}</div>
-          <div className="an-metric-lbl">Documents signed</div>
+          <div className="an-metric-lbl">{t("analytics.documentsSignedDesc")}</div>
         </div>
         <div className="an-metric">
           <div className="an-metric-val">{report.tasks_completed}</div>
-          <div className="an-metric-lbl">Workflow tasks completed</div>
+          <div className="an-metric-lbl">{t("analytics.tasksCompletedDesc")}</div>
         </div>
         <div className="an-metric">
           <div className="an-metric-val">{report.avg_completion_days != null ? `${parseFloat(report.avg_completion_days).toFixed(2)}` : "—"}</div>
-          <div className="an-metric-lbl">Average days from creation to signature</div>
+          <div className="an-metric-lbl">{t("analytics.avgDaysDesc")}</div>
         </div>
       </div>
     </div>
@@ -231,6 +234,7 @@ function ReportDetail({ report }) {
    MAIN EXPORT
 ══════════════════════════════════════════════════════════ */
 export default function Analytics({ onGoToAuth, onNavigate }) {
+  const { t } = useTranslation();
   const { user } = useAuthStore();
   const qc = useQueryClient();
   const [sbOpen, setSbOpen] = useState(true);
@@ -345,7 +349,7 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
               <button key={i} className={`an-navitem${n.active ? " active" : ""}`}
                 onClick={() => { if (n.nav && n.nav !== "analytics" && onNavigate) onNavigate(n.nav); }}>
                 {n.icon}
-                <span className="an-navlabel">{n.label}</span>
+                <span className="an-navlabel">{t(`nav.${n.nav}`)}</span>
                 <svg className="an-navchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
               </button>
             ))}
@@ -366,19 +370,19 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
 
               {/* ── GENERATE PANEL ── */}
               <div className="an-gen-panel">
-                <div className="an-gen-title">Generate Report</div>
+                <div className="an-gen-title">{t("analytics.generateReport")}</div>
                 <div className="an-gen-row">
                   <div className="an-field">
-                    <span className="an-label">Workspace</span>
+                    <span className="an-label">{t("analytics.workspace")}</span>
                     <select className="an-select" value={genWorkspace} onChange={e => setGenWorkspace(e.target.value)}>
-                      <option value="">Select workspace…</option>
+                      <option value="">{t("analytics.selectWorkspace")}</option>
                       {workspaces.map(ws => (
                         <option key={ws.id} value={ws.id}>{ws.title}</option>
                       ))}
                     </select>
                   </div>
                   <div className="an-field">
-                    <span className="an-label">Month</span>
+                    <span className="an-label">{t("analytics.month")}</span>
                     <select className="an-select" value={genMonth} onChange={e => setGenMonth(Number(e.target.value))}>
                       {MONTHS.map((m, i) => (
                         <option key={i} value={i + 1}>{m}</option>
@@ -386,7 +390,7 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
                     </select>
                   </div>
                   <div className="an-field">
-                    <span className="an-label">Year</span>
+                    <span className="an-label">{t("analytics.year")}</span>
                     <select className="an-select" value={genYear} onChange={e => setGenYear(Number(e.target.value))}>
                       {yearOptions.map(y => (
                         <option key={y} value={y}>{y}</option>
@@ -394,18 +398,18 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
                     </select>
                   </div>
                   <button className="an-gen-btn" onClick={handleGenerate} disabled={generating}>
-                    {generating ? "Generating…" : "Generate"}
+                    {generating ? t("analytics.generating") : t("analytics.generate")}
                   </button>
                 </div>
               </div>
 
               {/* ── REPORT LIST ── */}
               <div className="an-section-title">
-                Reports {reports.length > 0 && <span style={{ fontWeight:400, color:"#9CA3AF", fontSize:13 }}>({reports.length})</span>}
+                {t("analytics.reports")} {reports.length > 0 && <span style={{ fontWeight:400, color:"#9CA3AF", fontSize:13 }}>({reports.length})</span>}
               </div>
 
               {reportsLoading ? (
-                <div style={{ color:"#9CA3AF", fontSize:13, padding:"20px 0" }}>Loading…</div>
+                <div style={{ color:"#9CA3AF", fontSize:13, padding:"20px 0" }}>{t("common.loading")}</div>
               ) : reports.length === 0 ? (
                 <div className="an-empty">
                   <svg viewBox="0 0 60 60" fill="none" width="60" height="60" style={{ display:"block", margin:"0 auto 16px" }}>
@@ -414,7 +418,7 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
                     <line x1="18" y1="32" x2="36" y2="32" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round"/>
                     <line x1="18" y1="40" x2="30" y2="40" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round"/>
                   </svg>
-                  No reports yet. Select a workspace and period above to generate your first report.
+                  {t("analytics.noReports")}
                 </div>
               ) : (
                 <div className="an-cards-grid">
@@ -432,7 +436,7 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
               {/* ── DETAIL ── */}
               {selectedReport && (
                 <>
-                  <div className="an-section-title" style={{ marginTop:8 }}>Report Details</div>
+                  <div className="an-section-title" style={{ marginTop:8 }}>{t("analytics.reportDetails")}</div>
                   <ReportDetail report={selectedReport}/>
                 </>
               )}
