@@ -25,8 +25,11 @@ class Workspace(models.Model):
     """
 
     class WorkspaceType(models.TextChoices):
-        INDIVIDUAL = "individual", "Индивидуальный"
-        CORPORATE = "corporate", "Корпоративный"
+        INDIVIDUAL   = "individual",   "Индивидуальный"
+        CORPORATE    = "corporate",    "Корпоративный"
+        PERSONAL     = "personal",     "Персональный"
+        TEAM         = "team",         "Команда"
+        ORGANIZATION = "organization", "Организация"
 
     class WorkspaceStatus(models.TextChoices):
         ACTIVE = "active", "Активный"

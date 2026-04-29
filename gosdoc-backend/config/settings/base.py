@@ -246,10 +246,10 @@ EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="ГосДок <noreply@gosdoc.gov.kz>")
 
 # ============================================================
-# Google Gemini (AI-модуль)
+# Claude AI (Anthropic)
 # ============================================================
-GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
-GEMINI_MODEL = config("GEMINI_MODEL", default="gemini-2.0-flash")
+CLAUDE_API_KEY = config("CLAUDE_API_KEY", default="")
+CLAUDE_MODEL   = config("CLAUDE_MODEL",   default="claude-opus-4-7")
 
 # ============================================================
 # CORS (раздел 6 ТЗ: только доверенные домены)

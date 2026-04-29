@@ -90,7 +90,7 @@ def generate_ai_summary(diff_data: dict, old_text: str, new_text: str) -> Option
     Генерирует краткое резюме изменений через Anthropic Claude API.
     Возвращает строку с резюме или None при ошибке.
     """
-    if not settings.GEMINI_API_KEY:
+    if not settings.CLAUDE_API_KEY:
         return None
 
     try:
@@ -99,7 +99,7 @@ def generate_ai_summary(diff_data: dict, old_text: str, new_text: str) -> Option
         return ai.analyze_diff(old_text, new_text)
 
     except Exception as exc:
-        logger.error("Ошибка Google Gemini API: %s", exc)
+        logger.error("Ошибка Claude API: %s", exc)
         return None
 
 

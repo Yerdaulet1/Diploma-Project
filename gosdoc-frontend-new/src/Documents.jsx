@@ -192,9 +192,12 @@ function apiDocToUi(doc) {
   const ft = (doc.file_type || "doc").toLowerCase();
   const isXls = ft === "xlsx" || ft === "xls" || ft === "ods";
   const isPdf = ft === "pdf";
+  // Strip file extension from title if it already ends with one
+  const rawTitle = doc.title || "Untitled";
+  const name = rawTitle.replace(/\.[a-zA-Z0-9]{2,5}$/, "");
   return {
     id: doc.id,
-    name: doc.title,
+    name,
     ext: ft,
     color: isXls ? "#16A34A" : isPdf ? "#EF4444" : "#2563EB",
     bg:    isXls ? "#DCFCE7" : isPdf ? "#FEE2E2" : "#DBEAFE",
@@ -1095,10 +1098,19 @@ export default function Documents({ onGoToAuth, onNavigate }) {
   const [showSigMenu,     setShowSigMenu]     = useState(false);
   const [page,            setPage]            = useState(1);
   const [saving,          setSaving]          = useState(false);
+  const [wsDropOpen,      setWsDropOpen]      = useState(false);
+  const wsDropRef = useRef(null);
 
   const user    = useAuthStore(s => s.user);
   const setUser = useAuthStore(s => s.setUser);
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!wsDropOpen) return;
+    const h = (e) => { if (wsDropRef.current && !wsDropRef.current.contains(e.target)) setWsDropOpen(false); };
+    setTimeout(() => document.addEventListener("mousedown", h), 0);
+    return () => document.removeEventListener("mousedown", h);
+  }, [wsDropOpen]);
 
   const savedSig = user?.signature_data || null;
 
@@ -1233,7 +1245,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
       return;
     }
 
-    // New doc — upload blob to S3 then save content
+    // New doc — upload via server-side endpoint (no S3 required)
     const workspaces = workspacesData?.results ?? [];
     const workspace = workspaces[0];
     if (!workspace) {
@@ -1250,23 +1262,15 @@ export default function Documents({ onGoToAuth, onNavigate }) {
       const blob = new Blob([rawText], { type: "text/plain" });
       const file = new File([blob], fileName);
 
-      const presigned = await requestUpload({
-        workspace: workspace.id, title: name, file_name: fileName, file_size: file.size,
-      });
-      await uploadFileToS3(presigned, file);
-      const confirmed = await confirmUpload({
-        workspace: workspace.id, title: name,
-        storage_key: presigned.fields?.key || presigned.storage_key,
-        file_name: fileName,
-      });
+      const created = await serverUploadDocument(workspace.id, name, file);
 
-      // Also save editor content so it can be re-opened in-editor later
-      if (confirmed?.id) {
+      // Save editor content so it can be re-opened in-editor
+      if (created?.id) {
         try {
           const payload = isXls
             ? { sheet_data: Array.isArray(content) ? content : null }
             : { content: { html: content } };
-          await saveDocumentContent(confirmed.id, payload);
+          await saveDocumentContent(created.id, payload);
         } catch (_) { /* non-critical */ }
       }
 
@@ -1391,11 +1395,47 @@ export default function Documents({ onGoToAuth, onNavigate }) {
             <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{user?.full_name || "User"}</div>
             <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>{user?.email || ""}</div>
           </div>
-          <div className="dc-org">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{workspacesData?.results?.[0]?.title || workspacesData?.[0]?.title || "Organization"}</span>
-            <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+          <div ref={wsDropRef} style={{ position:"relative" }}>
+            <div className="dc-org" onClick={() => setWsDropOpen(v=>!v)}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{workspacesData?.results?.[0]?.title || workspacesData?.[0]?.title || "Organization"}</span>
+              <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"
+                style={{ transform:wsDropOpen?"rotate(180deg)":"none",transition:"transform .2s" }}>
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+            {wsDropOpen && (() => {
+              const wsList = workspacesData?.results ?? (Array.isArray(workspacesData) ? workspacesData : []);
+              return (
+                <div style={{ position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:"#fff",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:200,overflow:"hidden",border:"1px solid #F3F4F6" }}>
+                  <div style={{ padding:"6px 12px 4px",fontSize:10.5,color:"#9CA3AF",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>
+                    Switch Workplaces
+                  </div>
+                  {wsList.map((ws) => (
+                    <div key={ws.id}
+                      onClick={() => { setWsDropOpen(false); onNavigate?.(`organization/${ws.id}`); }}
+                      style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 14px",fontSize:13,cursor:"pointer",color:"#374151",borderTop:".5px solid #F9FAFB" }}
+                      onMouseEnter={e=>e.currentTarget.style.background="#F9FAFB"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <div style={{ width:22,height:22,borderRadius:6,background:"#DBEAFE",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="12" height="12"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                      </div>
+                      <span style={{ flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{ws.title}</span>
+                    </div>
+                  ))}
+                  <div style={{ borderTop:"1px solid #F3F4F6" }}>
+                    <div onClick={() => { setWsDropOpen(false); onNavigate?.("projects"); }}
+                      style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 14px",fontSize:13,cursor:"pointer",color:"#2563EB",fontWeight:500 }}
+                      onMouseEnter={e=>e.currentTarget.style.background="#EFF6FF"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      Create Workplace
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           <div className="dc-navlist">
             {NAV.map((n,i)=>(

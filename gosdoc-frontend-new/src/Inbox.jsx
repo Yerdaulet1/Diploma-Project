@@ -5,9 +5,9 @@ import { useTranslation } from "react-i18next";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
 import { getTasks, completeTask, skipTask } from "./api/tasks";
-import { getDocuments } from "./api/documents";
 import { getWorkspaces } from "./api/workspaces";
 import useAuthStore from "./store/authStore";
+import CreateWorkspaceModal from "./CreateWorkspaceModal";
 
 /* ══════════════════════════════════════════════════════════
    DATA
@@ -633,21 +633,33 @@ const css = `
 ══════════════════════════════════════════════════════════ */
 export default function Inbox({ onGoToAuth, onNavigate }) {
   const { t } = useTranslation();
-  const [sbOpen,   setSbOpen]   = useState(false);
+  const [sbOpen,        setSbOpen]        = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [profileView, setProfileView] = useState(null);
-  const [tab,      setTab]      = useState("incoming");
-  const [project,  setProject]  = useState("All projects");
-  const [date,     setDate]     = useState("Last 7 days");
-  const [confirm,  setConfirm]  = useState(false);
+  const [profileView,   setProfileView]   = useState(null);
+  const [tab,           setTab]           = useState("incoming");
+  const [project,       setProject]       = useState("All projects");
+  const [date,          setDate]          = useState("Last 7 days");
+  const [confirm,       setConfirm]       = useState(false);
+  const [wsDropOpen,    setWsDropOpen]    = useState(false);
+  const [showCreateWs,  setShowCreateWs]  = useState(false);
+  const wsDropRef = useRef(null);
 
   const user = useAuthStore(s => s.user);
   const queryClient = useQueryClient();
 
   const { data: wsData } = useQuery({ queryKey: ["workspaces"], queryFn: getWorkspaces });
-  const orgName = wsData?.results?.[0]?.title || wsData?.[0]?.title || "Organization";
-  const wsNames = wsData?.results?.map(w => w.title) || wsData?.map(w => w.title) || [];
+  const workspaces = wsData?.results ?? (Array.isArray(wsData) ? wsData : []);
+  const orgName    = workspaces[0]?.title || "Organization";
+  const wsNames    = workspaces.map(w => w.title);
   const projectOptions = ["All projects", ...wsNames];
+
+  /* close ws dropdown on outside click */
+  useEffect(() => {
+    if (!wsDropOpen) return;
+    const h = (e) => { if (wsDropRef.current && !wsDropRef.current.contains(e.target)) setWsDropOpen(false); };
+    setTimeout(() => document.addEventListener("mousedown", h), 0);
+    return () => document.removeEventListener("mousedown", h);
+  }, [wsDropOpen]);
 
   const isOut = tab === "outgoing";
 
@@ -680,25 +692,22 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
     return {};
   })();
 
+  // Always fetch all tasks — split incoming/outgoing by status
   const { data: tasksData } = useQuery({
     queryKey: ["tasks", dateParams],
     queryFn: () => getTasks(dateParams),
-    enabled: !isOut,
   });
 
-  const { data: docsData } = useQuery({
-    queryKey: ["documents", "outgoing"],
-    queryFn: () => getDocuments(),
-    enabled: isOut,
-  });
-
+  const TERMINAL = new Set(["done", "skipped"]);
   const rawTasks = tasksData?.results ?? [];
-  const rawDocs  = docsData?.results ?? [];
 
-  const todayIn  = rawTasks.filter(t =>  isToday(t.created_at)).map(taskToCard);
-  const weekIn   = rawTasks.filter(t => !isToday(t.created_at)).map(taskToCard);
-  const todayOut = rawDocs.filter(d =>  isToday(d.updated_at)).map(docToCard);
-  const weekOut  = rawDocs.filter(d => !isToday(d.updated_at)).map(docToCard);
+  const activeTasks = rawTasks.filter(t => !TERMINAL.has(t.status));
+  const doneTasks   = rawTasks.filter(t =>  TERMINAL.has(t.status));
+
+  const todayIn  = activeTasks.filter(t =>  isToday(t.created_at)).map(taskToCard);
+  const weekIn   = activeTasks.filter(t => !isToday(t.created_at)).map(taskToCard);
+  const todayOut = doneTasks.filter(t =>  isToday(t.created_at)).map(taskToCard);
+  const weekOut  = doneTasks.filter(t => !isToday(t.created_at)).map(taskToCard);
 
   const todayData = isOut ? todayOut : todayIn;
   const weekData  = isOut ? weekOut  : weekIn;
@@ -733,7 +742,23 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
     <div className="ib-page">
       <style>{css}</style>
 
-      {confirm && <ConfirmModal onClose={()=>setConfirm(false)} onConfirm={()=>{}} />}
+      {showCreateWs && (
+        <CreateWorkspaceModal
+          onClose={() => setShowCreateWs(false)}
+          onCreated={(id) => {
+            queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+            if (id) onNavigate?.(`organization/${id}`);
+          }}
+        />
+      )}
+
+      {confirm && <ConfirmModal onClose={()=>setConfirm(false)} onConfirm={()=>{
+        queryClient.setQueryData(["tasks", dateParams], (old) => {
+          if (!old) return old;
+          const results = (old.results ?? old).filter(t => !TERMINAL.has(t.status));
+          return Array.isArray(old) ? results : { ...old, results };
+        });
+      }} />}
 
       {/* ── HEADER ── */}
       <header className="ib-topbar">
@@ -801,11 +826,46 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
             <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{user?.full_name || "User"}</div>
             <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>{user?.email || ""}</div>
           </div>
-          <div className="ib-org">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{orgName}</span>
-            <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+          {/* Workspace switcher */}
+          <div ref={wsDropRef} style={{ position:"relative",margin:"0 10px 4px" }}>
+            <div className="ib-org" onClick={() => setWsDropOpen(v=>!v)} style={{ cursor:"pointer" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{orgName}</span>
+              <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"
+                style={{ transform: wsDropOpen?"rotate(180deg)":"none", transition:"transform .2s" }}>
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+            {wsDropOpen && (
+              <div style={{ position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:"#fff",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:200,overflow:"hidden",border:"1px solid #F3F4F6" }}>
+                <div style={{ padding:"6px 12px 4px",fontSize:10.5,color:"#9CA3AF",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>
+                  Switch Workplaces
+                </div>
+                {workspaces.map((ws) => (
+                  <div key={ws.id}
+                    onClick={() => { setWsDropOpen(false); onNavigate?.(`organization/${ws.id}`); }}
+                    style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 14px",fontSize:13,cursor:"pointer",color:"#374151",borderTop:".5px solid #F9FAFB" }}
+                    onMouseEnter={e=>e.currentTarget.style.background="#F9FAFB"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div style={{ width:22,height:22,borderRadius:6,background:"#DBEAFE",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="12" height="12"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                    </div>
+                    <span style={{ flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{ws.title}</span>
+                  </div>
+                ))}
+                <div style={{ borderTop:"1px solid #F3F4F6" }}>
+                  <div
+                    onClick={() => { setWsDropOpen(false); setShowCreateWs(true); }}
+                    style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 14px",fontSize:13,cursor:"pointer",color:"#2563EB",fontWeight:500 }}
+                    onMouseEnter={e=>e.currentTarget.style.background="#EFF6FF"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Create Workplace
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div className="ib-navlist">
             {NAV_KEYS.map((n,i)=>(

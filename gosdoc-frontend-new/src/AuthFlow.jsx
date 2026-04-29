@@ -3,13 +3,14 @@ import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { login, register, verifyEmail, resendCode, resetPasswordRequest, resetPasswordConfirm } from "./api/auth";
-import { createWorkspace, addMember } from "./api/workspaces";
+import { createWorkspace } from "./api/workspaces";
 import useAuthStore from "./store/authStore";
+import logoImg from "./assets/Group 2.svg";
 
 /* ═══════════════════════════════════════════════════════
    CONSTANTS & DATA
 ═══════════════════════════════════════════════════════ */
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 3;
 
 const features = [
   {
@@ -284,7 +285,7 @@ function SignInPage({ onNavigate }) {
     <>
       {/* Top bar */}
       <div className="auth-topbar">
-        <div style={s.logoBox}>Logo</div>
+        <img src={logoImg} alt="GosDoc" style={{ height: 36 }} />
       </div>
 
       {/* Form */}
@@ -369,7 +370,7 @@ function SignInPage({ onNavigate }) {
 ═══════════════════════════════════════════════════════ */
 function SignUpStep1({ onNext, onNavigate }) {
   const { t } = useTranslation();
-  const [form, setForm] = useState({ fullName: "", email: "", orgName: "", password: "", agreed: false });
+  const [form, setForm] = useState({ fullName: "", email: "", password: "", agreed: false });
   const [showPw, setShowPw] = useState(false);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -396,7 +397,6 @@ function SignUpStep1({ onNext, onNavigate }) {
         email: form.email,
         password: form.password,
         password_confirm: form.password,
-        ...(form.orgName.trim() && { org_name: form.orgName.trim() }),
       });
       onNext({ email: form.email });
     } catch (err) {
@@ -417,12 +417,12 @@ function SignUpStep1({ onNext, onNavigate }) {
   return (
     <>
       <div className="auth-topbar">
-        <div style={s.logoBox}>Logo</div>
+        <img src={logoImg} alt="GosDoc" style={{ height: 36 }} />
       </div>
       <div className="auth-formwrap">
         <div className="auth-inner">
           <h1 className="auth-heading" style={s.heading}>{t("auth.signUp")}</h1>
-          <p style={s.stepLabel}>STEP 1 OF 4</p>
+          <p style={s.stepLabel}>STEP 1 OF 3</p>
           <p style={s.subtext}>Please fill in the form to create an account.</p>
 
           <div className="auth-row-split">
@@ -440,14 +440,7 @@ function SignUpStep1({ onNext, onNavigate }) {
             </FieldGroup>
           </div>
 
-          <FieldGroup label={t("auth.orgName")} optional>
-            <InputWrap>
-              <BuildingIcon />
-              <input name="orgName" style={s.input} placeholder="ex: Adeli Corp" value={form.orgName} onChange={change} />
-            </InputWrap>
-          </FieldGroup>
-
-          <div style={{ marginTop: 14 }}>
+          <div style={{ marginTop: 0 }}>
             <FieldGroup label={t("auth.password")} required error={errors.password}>
               <InputWrap error={errors.password}>
                 <LockIcon />
@@ -575,12 +568,12 @@ function SignUpStep2({ data, onNext }) {
   return (
     <>
       <div className="auth-topbar">
-        <div style={s.logoBox}>Logo</div>
+        <img src={logoImg} alt="GosDoc" style={{ height: 36 }} />
       </div>
       <div className="auth-formwrap">
         <div className="auth-inner">
           <h1 className="auth-heading" style={s.heading}>Sign Up</h1>
-          <p style={s.stepLabel}>STEP 2 OF 4</p>
+          <p style={s.stepLabel}>STEP 2 OF 3</p>
           <p style={s.subtext}>We've sent a 6-digit confirmation code to your email.</p>
 
           <div style={{ textAlign: "center", marginTop: 36, marginBottom: 28 }}>
@@ -660,72 +653,116 @@ function SignUpStep2({ data, onNext }) {
 }
 
 /* ═══════════════════════════════════════════════════════
-   SIGN UP — STEP 3 (Project)
+   SIGN UP — STEP 3 (Workspace)
 ═══════════════════════════════════════════════════════ */
+const WORKSPACE_TYPES = [
+  { value: "personal",      label: "Personal"      },
+  { value: "team",          label: "Team"          },
+  { value: "organization",  label: "Organization"  },
+];
+
 function SignUpStep3({ onNext, onBack, onSkip }) {
-  const [form, setForm] = useState({ name: "", desc: "" });
+  const [form, setForm] = useState({ name: "", type: "" });
+  const [typeOpen, setTypeOpen] = useState(false);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  const typeRef = useRef(null);
 
-  const change = (e) => {
-    setForm(f => ({ ...f, [e.target.name]: e.target.value }));
-    setErrors(er => ({ ...er, [e.target.name]: "" }));
-  };
+  useEffect(() => {
+    if (!typeOpen) return;
+    const h = (e) => { if (typeRef.current && !typeRef.current.contains(e.target)) setTypeOpen(false); };
+    setTimeout(() => document.addEventListener("mousedown", h), 0);
+    return () => document.removeEventListener("mousedown", h);
+  }, [typeOpen]);
 
   const submit = async () => {
     const errs = {};
-    if (!form.name.trim()) errs.name = "Project name is required.";
+    if (!form.name.trim()) errs.name = "Workspace name is required.";
+    if (!form.type) errs.type = "Please select a workspace type.";
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
     setLoading(true);
     try {
-      const workspace = await createWorkspace({ title: form.name, description: form.desc });
-      onNext({ workspaceId: workspace.id });
+      await createWorkspace({ title: form.name, type: form.type });
+      onNext({});
     } catch (err) {
       toast.error("Failed to create workspace. You can set it up later.");
-      onNext({ workspaceId: null });
+      onNext({});
     }
   };
+
+  const selectedLabel = WORKSPACE_TYPES.find(t => t.value === form.type)?.label || "";
 
   return (
     <>
       <div className="auth-topbar">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button onClick={onBack} style={s.backBtn}><BackIcon /></button>
-          <div style={s.logoBox}>Logo</div>
+          <img src={logoImg} alt="GosDoc" style={{ height: 36 }} />
         </div>
         <button onClick={onSkip} style={s.skipBtn}>Skip and start</button>
       </div>
       <div className="auth-formwrap">
         <div className="auth-inner">
           <h1 className="auth-heading" style={s.heading}>Sign Up</h1>
-          <p style={s.stepLabel}>STEP 3 OF 4</p>
-          <p style={s.subtext}>Set up your first project to start managing documents and workflows.</p>
+          <p style={s.stepLabel}>STEP 3 OF 3</p>
+          <p style={s.subtext}>Create your first workspace to start managing documents.</p>
 
-          <FieldGroup label="Project Name" required error={errors.name}>
+          <FieldGroup label="Workspace Name" required error={errors.name}>
             <InputWrap error={errors.name}>
-              <input name="name" style={s.input} placeholder="ex: Docs" value={form.name} onChange={change} />
+              <BuildingIcon />
+              <input
+                name="name" style={s.input} placeholder="ex: Dream"
+                value={form.name}
+                onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setErrors(er => ({ ...er, name: "" })); }}
+              />
             </InputWrap>
           </FieldGroup>
 
           <div style={{ marginTop: 14 }}>
-            <label style={{ fontSize: 13, fontWeight: 500, color: "#374151", display: "block", marginBottom: 5 }}>
-              Description
-            </label>
-            <textarea
-              name="desc" value={form.desc} onChange={change}
-              placeholder="ex: A project…" rows={4}
-              style={{
-                width: "100%", border: "1.5px solid #E2E5EF", borderRadius: 8,
-                padding: "10px 14px", fontSize: 13.5, color: "#374151",
-                resize: "vertical", outline: "none", fontFamily: "inherit",
-                boxSizing: "border-box", background: "#fff",
-              }}
-            />
+            <FieldGroup label="Workspace Type" required error={errors.type}>
+              <div ref={typeRef} style={{ position: "relative" }}>
+                <div
+                  onClick={() => setTypeOpen(v => !v)}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    border: `1.5px solid ${errors.type ? "#EF4444" : "#E2E5EF"}`, borderRadius: 8,
+                    background: "#fff", padding: "0 12px", height: 44, cursor: "pointer",
+                  }}>
+                  <span style={{ fontSize: 13.5, color: selectedLabel ? "#374151" : "#9CA3AF" }}>
+                    {selectedLabel || "Select one"}
+                  </span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="14" height="14">
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </div>
+                {typeOpen && (
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+                    background: "#fff", borderRadius: 10,
+                    boxShadow: "0 4px 24px rgba(0,0,0,0.14)",
+                    zIndex: 999, overflow: "hidden",
+                  }}>
+                    {WORKSPACE_TYPES.map(opt => (
+                      <div key={opt.value}
+                        onClick={() => { setForm(f => ({ ...f, type: opt.value })); setErrors(er => ({ ...er, type: "" })); setTypeOpen(false); }}
+                        style={{
+                          padding: "11px 16px", fontSize: 13.5, cursor: "pointer",
+                          color: form.type === opt.value ? "#2563EB" : "#374151",
+                          fontWeight: form.type === opt.value ? 600 : 400,
+                          background: form.type === opt.value ? "#EFF6FF" : "transparent",
+                        }}>
+                        {opt.label}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </FieldGroup>
           </div>
 
-          <button style={{ ...s.ctaBtn, marginTop: 20, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
-            {loading ? "Creating project…" : "Continue"}
+          <button style={{ ...s.ctaBtn, marginTop: 28, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
+            {loading ? "Creating…" : "Start"}
           </button>
         </div>
       </div>
@@ -734,108 +771,6 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
   );
 }
 
-/* ═══════════════════════════════════════════════════════
-   SIGN UP — STEP 4 (Team)
-═══════════════════════════════════════════════════════ */
-function SignUpStep4({ workspaceId, onBack, onSkip, onFinish }) {
-  const [members, setMembers] = useState([{ email: "", role: "" }, { email: "", role: "" }]);
-  const [errors, setErrors] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  const updateMember = (i, field, val) => {
-    setMembers(m => m.map((item, idx) => idx === i ? { ...item, [field]: val } : item));
-    setErrors(er => er.map((e, idx) => idx === i ? { ...e, [field]: "" } : e));
-  };
-
-  const addMemberRow = () => {
-    if (members.length < 7) setMembers(m => [...m, { email: "", role: "" }]);
-  };
-
-  const removeMember = (i) => {
-    if (members.length <= 1) return;
-    setMembers(m => m.filter((_, idx) => idx !== i));
-    setErrors(er => er.filter((_, idx) => idx !== i));
-  };
-
-  const submit = async () => {
-    const errs = members.map(m => ({
-      email: m.email && !/\S+@\S+\.\S+/.test(m.email) ? "Invalid email." : "",
-    }));
-    if (errs.some(e => e.email)) { setErrors(errs); return; }
-
-    const validMembers = members.filter(m => m.email.trim());
-    if (!validMembers.length || !workspaceId) { onFinish(); return; }
-
-    setLoading(true);
-    const results = await Promise.allSettled(
-      validMembers.map(m => addMember(workspaceId, { email: m.email }))
-    );
-    const failed = results.filter(r => r.status === "rejected").length;
-    if (failed > 0) {
-      toast.error(`${failed} invite(s) could not be sent. You can add members later.`);
-    } else {
-      toast.success("Team invites sent!");
-    }
-    onFinish();
-  };
-
-  return (
-    <>
-      <div className="auth-topbar">
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button onClick={onBack} style={s.backBtn}><BackIcon /></button>
-          <div style={s.logoBox}>Logo</div>
-        </div>
-        <button onClick={onSkip} style={s.skipBtn}>Skip and start</button>
-      </div>
-      <div className="auth-formwrap">
-        <div className="auth-inner">
-          <h1 className="auth-heading" style={s.heading}>Sign Up</h1>
-          <p style={s.stepLabel}>STEP 4 OF 4</p>
-          <p style={s.subtext}>Add 2–7 team members by email to begin working together in your project.</p>
-
-          <div style={{ display: "flex", gap: 12, marginBottom: 6 }}>
-            <div style={{ flex: 1 }}><span style={{ fontSize: 13, fontWeight: 500, color: "#374151" }}>Team Member Email<span style={{ color: "#EF4444", marginLeft: 2 }}>*</span></span></div>
-            <div style={{ flex: 1 }}><span style={{ fontSize: 13, fontWeight: 500, color: "#374151" }}>Role<span style={{ color: "#EF4444", marginLeft: 2 }}>*</span></span></div>
-            <div style={{ width: 32 }} />
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {members.map((m, i) => (
-              <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                <FieldGroup error={errors[i]?.email}>
-                  <InputWrap error={errors[i]?.email}>
-                    <MailIcon color="#aab" />
-                    <input style={s.input} placeholder="ex: example@gmail.com" value={m.email} onChange={e => updateMember(i, "email", e.target.value)} />
-                  </InputWrap>
-                </FieldGroup>
-                <FieldGroup>
-                  <InputWrap>
-                    <PersonIcon />
-                    <input style={s.input} placeholder="ex: Product Manager" value={m.role} onChange={e => updateMember(i, "role", e.target.value)} />
-                  </InputWrap>
-                </FieldGroup>
-                <button onClick={() => removeMember(i)} disabled={members.length <= 1} title="Remove member"
-                  style={{ width: 32, height: 44, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: `1.5px solid ${members.length <= 1 ? "#E5E7EB" : "#FECACA"}`, borderRadius: 8, cursor: members.length <= 1 ? "not-allowed" : "pointer", color: members.length <= 1 ? "#D1D5DB" : "#EF4444", transition: "all 0.15s", padding: 0 }}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {members.length < 7 && (
-            <button onClick={addMemberRow} style={s.addMemberBtn}><PlusIcon /> Add member</button>
-          )}
-
-          <button style={{ ...s.ctaBtn, marginTop: 24, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
-            {loading ? "Sending invites…" : "Invite Team Members"}
-          </button>
-        </div>
-      </div>
-      <ProgressBar step={4} />
-    </>
-  );
-}
 
 /* ═══════════════════════════════════════════════════════
    SUCCESS SCREEN
@@ -911,7 +846,7 @@ function ForgotStep1({ onNext, onNavigate }) {
       <div className="auth-topbar">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button onClick={() => onNavigate("signin")} style={s.backBtn}><BackIcon /></button>
-          <div style={s.logoBox}>Logo</div>
+          <img src={logoImg} alt="GosDoc" style={{ height: 36 }} />
         </div>
       </div>
       <div className="auth-formwrap">
@@ -1019,7 +954,7 @@ function ForgotStep2({ data, onNext, onBack }) {
       <div className="auth-topbar">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button onClick={onBack} style={s.backBtn}><BackIcon /></button>
-          <div style={s.logoBox}>Logo</div>
+          <img src={logoImg} alt="GosDoc" style={{ height: 36 }} />
         </div>
       </div>
       <div className="auth-formwrap">
@@ -1136,7 +1071,7 @@ function ForgotStep3({ data, onNavigate }) {
       <div className="auth-topbar">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button onClick={() => onNavigate("forgot")} style={s.backBtn}><BackIcon /></button>
-          <div style={s.logoBox}>Logo</div>
+          <img src={logoImg} alt="GosDoc" style={{ height: 36 }} />
         </div>
       </div>
       <div className="auth-formwrap">
@@ -1212,9 +1147,7 @@ export default function AuthFlow({ onGoToDashboard }) {
     setStep(s => s + 1);
   };
   const goBack = () => setStep(s => s - 1);
-  // Skip project step → jump straight to success (no workspace = no team invite)
-  const goSkipProject = () => setStep(5);
-  const goSkip = () => setStep(s => s + 1);
+  const goSkipProject = () => setStep(4);
 
   const forgotNext = (data = {}) => {
     setForgotData(d => ({ ...d, ...data }));
@@ -1248,15 +1181,7 @@ export default function AuthFlow({ onGoToDashboard }) {
           {page === "signup" && step === 1 && <SignUpStep1 onNext={goNext} onNavigate={navigate} />}
           {page === "signup" && step === 2 && <SignUpStep2 data={stepData} onNext={goNext} />}
           {page === "signup" && step === 3 && <SignUpStep3 onNext={goNext} onBack={goBack} onSkip={goSkipProject} />}
-          {page === "signup" && step === 4 && (
-            <SignUpStep4
-              workspaceId={stepData.workspaceId}
-              onBack={goBack}
-              onSkip={goSkip}
-              onFinish={() => setStep(5)}
-            />
-          )}
-          {page === "signup" && step === 5 && <SuccessScreen onNavigate={navigate} />}
+          {page === "signup" && step === 4 && <SuccessScreen onNavigate={navigate} />}
 
         </div>
       </div>

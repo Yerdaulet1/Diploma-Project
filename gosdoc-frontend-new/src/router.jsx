@@ -9,6 +9,7 @@ import Notifications from "./Notifications";
 import HelpSupport from "./HelpSupport";
 import Documents from "./Documents";
 import Analytics from "./Analytics";
+import Organization from "./Organization";
 
 function PageLoader() {
   return (
@@ -50,6 +51,8 @@ function useNavAdapter() {
   const logout = useAuthStore((s) => s.logout);
 
   const onNavigate = (screen) => {
+    // dynamic paths like "organization/123" are passed directly
+    if (screen.includes("/")) { navigate(`/${screen}`); return; }
     const path = SCREEN_TO_PATH[screen] || `/${screen}`;
     navigate(path);
   };
@@ -100,6 +103,11 @@ function WrapAnalytics() {
   return <Analytics onNavigate={onNavigate} onGoToAuth={onGoToAuth} />;
 }
 
+function WrapOrganization() {
+  const { onNavigate, onGoToAuth } = useNavAdapter();
+  return <Organization onNavigate={onNavigate} onGoToAuth={onGoToAuth} />;
+}
+
 export const routes = [
   {
     element: <PublicRoute />,
@@ -116,6 +124,7 @@ export const routes = [
       { path: "/notifications", element: <WrapNotifications /> },
       { path: "/help", element: <WrapHelp /> },
       { path: "/analytics", element: <WrapAnalytics /> },
+      { path: "/organization/:id", element: <WrapOrganization /> },
     ],
   },
   { path: "*", element: <Navigate to="/inbox" replace /> },

@@ -1,5 +1,5 @@
 """
-ГосДок — AI-сервис на базе Google Gemini (apps/ai/services.py)
+ГосДок — AI-сервис на базе Claude (apps/ai/services.py)
 
 Централизованный класс для всех LLM-операций:
   - generate_document:  генерация текста официального документа по описанию
@@ -11,7 +11,7 @@
   - general_chat:         общий AI ассистент (RAG по кабинету + свободный режим)
   - classify_document:    ML-классификация типа документа (TF-IDF + keyword fallback)
 
-SDK: google-genai >= 1.0  (google.genai, не google.generativeai)
+SDK: anthropic >= 0.40.0
 """
 
 import logging
@@ -19,8 +19,7 @@ import os
 import tempfile
 from typing import Optional
 
-from google import genai
-from google.genai import types
+import anthropic
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -42,30 +41,55 @@ def _get_encoder():
         _encoder_cache = SentenceTransformer("all-MiniLM-L6-v2")
     return _encoder_cache
 
+
 # Человекочитаемые названия типов документов для промптов
 DOC_TYPE_LABELS = {
     "contract": "договор",
-    "order": "приказ",
-    "act": "акт",
-    "invoice": "счёт-фактура",
+    "order":    "приказ",
+    "act":      "акт",
+    "invoice":  "счёт-фактура",
 }
+
+# Системный промпт платформы — стабильная часть, выигрывает от кэширования
+_PLATFORM_CONTEXT = (
+    "ГосДок — система электронного документооборота для государственных органов "
+    "Республики Казахстан. Платформа обеспечивает создание, согласование, подписание "
+    "и архивирование официальных документов в соответствии с требованиями "
+    "делопроизводства РК."
+)
 
 
 class AIService:
     """
-    Обёртка над Google Gemini API (google-genai >= 1.0).
+    Обёртка над Anthropic Claude API.
 
-    Использует genai.Client вместо глобального genai.configure().
+    Использует prompt caching для системных промптов — снижает стоимость
+    повторяющихся запросов до ~10% от обычной цены.
     Один экземпляр на запрос — клиент stateless.
     """
 
     def __init__(self):
-        self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        self._model_name = getattr(settings, "GEMINI_MODEL", "gemini-2.0-flash")
+        self._client = anthropic.Anthropic(api_key=settings.CLAUDE_API_KEY)
+        self._model_name = getattr(settings, "CLAUDE_MODEL", "claude-opus-4-7")
 
     # ------------------------------------------------------------------
     # Внутренние хелперы
     # ------------------------------------------------------------------
+
+    def _make_system(self, instruction: str) -> list:
+        """
+        Собирает system-блок с cache_control.
+
+        Кэшируемый блок включает контекст платформы + инструкцию.
+        Первый запрос пишет кэш, последующие читают его за ~0.1× цены.
+        """
+        return [
+            {
+                "type": "text",
+                "text": f"{_PLATFORM_CONTEXT}\n\n{instruction}",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
     def _generate(
         self,
@@ -73,40 +97,42 @@ class AIService:
         prompt: str,
         max_output_tokens: int = 1024,
     ) -> str:
-        """Однократный запрос generate_content с системным промптом."""
-        response = self._client.models.generate_content(
+        """Однократный запрос с системным промптом и кэшированием."""
+        response = self._client.messages.create(
             model=self._model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                max_output_tokens=max_output_tokens,
-            ),
+            max_tokens=max_output_tokens,
+            system=self._make_system(system_instruction),
+            messages=[{"role": "user", "content": prompt}],
         )
-        return response.text.strip()
+        block = next((b for b in response.content if b.type == "text"), None)
+        return block.text.strip() if block else ""
 
     def _chat(
         self,
         system_instruction: str,
         history: list,
         message: str,
+        max_output_tokens: int = 2048,
     ) -> str:
         """
-        Multi-turn chat: создаёт сессию с историей и отправляет сообщение.
+        Multi-turn чат с историей диалога и кэшированием системного промпта.
 
         Args:
-            system_instruction: системный промпт для модели
-            history:            список types.Content (конвертированный chat_history)
+            system_instruction: инструкция для модели
+            history:            список {"role": "user"|"assistant", "content": "..."}
             message:            текущее сообщение пользователя
         """
-        chat = self._client.chats.create(
+        messages = _build_claude_history(history)
+        messages.append({"role": "user", "content": message})
+
+        response = self._client.messages.create(
             model=self._model_name,
-            history=history,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-            ),
+            max_tokens=max_output_tokens,
+            system=self._make_system(system_instruction),
+            messages=messages,
         )
-        response = chat.send_message(message)
-        return response.text.strip()
+        block = next((b for b in response.content if b.type == "text"), None)
+        return block.text.strip() if block else ""
 
     # ------------------------------------------------------------------
     # Генерация документа
@@ -127,22 +153,27 @@ class AIService:
 
         system_instruction = (
             "Ты — юридический ассистент для государственных органов Казахстана. "
-            "Составляй официальные документы на русском языке в соответствии с "
-            "требованиями делопроизводства РК. Используй деловой стиль, "
-            "стандартные реквизиты и формальные формулировки."
+            "Составляй официальные документы строго на русском языке в соответствии "
+            "с требованиями делопроизводства РК. Используй деловой стиль, "
+            "стандартные реквизиты (дата, номер, исполнитель, утверждающее лицо) "
+            "и формальные юридические формулировки. "
+            "Возвращай ТОЛЬКО текст документа — без пояснений, комментариев и вступлений."
         )
 
         prompt = (
             f"Составь {label} на основании следующего описания:\n\n"
             f"{description}\n\n"
-            "Требования:\n"
-            "- Деловой официальный стиль\n"
-            "- Все необходимые реквизиты документа\n"
-            "- Структурированный текст с разделами\n"
-            "- Только текст документа, без пояснений от себя"
+            "Структура документа:\n"
+            "1. Шапка: наименование органа, дата, номер документа\n"
+            "2. Заголовок документа\n"
+            "3. Преамбула / основание\n"
+            "4. Основная часть с пронумерованными пунктами\n"
+            "5. Реквизиты сторон / подписи\n\n"
+            "Используй только официально-деловой стиль. "
+            "Не добавляй пояснений от себя."
         )
 
-        return self._generate(system_instruction, prompt, max_output_tokens=2048)
+        return self._generate(system_instruction, prompt, max_output_tokens=3000)
 
     # ------------------------------------------------------------------
     # Резюме документа
@@ -158,26 +189,27 @@ class AIService:
         Returns:
             {"summary": str, "key_points": list[str]}
         """
-        # Обрезаем текст до разумного предела, чтобы не превышать контекст
-        truncated = text[:12_000] if len(text) > 12_000 else text
+        truncated = text[:15_000] if len(text) > 15_000 else text
 
         system_instruction = (
-            "Ты — аналитик официальных документов. "
-            "Отвечай строго на русском языке, кратко и по делу."
+            "Ты — аналитик официальных государственных документов. "
+            "Отвечай строго на русском языке, кратко и по делу. "
+            "Выделяй суть, ключевые обязательства и сроки."
         )
 
         prompt = (
-            "Проанализируй следующий документ и верни ответ в точно таком формате:\n\n"
-            "РЕЗЮМЕ:\n<одно-два предложения с сутью документа>\n\n"
+            "Проанализируй документ и верни ответ точно в следующем формате:\n\n"
+            "РЕЗЮМЕ:\n"
+            "<одно-два предложения: суть документа, стороны, предмет>\n\n"
             "КЛЮЧЕВЫЕ ТЕЗИСЫ:\n"
-            "- <тезис 1>\n"
+            "- <тезис 1 — конкретный факт или обязательство>\n"
             "- <тезис 2>\n"
             "- <тезис 3>\n"
-            "(от 3 до 7 тезисов)\n\n"
+            "(от 3 до 7 тезисов; каждый — законченное утверждение)\n\n"
             f"Документ:\n{truncated}"
         )
 
-        raw = self._generate(system_instruction, prompt, max_output_tokens=512)
+        raw = self._generate(system_instruction, prompt, max_output_tokens=700)
         return _parse_summary_response(raw)
 
     # ------------------------------------------------------------------
@@ -187,7 +219,6 @@ class AIService:
     def analyze_diff(self, old_text: str, new_text: str) -> Optional[str]:
         """
         Генерирует краткое резюме изменений между двумя версиями документа.
-        Вызывается из apps/documents/ai_diff.py.
 
         Args:
             old_text: текст предыдущей версии
@@ -201,17 +232,19 @@ class AIService:
 
         system_instruction = (
             "Ты — ассистент для анализа изменений в официальных документах. "
-            "Отвечай на русском языке, кратко и по существу."
+            "Отвечай на русском языке, кратко и по существу. "
+            "Указывай только значимые изменения по смыслу и содержанию."
         )
 
         prompt = (
             "Сравни две версии документа и напиши краткое резюме изменений "
-            "(2–3 предложения). Укажи: что добавлено, что удалено, что изменено по смыслу.\n\n"
+            "(2–3 предложения). Укажи конкретно: что добавлено, что удалено, "
+            "что изменилось по смыслу. Игнорируй орфографические правки.\n\n"
             f"=== ПРЕДЫДУЩАЯ ВЕРСИЯ ===\n{old_trunc}\n\n"
             f"=== НОВАЯ ВЕРСИЯ ===\n{new_trunc}"
         )
 
-        return self._generate(system_instruction, prompt, max_output_tokens=300)
+        return self._generate(system_instruction, prompt, max_output_tokens=400)
 
     # ------------------------------------------------------------------
     # RAG: индексация документа в pgvector
@@ -222,8 +255,7 @@ class AIService:
         Читает текст документа из S3, разбивает на чанки, генерирует
         embeddings через sentence-transformers и сохраняет в DocumentEmbedding.
 
-        Удаляет старые embeddings для документа перед созданием новых —
-        идемпотентная операция (можно вызывать повторно).
+        Удаляет старые embeddings перед созданием новых (идемпотентная операция).
 
         Args:
             document_id: UUID строкой для documents.Document
@@ -250,13 +282,10 @@ class AIService:
             logger.warning("embed_document: нет чанков для документа %s", document_id)
             return
 
-        # Генерируем embeddings через sentence-transformers (закэшированный энкодер)
         encoder = _get_encoder()
         vectors = encoder.encode(chunks, show_progress_bar=False, normalize_embeddings=True)
 
-        # Удаляем старые embeddings и записываем новые одним bulk_create
         DocumentEmbedding.objects.filter(document_id=document_id).delete()
-
         DocumentEmbedding.objects.bulk_create([
             DocumentEmbedding(
                 document=document,
@@ -287,7 +316,7 @@ class AIService:
 
         Args:
             query:        поисковый запрос
-            workspace_id: UUID кабинета — фильтр по document__workspace_id
+            workspace_id: UUID кабинета
             top_k:        количество результатов
 
         Returns:
@@ -312,14 +341,13 @@ class AIService:
                 "document_id": str(row.document_id),
                 "title": row.document.title,
                 "chunk_text": row.chunk_text,
-                # cosine distance ∈ [0, 2]; similarity = 1 − distance (для нормализованных векторов)
                 "score": round(max(0.0, 1.0 - float(row.distance)), 4),
             }
             for row in results
         ]
 
     # ------------------------------------------------------------------
-    # Чат с конкретным документом (RAG по чанкам одного документа)
+    # Чат с конкретным документом (RAG)
     # ------------------------------------------------------------------
 
     def chat_with_document(
@@ -332,15 +360,15 @@ class AIService:
         Отвечает на вопрос по конкретному документу, используя RAG.
 
         Алгоритм:
-          1. Ищет top-5 релевантных чанков документа по cosine similarity
+          1. Ищет top-5 релевантных чанков по cosine similarity
           2. Формирует контекст из найденных чанков
-          3. Отправляет в Gemini chat с историей диалога
+          3. Отправляет в Claude chat с историей диалога
           4. Возвращает {"reply": str, "context_chunks": list[dict]}
 
         Args:
             document_id:  UUID строкой для documents.Document
             message:      текущее сообщение пользователя
-            chat_history: предыдущие сообщения [{"role": "user"|"assistant", "content": "..."}]
+            chat_history: список {"role": "user"|"assistant", "content": "..."}
 
         Returns:
             {"reply": str, "context_chunks": [{"chunk_text": str, "chunk_index": int}]}
@@ -366,20 +394,30 @@ class AIService:
         context_text = "\n\n---\n\n".join(c["chunk_text"] for c in context_chunks)
 
         system_instruction = (
-            "Ты помощник для анализа документов. Отвечай на вопросы "
-            "основываясь ТОЛЬКО на тексте документа. Язык ответа: "
-            "русский. Если ответа нет в документе — скажи об этом."
+            "Ты — помощник для анализа официальных документов в системе ГосДок. "
+            "Отвечай на вопросы, опираясь ТОЛЬКО на предоставленный текст документа. "
+            "Если ответ отсутствует в документе — прямо сообщи об этом. "
+            "Язык ответа: соответствует языку вопроса пользователя (русский или казахский). "
+            "Ответы должны быть точными, конкретными и ссылаться на конкретные положения документа."
         )
 
-        prompt = (
-            f"Контекст из документа:\n\n{context_text}\n\n"
-            f"Вопрос пользователя: {message}"
-        ) if context_text else message
+        if context_text:
+            prompt = (
+                f"Фрагменты документа:\n\n{context_text}\n\n"
+                f"Вопрос: {message}"
+            )
+        else:
+            prompt = (
+                f"Документ не содержит проиндексированных фрагментов. "
+                f"Вопрос: {message}\n\n"
+                "Сообщи пользователю, что документ ещё не проиндексирован."
+            )
 
         reply = self._chat(
             system_instruction=system_instruction,
-            history=_build_gemini_history(chat_history),
+            history=chat_history,
             message=prompt,
+            max_output_tokens=2048,
         )
 
         return {
@@ -393,11 +431,7 @@ class AIService:
 
     def classify_document(self, document_id: str) -> dict:
         """
-        Классифицирует тип документа: contract / order / act / invoice /
-        report / letter / other.
-
-        Скачивает текст документа из S3, прогоняет через DocumentClassifier
-        и сохраняет результат в Document.metadata["classification"].
+        Классифицирует тип документа (TF-IDF + keyword fallback).
 
         Args:
             document_id: UUID строкой для documents.Document
@@ -449,46 +483,58 @@ class AIService:
         Общий AI ассистент с поддержкой RAG по документам кабинета.
 
         Алгоритм:
-          1. Ищет релевантные документы через search_documents() (top 3)
-          2. Если нашёл — использует их как контекст для ответа
-          3. Если не нашёл — отвечает как общий ассистент без контекста
+          1. Ищет релевантные документы (top 3)
+          2. Если нашёл — использует как контекст
+          3. Если нет — отвечает как общий ассистент
           4. Возвращает {"reply": str, "sources": list[dict]}
 
         Args:
             message:      текущее сообщение пользователя
-            workspace_id: UUID кабинета — контекст поиска
-            chat_history: предыдущие сообщения [{"role": "user"|"assistant", "content": "..."}]
+            workspace_id: UUID кабинета
+            chat_history: список {"role": "user"|"assistant", "content": "..."}
 
         Returns:
-            {"reply": str, "sources": [{"document_id", "title", "chunk_text", "score"}]}
+            {"reply": str, "sources": [...]}
         """
         system_instruction = (
-            "Ты AI ассистент для системы документооборота ГосДок. "
-            "Помогаешь пользователям работать с документами, "
-            "отвечаешь на вопросы, генерируешь документы по запросу. "
-            "Язык ответа: русский."
+            "Ты — умный AI ассистент системы ГосДок для государственных служащих РК. "
+            "Твои задачи:\n"
+            "• Отвечать на вопросы о документах кабинета, используя предоставленный контекст\n"
+            "• Помогать составлять и редактировать официальные документы\n"
+            "• Разъяснять требования делопроизводства РК\n"
+            "• Объяснять функции платформы ГосДок\n\n"
+            "Правила:\n"
+            "• Если вопрос касается конкретного документа — опирайся на предоставленный контекст\n"
+            "• Если контекста нет — отвечай как общий ассистент, но укажи это\n"
+            "• Отвечай на языке пользователя (русский или казахский)\n"
+            "• Давай конкретные, структурированные ответы"
         )
 
-        # Ищем релевантные документы через RAG
         sources = self.search_documents(message, workspace_id, top_k=3)
 
         if sources:
             context_parts = [
-                f"[{s['title']}]\n{s['chunk_text']}"
+                f"[Документ: {s['title']}]\n{s['chunk_text']}"
                 for s in sources
+                if s["score"] > 0.3
             ]
-            context_text = "\n\n---\n\n".join(context_parts)
-            prompt = (
-                f"Контекст из документов кабинета:\n\n{context_text}\n\n"
-                f"Запрос пользователя: {message}"
-            )
+            if context_parts:
+                context_text = "\n\n---\n\n".join(context_parts)
+                prompt = (
+                    f"Контекст из документов кабинета:\n\n{context_text}\n\n"
+                    f"Запрос пользователя: {message}"
+                )
+            else:
+                prompt = message
+                sources = []
         else:
             prompt = message
 
         reply = self._chat(
             system_instruction=system_instruction,
-            history=_build_gemini_history(chat_history),
+            history=chat_history,
             message=prompt,
+            max_output_tokens=2048,
         )
 
         return {
@@ -501,22 +547,17 @@ class AIService:
 # Вспомогательные функции
 # ------------------------------------------------------------------
 
-def _build_gemini_history(chat_history: list) -> list:
+def _build_claude_history(chat_history: list) -> list:
     """
-    Конвертирует chat_history из формата {"role": "user"|"assistant", "content": "..."}
-    в список types.Content для google-genai >= 1.0.
+    Конвертирует chat_history из {"role": "user"|"assistant", "content": "..."}
+    в формат messages для Claude API.
 
-    Gemini использует role="model" вместо "assistant".
+    Claude использует те же роли "user" и "assistant".
     """
     result = []
     for msg in chat_history:
-        role = "model" if msg["role"] == "assistant" else "user"
-        result.append(
-            types.Content(
-                role=role,
-                parts=[types.Part(text=msg["content"])],
-            )
-        )
+        role = "assistant" if msg["role"] == "assistant" else "user"
+        result.append({"role": role, "content": msg["content"]})
     return result
 
 
@@ -595,7 +636,7 @@ def _download_and_extract_text(document) -> str:
 
 def _parse_summary_response(text: str) -> dict:
     """
-    Разбирает ответ Gemini в формате РЕЗЮМЕ / КЛЮЧЕВЫЕ ТЕЗИСЫ.
+    Разбирает ответ Claude в формате РЕЗЮМЕ / КЛЮЧЕВЫЕ ТЕЗИСЫ.
     Возвращает {"summary": str, "key_points": list[str]}.
     При ошибке разбора — возвращает весь текст как summary.
     """
@@ -624,11 +665,11 @@ def _parse_summary_response(text: str) -> dict:
 def get_ai_service() -> AIService:
     """
     Фабрика: возвращает экземпляр AIService.
-    Бросает RuntimeError, если GEMINI_API_KEY не задан.
+    Бросает RuntimeError, если CLAUDE_API_KEY не задан.
     """
-    if not getattr(settings, "GEMINI_API_KEY", ""):
+    if not getattr(settings, "CLAUDE_API_KEY", ""):
         raise RuntimeError(
-            "GEMINI_API_KEY не настроен. "
+            "CLAUDE_API_KEY не настроен. "
             "Добавьте переменную окружения и перезапустите сервис."
         )
     return AIService()

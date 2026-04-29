@@ -100,6 +100,15 @@ const css = `
   .dm-deadline-btn.empty{border-color:#E5E7EB;color:#9CA3AF}
   .dm-deadline-btn.empty:hover{border-color:#2563EB;color:#2563EB;background:#EFF6FF}
 
+  /* Actions dropdown */
+  .dm-action-dd{position:absolute;top:calc(100% + 4px);right:0;background:#fff;border:.5px solid #E5E7EB;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);z-index:9700;min-width:120px;padding:4px 0}
+  .dm-action-dd-item{display:flex;align-items:center;gap:7px;padding:7px 12px;font-size:12.5px;color:#374151;cursor:pointer;font-family:inherit;background:none;border:none;width:100%;text-align:left;white-space:nowrap}
+  .dm-action-dd-item:hover{background:#F3F4F6}
+  .dm-action-dd-item.complete{color:#16A34A}
+  .dm-action-dd-item.complete:hover{background:#F0FDF4}
+  .dm-subtask-row.completed{background:#F0FDF4;border-color:#A7F3D0}
+  .dm-subtask-done{color:#16A34A;font-size:12px;font-weight:500;display:flex;align-items:center;gap:4px;white-space:nowrap;flex-shrink:0}
+
   /* Assignee picker */
   .dm-assignee-popup{position:absolute;top:calc(100% + 4px);right:0;background:#fff;border:.5px solid #E5E7EB;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.12);z-index:9500;width:200px;padding:8px 0}
   .dm-assignee-item{display:flex;align-items:center;gap:8px;padding:7px 12px;cursor:pointer;font-size:12.5px;color:#374151}
@@ -504,7 +513,7 @@ function DeadlinePicker({ value, onChange, onClose, pos, maxDate }) {
 /* ══════════════════════════════════════════════════════════
    SUBTASK ROW
 ══════════════════════════════════════════════════════════ */
-function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndClose, isFirst, members = [], maxDate }) {
+function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndClose, isFirst, members = [], maxDate, onComplete }) {
   const [showAssignee, setShowAssignee] = useState(false);
   const [showDl,       setShowDl]       = useState(false);
   const [dlPos,        setDlPos]        = useState({ top:0, left:0 });
@@ -520,19 +529,48 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
   };
 
   return (
-    <div className="dm-subtask-row">
+    <div className={`dm-subtask-row${subtask.status==="done"?" completed":""}`}>
       <span className="dm-subtask-num">{index + 1}</span>
       <input className="dm-subtask-name" placeholder="Task Name"
         value={subtask.name}
         onChange={e => onChange({ ...subtask, name: e.target.value })}
-        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); onSaveAndClose(); } }}/>
+        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); onSaveAndClose(); } }}
+        readOnly={subtask.status==="done"}
+        style={{ textDecoration:subtask.status==="done"?"line-through":"none", color:subtask.status==="done"?"#6B7280":"#374151" }}/>
 
-      {/* Action / Edit button */}
-      <button className={`dm-action-btn${subtask.mode==="edit"?" edit-mode":""}`}
-        onClick={() => onChange({ ...subtask, mode: subtask.mode==="edit"?"action":"edit" })}>
-        {subtask.mode==="edit" ? "Edit" : "Action"}
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="10" height="10"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
+      {/* Actions dropdown */}
+      <div style={{ position:"relative" }}>
+        {subtask.status === "done"
+          ? <span className="dm-subtask-done">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg>
+              Completed
+            </span>
+          : <>
+              <button className={`dm-action-btn${subtask.mode==="edit"?" edit-mode":""}`}
+                onClick={() => onChange({ ...subtask, showActionDd: !subtask.showActionDd })}>
+                Actions
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="10" height="10"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              {subtask.showActionDd && (
+                <>
+                  <div style={{ position:"fixed",inset:0,zIndex:9600 }} onClick={() => onChange({ ...subtask, showActionDd: false })}/>
+                  <div className="dm-action-dd">
+                    <button className="dm-action-dd-item"
+                      onClick={() => onChange({ ...subtask, mode:"edit", showActionDd: false })}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      Edit
+                    </button>
+                    <button className="dm-action-dd-item complete"
+                      onClick={() => { onChange({ ...subtask, showActionDd: false }); onComplete && onComplete(subtask); }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" width="13" height="13"><polyline points="20 6 9 17 4 12"/></svg>
+                      Completed
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+        }
+      </div>
 
       {/* Calendar / Deadline */}
       <div style={{ position:"relative" }}>
@@ -610,7 +648,7 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
 /* ══════════════════════════════════════════════════════════
    WORKFLOW TAB
 ══════════════════════════════════════════════════════════ */
-function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploaderName = "" }) {
+function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploaderName = "", subtasks = [] }) {
   const rawMembers = Array.isArray(members) ? members : (members?.results ?? []);
   const rawSigs    = Array.isArray(signatures) ? signatures : (signatures?.results ?? []);
 
@@ -735,6 +773,49 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
                   }
                 </div>
               ))}
+
+              {/* Legal Review subtask tracker (Review stage only) */}
+              {si === 1 && (() => {
+                const stList = subtasks.filter(st => st.name?.trim());
+                if (stList.length === 0) return null;
+                const doneCnt  = stList.filter(st => st.status === "done").length;
+                const totalCnt = stList.length;
+                const pct      = Math.round((doneCnt / totalCnt) * 100);
+                return (
+                  <div style={{ marginTop: stage.sub.length ? 10 : 0 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, marginBottom:5 }}>
+                      <span style={{ color:"#374151", fontWeight:600 }}>Legal Review Subtasks</span>
+                      <span style={{ color:"#2563EB", fontWeight:700 }}>{doneCnt}/{totalCnt} ({pct}%)</span>
+                    </div>
+                    <div className="wf-progress" style={{ marginBottom:8 }}>
+                      <div className="wf-progress-fill" style={{ width:`${pct}%`, transition:"width .3s" }}/>
+                    </div>
+                    {stList.map((st, idx) => (
+                      <div key={st.id || idx} style={{
+                        display:"flex", alignItems:"center", gap:8,
+                        padding:"5px 10px", marginBottom:4, borderRadius:8,
+                        background: st.status==="done" ? "#F0FDF4" : "#F9FAFB",
+                        border: `1px solid ${st.status==="done" ? "#A7F3D0" : "#E5E7EB"}`,
+                      }}>
+                        <div style={{
+                          width:20, height:20, borderRadius:"50%", flexShrink:0,
+                          background: st.status==="done" ? "#10B981" : "#E5E7EB",
+                          display:"flex", alignItems:"center", justifyContent:"center",
+                        }}>
+                          {st.status==="done"
+                            ? <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" width="10" height="10"><polyline points="20 6 9 17 4 12"/></svg>
+                            : <span style={{ fontSize:9, fontWeight:700, color:"#6B7280" }}>{idx+1}</span>
+                          }
+                        </div>
+                        <span style={{ fontSize:12, flex:1, color: st.status==="done" ? "#065F46" : "#374151",
+                          textDecoration: st.status==="done" ? "line-through" : "none" }}>
+                          {st.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               {stage.sub.length === 0 && !isLast && (
                 <div style={{ fontSize:12, color:"#9CA3AF", marginBottom:4 }}>
@@ -870,6 +951,7 @@ function ActivityPanel({ comments, onComment, apiComments }) {
 ══════════════════════════════════════════════════════════ */
 function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole = null }) {
   const qc = useQueryClient();
+  const user = useAuthStore(s => s.user);
   const docId = doc?.id;
   const workspaceId = doc?.workspace?.id || doc?.workspace;
   const isEditor = userRole === "editor";
@@ -925,7 +1007,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   const dueBtnRef = useRef(null);
   const [desc,       setDesc]       = useState("");
   const [attachments,setAttachments]= useState([]);
-  const [subtasks,   setSubtasks]   = useState([{ id:1, name:"", mode:"action", assignee:null, deadline:null }]);
+  const [subtasks,   setSubtasks]   = useState([{ id:1, name:"", mode:"action", assignee:null, deadline:null, status:"pending" }]);
   const [activeTab,  setActiveTab]  = useState("task");
   const [comments,   setComments]   = useState([]);
   const [title,      setTitle]      = useState(doc?.title || doc?.name || "");
@@ -954,10 +1036,11 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
           ? apiSubtasks.map(st => ({
               id: st.id, _apiId: st.id,
               name: st.title, mode: "action",
+              status: st.status || "pending",
               assignee: st.assignee ? { id: st.assignee, name: st.assignee_name } : null,
               deadline: st.deadline,
             }))
-          : [{ id: 1, _apiId: null, name: "", mode: "action", assignee: null, deadline: null }]
+          : [{ id: 1, _apiId: null, name: "", mode: "action", assignee: null, deadline: null, status: "pending" }]
       );
     }
   }, [apiSubtasks]);
@@ -976,7 +1059,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   }, [apiAttachments]);
 
   // Snapshot for cancel
-  const snapshot = useRef({ status:"TO DO", priority:"Empty", assignee:null, dueDate:null, desc:"", title:doc?.title||doc?.name||"", subtasks:[{id:1,name:"",mode:"action",assignee:null,deadline:null}], attachments:[] });
+  const snapshot = useRef({ status:"TO DO", priority:"Empty", assignee:null, dueDate:null, desc:"", title:doc?.title||doc?.name||"", subtasks:[{id:1,name:"",mode:"action",assignee:null,deadline:null,status:"pending"}], attachments:[] });
 
   const handleSave = async () => {
     if (saving || isEditor) return;
@@ -1039,13 +1122,36 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   };
 
   const addSubtask = () => {
-    setSubtasks(s => [...s, { id: Date.now(), _apiId: null, name:"", mode:"action", assignee:null, deadline:null }]);
+    setSubtasks(s => [...s, { id: Date.now(), _apiId: null, name:"", mode:"action", assignee:null, deadline:null, status:"pending" }]);
   };
   const updateSubtask = (id, data) => setSubtasks(s => s.map(x => x.id===id ? {...x,...data} : x));
   const deleteSubtask = (id) => {
     const st = subtasks.find(s => s.id === id);
     if (st?._apiId) setDeletedSubtaskIds(ids => [...ids, st._apiId]);
     setSubtasks(s => s.filter(x => x.id !== id));
+  };
+
+  const handleCompleteSubtask = async (subtask) => {
+    const now = new Date();
+    const time = now.toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit" });
+    const userName = user?.full_name || "You";
+    const msg = `${userName} completed subtask: "${subtask.name}"`;
+
+    updateSubtask(subtask.id, { status: "done" });
+    setComments(c => [...c, { text: msg, time, isSystem: true }]);
+
+    if (subtask._apiId && docId) {
+      try {
+        await apiUpdateSubtask(docId, subtask._apiId, { status: "done" });
+        try { await apiAddComment(docId, { content: msg, document: docId }); } catch {}
+        qc.invalidateQueries({ queryKey: ["subtasks", docId] });
+        qc.invalidateQueries({ queryKey: ["comments", docId] });
+        toast.success("Subtask completed");
+      } catch {
+        updateSubtask(subtask.id, { status: "pending" });
+        toast.error("Failed to update subtask");
+      }
+    }
   };
 
   const handleFileUpload = async (e) => {
@@ -1332,16 +1438,56 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                   </div>
                   {isEditor
                     ? subtasks.filter(st => st.name?.trim()).map((st, i) => (
-                        <div key={st.id} style={{ display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:".5px solid #F3F4F6" }}>
-                          <span style={{ fontSize:12,color:"#9CA3AF",minWidth:18 }}>{i + 1}</span>
-                          <span style={{ flex:1,fontSize:13,color:"#374151",fontWeight:500 }}>{st.name}</span>
+                        <div key={st.id} className={`dm-subtask-row${st.status==="done"?" completed":""}`}>
+                          <span className="dm-subtask-num">{i + 1}</span>
+                          {st.mode === "edit"
+                            ? <input className="dm-subtask-name" value={st.name}
+                                autoFocus
+                                onChange={e => updateSubtask(st.id, { name: e.target.value })}
+                                onKeyDown={e => { if (e.key==="Enter") updateSubtask(st.id, { mode:"action" }); }}/>
+                            : <span style={{ flex:1,fontSize:13,fontWeight:500,
+                                color:st.status==="done"?"#6B7280":"#374151",
+                                textDecoration:st.status==="done"?"line-through":"none" }}>
+                                {st.name}
+                              </span>
+                          }
                           {st.deadline && (
-                            <span style={{ fontSize:11,color:"#6B7280",display:"flex",alignItems:"center",gap:4 }}>
+                            <span style={{ fontSize:11,color:"#6B7280",display:"flex",alignItems:"center",gap:4,flexShrink:0 }}>
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
                               {fmtDeadline(st.deadline)}
                             </span>
                           )}
                           {st.assignee && <MiniAv member={st.assignee} size={22}/>}
+                          {st.status === "done"
+                            ? <span className="dm-subtask-done">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg>
+                                Completed
+                              </span>
+                            : <div style={{ position:"relative" }}>
+                                <button className="dm-action-btn"
+                                  onClick={() => updateSubtask(st.id, { showActionDd: !st.showActionDd })}>
+                                  Actions
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="10" height="10"><polyline points="6 9 12 15 18 9"/></svg>
+                                </button>
+                                {st.showActionDd && (
+                                  <>
+                                    <div style={{ position:"fixed",inset:0,zIndex:9600 }} onClick={() => updateSubtask(st.id, { showActionDd: false })}/>
+                                    <div className="dm-action-dd">
+                                      <button className="dm-action-dd-item"
+                                        onClick={() => updateSubtask(st.id, { mode:"edit", showActionDd: false })}>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                        Edit
+                                      </button>
+                                      <button className="dm-action-dd-item complete"
+                                        onClick={() => { updateSubtask(st.id, { showActionDd: false }); handleCompleteSubtask(st); }}>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" width="13" height="13"><polyline points="20 6 9 17 4 12"/></svg>
+                                        Completed
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                          }
                         </div>
                       ))
                     : subtasks.map((st, i) => (
@@ -1351,6 +1497,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                           onDelete={() => deleteSubtask(st.id)}
                           onAddNext={addSubtask}
                           onSaveAndClose={() => { handleSave(); setTimeout(onClose, 300); }}
+                          onComplete={handleCompleteSubtask}
                           members={membersList}
                           maxDate={dueDate}/>
                       ))
@@ -1365,6 +1512,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                 signatures={signaturesData}
                 docStatus={apiDoc?.status || doc?.status}
                 uploaderName={apiDoc?.uploaded_by_name || ""}
+                subtasks={subtasks}
               />
             )}
           </div>
@@ -2539,6 +2687,15 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   const [showModal, setShowModal] = useState(false);
   const [selected,  setSelected]  = useState(null);
   const [selectedDoc, setSelectedDoc] = useState(null);
+  const [wsDropOpen, setWsDropOpen] = useState(false);
+  const wsDropRef = useRef(null);
+
+  useEffect(() => {
+    if (!wsDropOpen) return;
+    const h = (e) => { if (wsDropRef.current && !wsDropRef.current.contains(e.target)) setWsDropOpen(false); };
+    setTimeout(() => document.addEventListener("mousedown", h), 0);
+    return () => document.removeEventListener("mousedown", h);
+  }, [wsDropOpen]);
 
   const { data: wsData, isLoading: wsLoading } = useQuery({
     queryKey: ["workspaces"],
@@ -2671,11 +2828,44 @@ export default function Projects({ onGoToAuth, onNavigate }) {
             <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{user?.full_name || "—"}</div>
             <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>{user?.email || ""}</div>
           </div>
-          <div className="pr-org">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{orgName}</span>
-            <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+          <div ref={wsDropRef} style={{ position:"relative" }}>
+            <div className="pr-org" onClick={() => setWsDropOpen(v=>!v)}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{orgName}</span>
+              <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"
+                style={{ transform:wsDropOpen?"rotate(180deg)":"none",transition:"transform .2s" }}>
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+            {wsDropOpen && (
+              <div style={{ position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:"#fff",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:200,overflow:"hidden",border:"1px solid #F3F4F6" }}>
+                <div style={{ padding:"6px 12px 4px",fontSize:10.5,color:"#9CA3AF",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>
+                  Switch Workplaces
+                </div>
+                {allWs.map((ws) => (
+                  <div key={ws.id}
+                    onClick={() => { setWsDropOpen(false); onNavigate?.(`organization/${ws.id}`); }}
+                    style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 14px",fontSize:13,cursor:"pointer",color:"#374151",borderTop:".5px solid #F9FAFB" }}
+                    onMouseEnter={e=>e.currentTarget.style.background="#F9FAFB"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div style={{ width:22,height:22,borderRadius:6,background:"#DBEAFE",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="12" height="12"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                    </div>
+                    <span style={{ flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{ws.title}</span>
+                  </div>
+                ))}
+                <div style={{ borderTop:"1px solid #F3F4F6" }}>
+                  <div onClick={() => { setWsDropOpen(false); setShowModal(true); }}
+                    style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 14px",fontSize:13,cursor:"pointer",color:"#2563EB",fontWeight:500 }}
+                    onMouseEnter={e=>e.currentTarget.style.background="#EFF6FF"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Create Workplace
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div className="pr-navlist">
             {NAV.map((n,i) => (

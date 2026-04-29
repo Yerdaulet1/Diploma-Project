@@ -28,7 +28,11 @@
       "Bash(xargs -I{} basename {})",
       "Bash(npm run *)",
       "Bash(node -e \"const en=require\\('./src/i18n/en.json'\\);const ru=require\\('./src/i18n/ru.json'\\);const kk=require\\('./src/i18n/kk.json'\\);console.log\\('EN keys:',Object.keys\\(en\\).length,'RU keys:',Object.keys\\(ru\\).length,'KK keys:',Object.keys\\(kk\\).length\\);console.log\\('EN projects.documentTitle:',en.projects.documentTitle\\);console.log\\('RU documents.createDocument:',ru.documents.createDocument\\);console.log\\('KK timeline.unscheduled:',kk.timeline.unscheduled\\)\")",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "Bash(node --input-type=module)",
+      "PowerShell(python --version 2>&1)",
+      "PowerShell(python -c \"import fitz; print\\('PyMuPDF available'\\)\" 2>&1)",
+      "PowerShell(python -c \"from pdf2image import convert_from_path; print\\('pdf2image available'\\)\" 2>&1)"
     ]
   }
 }
