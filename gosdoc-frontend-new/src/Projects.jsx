@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import useSidebarOpen from "./hooks/useSidebarOpen";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -988,9 +989,9 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
     enabled: !!docId,
   });
   const membersList = (membersData?.results ?? (Array.isArray(membersData) ? membersData : [])).map((m, i) => ({
-    id: m.user?.id || m.id,
-    name: m.user?.full_name || m.user?.email || "Member",
-    initials: (m.user?.full_name || "M").split(" ").map(p => p[0]).join("").toUpperCase().slice(0, 2),
+    id: m.user || m.id,
+    name: m.user_name || m.user_email || "Member",
+    initials: (m.user_name || m.user_email || "M").split(" ").map(p => p[0]).join("").toUpperCase().slice(0, 2),
     color: AV_COLORS_MEMBERS[i % AV_COLORS_MEMBERS.length],
   }));
 
@@ -2361,11 +2362,11 @@ function ManageMembersModal({ project, onClose }) {
               : existing.map((m, i) => (
                   <div key={i} style={{ display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:".5px solid #F3F4F6" }}>
                     <div style={{ width:32,height:32,borderRadius:"50%",background:AV_COLORS[i%AV_COLORS.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0 }}>
-                      {(m.user?.full_name||m.user?.email||"?")[0].toUpperCase()}
+                      {(m.user_name||m.user_email||"?")[0].toUpperCase()}
                     </div>
                     <div style={{ flex:1,minWidth:0 }}>
-                      <div style={{ fontSize:13,fontWeight:500,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{m.user?.full_name||"—"}</div>
-                      <div style={{ fontSize:11,color:"#9CA3AF" }}>{m.user?.email||""}</div>
+                      <div style={{ fontSize:13,fontWeight:500,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{m.user_name||"—"}</div>
+                      <div style={{ fontSize:11,color:"#9CA3AF" }}>{m.user_email||""}</div>
                     </div>
                     <span style={{ fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20,background:"#EEF2FF",color:"#4F46E5" }}>
                       {roleLabel[m.role]||m.role}
@@ -2415,7 +2416,7 @@ function ProjectDetail({ project }) {
     enabled: !!project.id,
   });
   const rawProjectMembers = projectMembers?.results ?? (Array.isArray(projectMembers) ? projectMembers : []);
-  const currentUserRole = rawProjectMembers.find(m => (m.user?.id || m.id) === user?.id)?.role || null;
+  const currentUserRole = rawProjectMembers.find(m => String(m.user || m.id) === String(user?.id))?.role || null;
 
   const dsc=(s)=>docStatusClass(s);
   return (
@@ -2680,7 +2681,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const user = useAuthStore(s => s.user);
-  const [sbOpen,    setSbOpen]    = useState(true);
+  const [sbOpen, toggleSb] = useSidebarOpen();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
   const [tab,       setTab]       = useState("managed");
@@ -2753,7 +2754,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
       {selectedDoc && <DocumentModal doc={selectedDoc} projectName="Assigned Documents" onClose={() => setSelectedDoc(null)} readOnly={true}/>}
 
       {/* Mobile overlay */}
-      <div className={`pr-sb-overlay${sbOpen ? " show" : ""}`} onClick={() => setSbOpen(false)}/>
+      <div className={`pr-sb-overlay${sbOpen ? " show" : ""}`} onClick={toggleSb}/>
 
       {/* ── HEADER ── */}
       <header className="pr-topbar">
@@ -2814,7 +2815,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
         {/* ── SIDEBAR ── */}
         <aside className={`pr-sb${!sbOpen ? " closed" : ""}`}>
           <div className="pr-profile">
-            <button className="pr-toggle" onClick={() => setSbOpen(v => !v)}>
+            <button className="pr-toggle" onClick={toggleSb}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
             </button>
             <div className="pr-avatar">

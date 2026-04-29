@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import useSidebarOpen from "./hooks/useSidebarOpen";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import ProfileController, { ProfileMenu } from "./Profile";
@@ -565,7 +566,7 @@ export default function HelpSupport({ onGoToAuth, onNavigate }) {
   const orgName = wsData?.results?.[0]?.title || wsData?.[0]?.title || "Organization";
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
-  const [sbOpen, setSbOpen] = useState(true);
+  const [sbOpen, toggleSb] = useSidebarOpen();
 
   const topicTitle = selectedTopic ? TOPICS.find(tp => tp.id === selectedTopic)?.title : null;
 
@@ -624,7 +625,7 @@ export default function HelpSupport({ onGoToAuth, onNavigate }) {
         {/* SIDEBAR */}
         <aside className={`hs-sb${sbOpen ? " open" : ""}`}>
           <div className="hs-profile">
-            <button className="hs-toggle" onClick={() => setSbOpen(v => !v)}>
+            <button className="hs-toggle" onClick={toggleSb}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
             </button>
             <div className="hs-avatar">

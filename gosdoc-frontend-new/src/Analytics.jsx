@@ -1,4 +1,5 @@
 import { useState } from "react";
+import useSidebarOpen from "./hooks/useSidebarOpen";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -237,7 +238,7 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
   const { t } = useTranslation();
   const { user } = useAuthStore();
   const qc = useQueryClient();
-  const [sbOpen, setSbOpen] = useState(true);
+  const [sbOpen, toggleSb] = useSidebarOpen();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
   const [selectedReport, setSelectedReport] = useState(null);
@@ -324,7 +325,7 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
         {/* SIDEBAR */}
         <aside className={`an-sb${sbOpen ? " open" : ""}`}>
           <div className="an-profile">
-            <button className="an-toggle" onClick={() => setSbOpen(v => !v)}>
+            <button className="an-toggle" onClick={toggleSb}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
             </button>
             <div className="an-avatar">

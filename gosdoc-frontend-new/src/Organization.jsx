@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import useSidebarOpen from "./hooks/useSidebarOpen";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -252,7 +253,7 @@ export default function Organization({ onNavigate, onGoToAuth }) {
   const user = useAuthStore(s => s.user);
   const qc   = useQueryClient();
 
-  const [sbOpen,         setSbOpen]         = useState(true);
+  const [sbOpen, toggleSb] = useSidebarOpen();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView,    setProfileView]    = useState(null);
   const [showInvite,     setShowInvite]     = useState(false);
@@ -384,7 +385,7 @@ export default function Organization({ onNavigate, onGoToAuth }) {
         {/* ── SIDEBAR ── */}
         <aside className={`org-sb${!sbOpen ? " closed" : ""}`}>
           <div className="org-profile">
-            <button className="org-toggle" onClick={() => setSbOpen(v=>!v)}>
+            <button className="org-toggle" onClick={toggleSb}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
             </button>
             <div className="org-av">
@@ -531,10 +532,10 @@ export default function Organization({ onNavigate, onGoToAuth }) {
                         )}
                         {members.map((m, i) => {
                           const memberId = m.id;
-                          const name  = m.user?.full_name || m.user?.email || "—";
-                          const email = m.user?.email || "—";
+                          const name  = m.user_name || m.user_email || "—";
+                          const email = m.user_email || "—";
                           const role  = m.role || "viewer";
-                          const isMe  = m.user?.id === user?.id;
+                          const isMe  = String(m.user) === String(user?.id);
                           return (
                             <tr key={memberId || i}>
                               <td style={{ color:"#9CA3AF" }}>{i+1}</td>

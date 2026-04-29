@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import useSidebarOpen from "./hooks/useSidebarOpen";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -1088,7 +1089,7 @@ function SignaturePadModal({ existingSignature, onSave, onClose }) {
 ══════════════════════════════════════════════════════════ */
 export default function Documents({ onGoToAuth, onNavigate }) {
   const { t } = useTranslation();
-  const [sbOpen,          setSbOpen]         = useState(false);
+  const [sbOpen, toggleSb] = useSidebarOpen();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView,     setProfileView]     = useState(null);
   const [view,            setView]            = useState("list");
@@ -1381,7 +1382,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
         {/* ── SIDEBAR ── */}
         <aside className={`dc-sb${!sbOpen?" closed":""}`}>
           <div className="dc-profile">
-            <button className="dc-toggle" onClick={()=>setSbOpen(v=>!v)}>
+            <button className="dc-toggle" onClick={toggleSb}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
             </button>
             <div className="dc-av">

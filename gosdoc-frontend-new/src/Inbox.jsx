@@ -8,6 +8,7 @@ import { getTasks, completeTask, skipTask } from "./api/tasks";
 import { getWorkspaces } from "./api/workspaces";
 import useAuthStore from "./store/authStore";
 import CreateWorkspaceModal from "./CreateWorkspaceModal";
+import useSidebarOpen from "./hooks/useSidebarOpen";
 
 /* ══════════════════════════════════════════════════════════
    DATA
@@ -633,7 +634,7 @@ const css = `
 ══════════════════════════════════════════════════════════ */
 export default function Inbox({ onGoToAuth, onNavigate }) {
   const { t } = useTranslation();
-  const [sbOpen,        setSbOpen]        = useState(false);
+  const [sbOpen, toggleSb] = useSidebarOpen();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView,   setProfileView]   = useState(null);
   const [tab,           setTab]           = useState("incoming");
@@ -762,7 +763,7 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
 
       {/* ── HEADER ── */}
       <header className="ib-topbar">
-        <button className="ib-hamburger" onClick={()=>setSbOpen(v=>!v)}
+        <button className="ib-hamburger" onClick={()=>toggleSb()}
           style={{ display:"none",width:36,height:36,border:"none",background:"none",color:"#6B7280",alignItems:"center",justifyContent:"center",borderRadius:8,flexShrink:0 }}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
@@ -804,7 +805,7 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
       </header>
 
       {/* sidebar overlay mobile */}
-      {sbOpen && <div onClick={()=>setSbOpen(false)} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:15 }}/>}
+      {sbOpen && <div onClick={toggleSb} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:15 }}/>}
 
       {/* ── BODY ── */}
       <div className="ib-body">
@@ -812,7 +813,7 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
         {/* ── SIDEBAR ── */}
         <aside className={`ib-sb${sbOpen?" open":""}`}>
           <div className="ib-profile">
-            <button className="ib-toggle" onClick={()=>setSbOpen(v=>!v)}>
+            <button className="ib-toggle" onClick={()=>toggleSb()}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
             </button>
             <div className="ib-avatar">
