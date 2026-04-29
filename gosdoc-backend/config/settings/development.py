@@ -1,5 +1,5 @@
 """
-ГосДок — Настройки для разработки (config/settings/development.py)
+eDoc — Настройки для разработки (config/settings/development.py)
 """
 
 from .base import *  # noqa: F401, F403
