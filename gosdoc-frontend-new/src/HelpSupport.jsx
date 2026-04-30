@@ -102,7 +102,7 @@ const css = `
   .hs-sb.open .hs-addbtn{width:100%;justify-content:flex-start;padding:0 14px}
   .hs-addbtn:hover{background:#1D4ED8}
   .hs-addbtn-plus{transition:transform .28s;flex-shrink:0}
-  .hs-sb.open .hs-addbtn-plus{transform:rotate(45deg)}
+  .hs-sb.open .hs-addbtn-plus{transform:rotate(180deg)}
   .hs-addbtn-label{display:none;white-space:nowrap}
   .hs-sb.open .hs-addbtn-label{display:block}
 

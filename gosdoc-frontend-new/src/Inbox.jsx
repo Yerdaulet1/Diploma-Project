@@ -595,7 +595,7 @@ const css = `
   .ib-addbtn{width:42px;height:42px;background:#2563EB;color:#fff;border:none;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;font-family:inherit;overflow:hidden;transition:width .28s cubic-bezier(.4,0,.2,1);flex-shrink:0;padding:0}
   .ib-sb.open .ib-addbtn{width:100%;border-radius:10px;justify-content:flex-start;padding:0 14px}
   .ib-addbtn-plus{transition:transform .28s;flex-shrink:0}
-  .ib-sb.open .ib-addbtn-plus{transform:rotate(45deg)}
+  .ib-sb.open .ib-addbtn-plus{transform:rotate(180deg)}
   .ib-addbtn-label{display:none;white-space:nowrap}
   .ib-sb.open .ib-addbtn-label{display:block}
 

@@ -64,7 +64,7 @@ const docCss = `
   .dc-sb:not(.closed) .dc-addbtn{width:100%;justify-content:flex-start;padding:0 14px}
   .dc-addbtn:hover{background:#1D4ED8}
   .dc-addbtn-plus{transition:transform .28s;flex-shrink:0}
-  .dc-sb:not(.closed) .dc-addbtn-plus{transform:rotate(45deg)}
+  .dc-sb:not(.closed) .dc-addbtn-plus{transform:rotate(180deg)}
   .dc-addbtn-label{display:none;white-space:nowrap}
   .dc-sb:not(.closed) .dc-addbtn-label{display:block}
 

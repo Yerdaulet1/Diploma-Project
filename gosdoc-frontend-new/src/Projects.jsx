@@ -1595,7 +1595,7 @@ const prCss = `
   .pr-sb:not(.closed) .pr-addbtn{width:100%;justify-content:flex-start;padding:0 14px}
   .pr-addbtn:hover{background:#1D4ED8}
   .pr-addbtn-plus{transition:transform .28s;flex-shrink:0}
-  .pr-sb:not(.closed) .pr-addbtn-plus{transform:rotate(45deg)}
+  .pr-sb:not(.closed) .pr-addbtn-plus{transform:rotate(180deg)}
   .pr-addbtn-label{display:none;white-space:nowrap}
   .pr-sb:not(.closed) .pr-addbtn-label{display:block}
 

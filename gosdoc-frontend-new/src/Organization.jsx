@@ -59,7 +59,7 @@ const orgCss = `
   .org-sb:not(.closed) .org-addbtn{width:100%;justify-content:flex-start;padding:0 14px}
   .org-addbtn:hover{background:#1D4ED8}
   .org-addbtn-plus{transition:transform .28s;flex-shrink:0}
-  .org-sb:not(.closed) .org-addbtn-plus{transform:rotate(45deg)}
+  .org-sb:not(.closed) .org-addbtn-plus{transform:rotate(180deg)}
   .org-addbtn-label{display:none;white-space:nowrap}
   .org-sb:not(.closed) .org-addbtn-label{display:block}
 

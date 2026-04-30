@@ -58,7 +58,7 @@ const css = `
   .nt-sb.open .nt-addbtn{width:100%;justify-content:flex-start;padding:0 14px}
   .nt-addbtn:hover{background:#1D4ED8}
   .nt-addbtn-plus{transition:transform .28s;flex-shrink:0}
-  .nt-sb.open .nt-addbtn-plus{transform:rotate(45deg)}
+  .nt-sb.open .nt-addbtn-plus{transform:rotate(180deg)}
   .nt-addbtn-label{display:none;white-space:nowrap}
   .nt-sb.open .nt-addbtn-label{display:block}
 
