@@ -6,6 +6,10 @@ import App from "./App";
 import "./index.css";
 import "./i18n";
 
+// Применяем сохранённую тему ДО рендера, чтобы не было вспышки
+const savedTheme = localStorage.getItem("gosdoc_theme") || "light";
+document.documentElement.setAttribute("data-theme", savedTheme);
+
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <QueryProvider>

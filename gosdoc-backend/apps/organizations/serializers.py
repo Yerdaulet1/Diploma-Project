@@ -44,6 +44,12 @@ class InviteMemberSerializer(serializers.Serializer):
     """Приглашение пользователя в организацию по email."""
 
     email = serializers.EmailField(required=True)
+    workspace_id = serializers.UUIDField(required=False, allow_null=True)
+    role = serializers.ChoiceField(
+        choices=["owner", "editor", "signer", "viewer"],
+        default="viewer",
+        required=False,
+    )
 
     def validate_email(self, value):
         if not User.objects.filter(email=value, is_active=True).exists():

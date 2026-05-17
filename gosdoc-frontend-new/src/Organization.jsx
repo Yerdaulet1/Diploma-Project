@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import {
-  getWorkspace, getMembers, addMember, removeMember, updateMember, getWorkspaces,
+  getWorkspace, getMembers, removeMember, updateMember, getWorkspaces, inviteToWorkspace,
 } from "./api/workspaces";
 import useAuthStore from "./store/authStore";
 import logoImg from "./assets/Group 2.svg";
@@ -117,7 +117,6 @@ const NAV_ITEMS = [
 
 /* ── INVITE MODAL ──────────────────────────────────────────── */
 function InviteModal({ workspaceId, onClose }) {
-  const qc = useQueryClient();
   const [rows, setRows]     = useState([{ email: "", role: "editor" }]);
   const [loading, setLoading] = useState(false);
 
@@ -127,15 +126,18 @@ function InviteModal({ workspaceId, onClose }) {
 
   const submit = async () => {
     const valid = rows.filter(r => r.email.trim() && /\S+@\S+\.\S+/.test(r.email));
-    if (!valid.length) { toast.error("Enter at least one valid email"); return; }
+    if (!valid.length) { toast.error("Введите хотя бы один корректный email"); return; }
     setLoading(true);
     const results = await Promise.allSettled(
-      valid.map(r => addMember(workspaceId, { email: r.email.trim(), role: r.role }))
+      valid.map(r => inviteToWorkspace(workspaceId, r.email.trim(), r.role))
     );
-    const failed = results.filter(r => r.status === "rejected").length;
-    if (failed) toast.error(`${failed} invite(s) failed`);
-    else toast.success("Members invited!");
-    qc.invalidateQueries({ queryKey: ["members", workspaceId] });
+    const failed  = results.filter(r => r.status === "rejected");
+    const success = results.filter(r => r.status === "fulfilled").length;
+    if (failed.length) {
+      const msg = failed[0]?.reason?.response?.data?.detail || `${failed.length} приглашение(й) не отправлено`;
+      toast.error(msg);
+    }
+    if (success) toast.success("Приглашение отправлено! Пользователь увидит его в Inbox.");
     setLoading(false);
     onClose();
   };

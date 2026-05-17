@@ -36,6 +36,7 @@ from .views import (
     AttachmentListCreateView,
     AttachmentRequestUploadView,
     AttachmentServerUploadView,
+    BlockchainView,
     CommentListCreateView,
     DocumentApproveView,
     DocumentContentView,
@@ -133,4 +134,7 @@ urlpatterns = [
         AttachmentDownloadView.as_view(),
         name="document-attachment-download",
     ),
+
+    # ---- Blockchain верификация ----
+    path("<uuid:pk>/blockchain/", BlockchainView.as_view(), name="document-blockchain"),
 ]

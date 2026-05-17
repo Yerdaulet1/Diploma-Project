@@ -3,6 +3,8 @@
 Base URL: https://api.gosdoc.gov.kz
 """
 
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
@@ -24,6 +26,7 @@ urlpatterns = [
     path("api/v1/reports/", include("apps.reports.urls")),
     path("api/v1/ai/", include("apps.ai.urls")),
     path("api/v1/help/", include("apps.core.urls")),
+    path("api/v1/search/", include("apps.core.search_urls")),
 
     # ---- OpenAPI / Swagger (раздел 9 ТЗ: /api/schema/swagger-ui/) ----
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
@@ -32,4 +35,4 @@ urlpatterns = [
         SpectacularSwaggerView.as_view(url_name="schema"),
         name="swagger-ui",
     ),
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

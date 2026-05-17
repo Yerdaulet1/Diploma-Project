@@ -30,3 +30,15 @@ export const removeMember = (workspaceId, userId) =>
   api
     .delete(`/workspaces/${workspaceId}/members/${userId}/`)
     .then((r) => r.data);
+
+export const inviteToWorkspace = (workspaceId, email, role = "viewer") =>
+  api.post(`/workspaces/${workspaceId}/invite/`, { email, role }).then((r) => r.data);
+
+export const getPendingWorkspaceInvitations = () =>
+  api.get("/workspaces/invitations/pending/").then((r) => r.data);
+
+export const acceptWorkspaceInvitation = (workspaceId, invId) =>
+  api.post(`/workspaces/${workspaceId}/invitations/${invId}/accept/`).then((r) => r.data);
+
+export const declineWorkspaceInvitation = (workspaceId, invId) =>
+  api.post(`/workspaces/${workspaceId}/invitations/${invId}/decline/`).then((r) => r.data);

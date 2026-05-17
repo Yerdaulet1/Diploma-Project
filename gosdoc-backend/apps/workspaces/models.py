@@ -146,3 +146,42 @@ class WorkspaceMember(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user} → {self.workspace} [{self.get_role_display()}]"
+
+
+class WorkspaceInvitation(models.Model):
+    class Status(models.TextChoices):
+        PENDING  = "pending",  "Ожидает"
+        ACCEPTED = "accepted", "Принята"
+        DECLINED = "declined", "Отклонена"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE,
+        related_name="workspace_invitations", verbose_name="Кабинет",
+    )
+    invitee = models.ForeignKey(
+        "users.User", on_delete=models.CASCADE,
+        related_name="workspace_invitations", verbose_name="Приглашённый",
+    )
+    inviter = models.ForeignKey(
+        "users.User", on_delete=models.CASCADE,
+        related_name="sent_workspace_invitations", verbose_name="Пригласивший",
+    )
+    role = models.CharField(
+        max_length=20,
+        choices=WorkspaceMember.Role.choices,
+        default=WorkspaceMember.Role.VIEWER,
+        verbose_name="Роль",
+    )
+    status = models.CharField(
+        max_length=20, choices=Status.choices,
+        default=Status.PENDING, verbose_name="Статус", db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "workspace_invitations"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.invitee} → {self.workspace} [{self.status}]"

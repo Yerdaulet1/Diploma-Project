@@ -6,7 +6,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import Workspace, WorkspaceMember
+from .models import Workspace, WorkspaceMember, WorkspaceInvitation
 
 User = get_user_model()
 
@@ -137,14 +137,18 @@ class WorkspaceSerializer(serializers.ModelSerializer):
 
 class WorkspaceListSerializer(serializers.ModelSerializer):
     """Краткий вид кабинета для списков."""
-    organization_name = serializers.CharField(source="organization.name", read_only=True)
-    user_role = serializers.SerializerMethodField()
+    organization_name = serializers.CharField(source="organization.name", read_only=True, allow_null=True)
+    user_role         = serializers.SerializerMethodField()
+    members_count     = serializers.SerializerMethodField()
+    documents_count   = serializers.SerializerMethodField()
+    created_by_name   = serializers.CharField(source="created_by.full_name", read_only=True, allow_null=True)
 
     class Meta:
         model = Workspace
         fields = [
             "id", "title", "type", "organization_name",
-            "status", "deadline", "created_at", "user_role",
+            "status", "deadline", "created_at",
+            "user_role", "members_count", "documents_count", "created_by_name",
         ]
         read_only_fields = fields
 
@@ -152,8 +156,16 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if not request:
             return None
+        if obj.created_by_id and obj.created_by_id == request.user.pk:
+            return "owner"
         member = obj.members.filter(user=request.user).first()
         return member.role if member else None
+
+    def get_members_count(self, obj) -> int:
+        return obj.members.count()
+
+    def get_documents_count(self, obj) -> int:
+        return obj.documents.exclude(status="archived").count()
 
 
 class WorkspaceUpdateSerializer(serializers.ModelSerializer):
@@ -162,3 +174,32 @@ class WorkspaceUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Workspace
         fields = ["title", "description", "deadline", "status"]
+
+
+class WorkspaceInviteRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    role  = serializers.ChoiceField(
+        choices=["owner", "editor", "signer", "viewer"],
+        default="viewer",
+        required=False,
+    )
+
+    def validate_email(self, value):
+        if not User.objects.filter(email=value, is_active=True).exists():
+            raise serializers.ValidationError("Пользователь с таким email не найден.")
+        return value
+
+
+class WorkspaceInvitationSerializer(serializers.ModelSerializer):
+    workspace_id   = serializers.UUIDField(source="workspace.id")
+    workspace_name = serializers.CharField(source="workspace.title")
+    inviter_name   = serializers.CharField(source="inviter.full_name")
+    inviter_email  = serializers.CharField(source="inviter.email")
+
+    class Meta:
+        model  = WorkspaceInvitation
+        fields = [
+            "id", "workspace_id", "workspace_name",
+            "inviter_name", "inviter_email",
+            "role", "status", "created_at",
+        ]

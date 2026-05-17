@@ -52,6 +52,33 @@
 
 body {
   margin: 0;
+  transition: filter 0.25s ease;
+}
+
+/* ── Dark mode: invert + hue-rotate для всей страницы ── */
+html[data-theme="dark"] body {
+  filter: invert(0.92) hue-rotate(180deg);
+  background: #000;
+}
+
+/* Изображения и аватарки инвертируем обратно */
+html[data-theme="dark"] img,
+html[data-theme="dark"] video,
+html[data-theme="dark"] svg image {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* Auto: следим за системной темой */
+@media (prefers-color-scheme: dark) {
+  html[data-theme="auto"] body {
+    filter: invert(0.92) hue-rotate(180deg);
+    background: #000;
+  }
+  html[data-theme="auto"] img,
+  html[data-theme="auto"] video,
+  html[data-theme="auto"] svg image {
+    filter: invert(1) hue-rotate(180deg);
+  }
 }
 
 #root {

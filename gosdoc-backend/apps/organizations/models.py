@@ -70,3 +70,44 @@ class Organization(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class OrganizationInvitation(models.Model):
+    class Status(models.TextChoices):
+        PENDING  = "pending",  "Ожидает"
+        ACCEPTED = "accepted", "Принята"
+        DECLINED = "declined", "Отклонена"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE,
+        related_name="invitations", verbose_name="Организация",
+    )
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="invitations", verbose_name="Кабинет",
+    )
+    role = models.CharField(
+        max_length=20, default="viewer", verbose_name="Роль в кабинете",
+    )
+    invitee = models.ForeignKey(
+        "users.User", on_delete=models.CASCADE,
+        related_name="org_invitations", verbose_name="Приглашённый",
+    )
+    inviter = models.ForeignKey(
+        "users.User", on_delete=models.CASCADE,
+        related_name="sent_org_invitations", verbose_name="Пригласивший",
+    )
+    status = models.CharField(
+        max_length=20, choices=Status.choices,
+        default=Status.PENDING, verbose_name="Статус", db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "organization_invitations"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.invitee} → {self.organization} [{self.status}]"

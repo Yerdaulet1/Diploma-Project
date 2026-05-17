@@ -32,6 +32,7 @@ class Notification(models.Model):
         NEW_COMMENT = "new_comment", "Новый комментарий"
         DEADLINE_APPROACHING = "deadline_approaching", "Срок истекает"
         DOCUMENT_REJECTED = "document_rejected", "Документ отклонён"
+        ORG_INVITATION    = "org_invitation",    "Приглашение в организацию"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(

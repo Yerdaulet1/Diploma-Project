@@ -12,8 +12,11 @@ import {
   getAttachments, serverUploadAttachment,
   deleteAttachment as apiDeleteAttachment,
   serverUploadDocument, copyDocument, getSignatures,
+  getBlockchain,
 } from "./api/documents";
-import { getWorkspaces, createWorkspace, addMember, getMembers } from "./api/workspaces";
+import { getWorkspaces, createWorkspace, getMembers, inviteToWorkspace } from "./api/workspaces";
+import { getTasks } from "./api/tasks";
+import { generalChat, chatWithDocument, getChatHistory } from "./api/ai";
 import useAuthStore from "./store/authStore";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
@@ -148,6 +151,7 @@ const css = `
   .dm-comment-actions{display:flex;align-items:center;gap:8px;margin-top:6px}
   .dm-comment-send{margin-left:auto;width:30px;height:30px;border-radius:8px;background:#2563EB;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center}
   .dm-comment-send:hover{background:#1D4ED8}
+  @keyframes aiDot{0%{opacity:.3;transform:scale(.8)}100%{opacity:1;transform:scale(1.1)}}
 
   /* Status dropdown */
   .dm-status-popup{position:fixed;background:#fff;border:.5px solid #E5E7EB;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.12);z-index:9600;width:160px;padding:6px 0}
@@ -649,9 +653,58 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
 /* ══════════════════════════════════════════════════════════
    WORKFLOW TAB
 ══════════════════════════════════════════════════════════ */
-function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploaderName = "", subtasks = [] }) {
+function BlockchainBadge({ status, blocks = [] }) {
+  const tampered = blocks.some(b => b.tampered);
+  const color    = tampered ? "#EF4444" : status === "VERIFIED" ? "#10B981" : "#9CA3AF";
+  const bg       = tampered ? "#FEF2F2" : status === "VERIFIED" ? "#F0FDF4" : "#F9FAFB";
+  const border   = tampered ? "#FECACA" : status === "VERIFIED" ? "#A7F3D0" : "#E5E7EB";
+  const label    = tampered ? "TAMPERED" : status === "VERIFIED" ? "VERIFIED" : "PENDING";
+
+  return (
+    <div style={{ marginTop:16, border:`1px solid ${border}`, borderRadius:10, background:bg, padding:"12px 14px" }}>
+      <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom: blocks.length ? 10 : 0 }}>
+        <svg viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" width="16" height="16">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          {!tampered && status === "VERIFIED" && <polyline points="9 12 11 14 15 10" stroke={color} strokeWidth="2.5"/>}
+          {tampered && <><line x1="15" y1="9" x2="9" y2="15" stroke={color} strokeWidth="2"/><line x1="9" y1="9" x2="15" y2="15" stroke={color} strokeWidth="2"/></>}
+        </svg>
+        <span style={{ fontSize:12.5,fontWeight:700,color,flex:1 }}>Blockchain: {label}</span>
+        <span style={{ fontSize:10.5,color:"#9CA3AF" }}>{blocks.length} block{blocks.length !== 1 ? "s" : ""}</span>
+      </div>
+      {blocks.length > 0 && (
+        <div style={{ display:"flex",flexDirection:"column",gap:4 }}>
+          {blocks.map((b, i) => {
+            const ok = !b.tampered && b.chain_valid;
+            return (
+              <div key={b.id || i} style={{ display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#6B7280" }}>
+                <div style={{ width:6,height:6,borderRadius:"50%",background: b.tampered ? "#EF4444" : "#10B981",flexShrink:0 }}/>
+                <span style={{ flex:1 }}>Step {b.step_order}: {b.task_title}</span>
+                <span style={{ fontFamily:"monospace",fontSize:10 }}>{b.document_hash?.slice(0,10)}…</span>
+                {b.tampered
+                  ? <span style={{ color:"#EF4444",fontWeight:600,fontSize:10 }}>CHANGED</span>
+                  : <span style={{ color:"#10B981",fontWeight:600,fontSize:10 }}>OK</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {blocks.length === 0 && (
+        <div style={{ fontSize:11.5,color:"#9CA3AF" }}>Blockchain записи появятся после завершения задач</div>
+      )}
+    </div>
+  );
+}
+
+function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploaderName = "", subtasks = [], docId }) {
   const rawMembers = Array.isArray(members) ? members : (members?.results ?? []);
   const rawSigs    = Array.isArray(signatures) ? signatures : (signatures?.results ?? []);
+
+  const { data: blockchainData } = useQuery({
+    queryKey: ["blockchain", docId],
+    queryFn:  () => getBlockchain(docId),
+    enabled:  !!docId,
+    refetchInterval: 15_000,
+  });
 
   // Stage state derived from docStatus
   // draft → stage1 done, stage2 active
@@ -702,6 +755,9 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
       </svg>
     ),
   };
+
+  const bcBlocks = blockchainData?.blocks ?? [];
+  const bcStatus = blockchainData?.status ?? "PENDING";
 
   return (
     <div style={{ padding:"24px 8px" }}>
@@ -827,6 +883,9 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
           </div>
         );
       })}
+
+      {/* Blockchain verification section */}
+      <BlockchainBadge status={bcStatus} blocks={bcBlocks}/>
     </div>
   );
 }
@@ -834,9 +893,149 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
 /* ══════════════════════════════════════════════════════════
    ACTIVITY PANEL
 ══════════════════════════════════════════════════════════ */
-function ActivityPanel({ comments, onComment, apiComments }) {
+/* ── AI Chat Panel ──────────────────────────────────────────────── */
+function AiChatPanel({ docId, workspaceId }) {
+  const [messages, setMessages] = useState([]);
+  const [input,    setInput]    = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const bottomRef = useRef(null);
+
+  // Load history specific to this document (or workspace if no doc)
+  useEffect(() => {
+    const params = docId ? { document_id: docId } : workspaceId ? { workspace_id: workspaceId } : null;
+    if (!params) return;
+    setMessages([]); // clear on document switch
+    getChatHistory(params)
+      .then(d => {
+        const msgs = (d?.messages || []).map(m => ({
+          role:    m.role,
+          content: m.content,
+          time:    m.created_at ? new Date(m.created_at).toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"}) : "",
+          sources: [],
+        }));
+        setMessages(msgs);
+      })
+      .catch(() => {});
+  }, [docId, workspaceId]); // re-fetch when document changes
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || loading) return;
+    setInput("");
+    const time = new Date().toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"});
+    setMessages(m => [...m, { role:"user", content:text, time, sources:[] }]);
+    setLoading(true);
+    try {
+      let res;
+      if (docId) {
+        // Document-specific chat — history and context scoped to this document
+        res = await chatWithDocument(docId, text);
+        res = { reply: res.reply, sources: (res.context_chunks || []).map(c => ({ title: "Фрагмент", chunk_text: c.chunk_text, score: 1 })) };
+      } else {
+        // Workspace-level general chat
+        res = await generalChat(text, workspaceId);
+      }
+      setMessages(m => [...m, {
+        role:    "assistant",
+        content: res.reply || "—",
+        time:    new Date().toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"}),
+        sources: res.sources || [],
+      }]);
+    } catch {
+      setMessages(m => [...m, { role:"assistant", content:"Ошибка. Попробуйте снова.", time, sources:[] }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      {/* Messages */}
+      <div className="dm-activity-body" style={{ flex:1, overflowY:"auto" }}>
+        {messages.length === 0 && !loading && (
+          <div style={{ textAlign:"center", padding:"24px 12px", color:"#9CA3AF" }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="#C4B5FD" strokeWidth="1.5" width="36" height="36" style={{ display:"block",margin:"0 auto 10px" }}>
+              <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm0-14a1 1 0 0 0-1 1v4a1 1 0 0 0 .29.71l3 3a1 1 0 0 0 1.42-1.42L13 11.59V7a1 1 0 0 0-1-1z"/>
+            </svg>
+            <div style={{ fontSize:12.5,fontWeight:500,color:"#7C3AED",marginBottom:4 }}>AI Ассистент проекта</div>
+            <div style={{ fontSize:11.5 }}>{docId ? "Задайте вопрос по этому документу" : "Задайте вопрос по документам проекта"}</div>
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} style={{ marginBottom:12 }}>
+            <div style={{ display:"flex", alignItems:"flex-start", gap:8,
+              flexDirection: m.role === "user" ? "row-reverse" : "row" }}>
+              {/* Avatar */}
+              <div style={{ width:26,height:26,borderRadius:"50%",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,
+                background: m.role === "user" ? "#2563EB" : "#7C3AED", color:"#fff" }}>
+                {m.role === "user" ? "Я" : "AI"}
+              </div>
+              {/* Bubble */}
+              <div style={{ maxWidth:"85%",
+                background: m.role === "user" ? "#EFF6FF" : "#F5F3FF",
+                border: `0.5px solid ${m.role === "user" ? "#BFDBFE" : "#DDD6FE"}`,
+                borderRadius: m.role === "user" ? "12px 2px 12px 12px" : "2px 12px 12px 12px",
+                padding:"8px 12px", fontSize:12.5, color:"#111827", lineHeight:1.6 }}>
+                {m.content}
+                {m.sources?.length > 0 && (
+                  <div style={{ marginTop:8, borderTop:"0.5px solid #E9D5FF", paddingTop:6 }}>
+                    <div style={{ fontSize:10.5,color:"#7C3AED",fontWeight:600,marginBottom:4 }}>Источники:</div>
+                    {m.sources.map((s, si) => (
+                      <div key={si} style={{ fontSize:10.5,color:"#6B7280",marginBottom:2,display:"flex",alignItems:"center",gap:4 }}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#A78BFA" strokeWidth="2" width="10" height="10"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        {s.title} <span style={{ color:"#A78BFA" }}>({Math.round((s.score||0)*100)}%)</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{ fontSize:10,color:"#9CA3AF",marginTop:2,textAlign:m.role==="user"?"right":"left",paddingLeft:m.role==="user"?0:34,paddingRight:m.role==="user"?34:0 }}>
+              {m.time}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8 }}>
+            <div style={{ width:26,height:26,borderRadius:"50%",background:"#7C3AED",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0 }}>AI</div>
+            <div style={{ background:"#F5F3FF",border:"0.5px solid #DDD6FE",borderRadius:"2px 12px 12px 12px",padding:"8px 12px",display:"flex",gap:4,alignItems:"center" }}>
+              {[0,1,2].map(i => (
+                <div key={i} style={{ width:6,height:6,borderRadius:"50%",background:"#A78BFA",animation:`aiDot 1.2s ${i*0.2}s infinite ease-in-out alternate` }}/>
+              ))}
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef}/>
+      </div>
+
+      {/* Input */}
+      <div className="dm-comment-box">
+        <textarea className="dm-comment-input"
+          placeholder={docId ? "Спросите AI об этом документе…" : "Спросите AI о проекте…"}
+          value={input} onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          rows={1}
+          disabled={loading}/>
+        <div className="dm-comment-actions">
+          <span style={{ fontSize:10.5,color:"#A78BFA",flex:1 }}>Enter — отправить</span>
+          <button className="dm-comment-send" onClick={send} disabled={loading}
+            style={{ background: loading ? "#A78BFA" : "#7C3AED" }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ActivityPanel({ comments, onComment, apiComments, workspaceId, docId }) {
+  const [chatMode, setChatMode] = useState("team"); // "team" | "ai"
   const [text, setText] = useState("");
-  const [showMore, setShowMore] = useState(false);
   const [images, setImages] = useState([]);
   const imgRef = useRef(null);
 
@@ -859,90 +1058,111 @@ function ActivityPanel({ comments, onComment, apiComments }) {
 
   return (
     <>
-      <div className="dm-activity-header">
-        <span style={{ fontSize:14,fontWeight:600,color:"#111827" }}>Activity</span>
-        <button style={{ background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",display:"flex" }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </button>
-      </div>
-
-      <div className="dm-activity-body">
-        {/* API comments */}
-        {apiComments?.map((c, i) => (
-          <div key={`api-${c.id||i}`} className="dm-activity-item" style={{ marginBottom:8 }}>
-            <div className="dm-activity-dot" style={{ background:"#A78BFA" }}/>
-            <span style={{ fontSize:12 }}>
-              <strong style={{ color:"#374151" }}>{c.author_name || "User"}</strong>: {c.content}
-            </span>
-            <span className="dm-activity-time">
-              {new Date(c.created_at).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}
-            </span>
-          </div>
-        ))}
-        {/* Optimistically-posted comments this session */}
-        {comments.map((c, i) => (
-          <div key={i} style={{ marginBottom:10 }}>
-            <div className="dm-activity-item">
-              <div className="dm-activity-dot" style={{ background:"#2563EB" }}/>
-              <span style={{ fontSize:12 }}>
-                {c.text && <><strong>You</strong>: {c.text}</>}
-              </span>
-              <span className="dm-activity-time">{c.time}</span>
-            </div>
-            {c.images?.map((img, j) => (
-              <div key={j} style={{ marginLeft:14, marginTop:4 }}>
-                <img src={img.src} alt={img.name}
-                  style={{ maxWidth:"100%", maxHeight:120, borderRadius:8, border:".5px solid #E5E7EB", objectFit:"cover" }}/>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-
-      <div className="dm-comment-box">
-        {/* Image previews */}
-        {images.length > 0 && (
-          <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
-            {images.map((img, i) => (
-              <div key={i} style={{ position:"relative" }}>
-                <img src={img.src} alt={img.name}
-                  style={{ width:56, height:56, borderRadius:8, objectFit:"cover", border:".5px solid #E5E7EB" }}/>
-                <button onClick={() => setImages(imgs => imgs.filter((_,j)=>j!==i))}
-                  style={{ position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:"50%",background:"#EF4444",border:"none",cursor:"pointer",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10 }}>
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <textarea className="dm-comment-input" placeholder="Write a comment…"
-          value={text} onChange={e=>setText(e.target.value)}
-          onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); } }}
-          rows={1}/>
-
-        <div className="dm-comment-actions">
-          {/* Photo upload */}
-          <input ref={imgRef} type="file" accept="image/*" multiple style={{ display:"none" }} onChange={handleImg}/>
-          <button title="Attach photo" onClick={() => imgRef.current?.click()}
-            style={{ background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",display:"flex",alignItems:"center" }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="16" height="16">
-              <rect x="3" y="3" width="18" height="18" rx="2"/>
-              <circle cx="8.5" cy="8.5" r="1.5"/>
-              <polyline points="21 15 16 10 5 21"/>
-            </svg>
+      {/* Header with toggle */}
+      <div className="dm-activity-header" style={{ flexDirection:"column",gap:8,alignItems:"stretch" }}>
+        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
+          <span style={{ fontSize:13,fontWeight:600,color:"#111827" }}>
+            {chatMode === "team" ? "Activity" : "AI Ассистент"}
+          </span>
+        </div>
+        {/* Toggle buttons */}
+        <div style={{ display:"flex",gap:4,background:"#F3F4F6",borderRadius:8,padding:3 }}>
+          <button onClick={() => setChatMode("team")}
+            style={{ flex:1,padding:"5px 8px",fontSize:11.5,fontWeight:600,borderRadius:6,border:"none",cursor:"pointer",fontFamily:"inherit",
+              background: chatMode==="team" ? "#fff" : "transparent",
+              color: chatMode==="team" ? "#2563EB" : "#9CA3AF",
+              boxShadow: chatMode==="team" ? "0 1px 3px rgba(0,0,0,.1)" : "none",
+              transition:"all .15s",display:"flex",alignItems:"center",justifyContent:"center",gap:4 }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Команда
           </button>
-          {/* Attachment */}
-          <button style={{ background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",display:"flex",alignItems:"center" }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="16" height="16"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-          </button>
-          {/* Mention */}
-          <button style={{ background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",display:"flex",alignItems:"center",fontSize:14,fontWeight:600 }}>@</button>
-          <button className="dm-comment-send" onClick={send}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          <button onClick={() => setChatMode("ai")}
+            style={{ flex:1,padding:"5px 8px",fontSize:11.5,fontWeight:600,borderRadius:6,border:"none",cursor:"pointer",fontFamily:"inherit",
+              background: chatMode==="ai" ? "#F5F3FF" : "transparent",
+              color: chatMode==="ai" ? "#7C3AED" : "#9CA3AF",
+              boxShadow: chatMode==="ai" ? "0 1px 3px rgba(0,0,0,.1)" : "none",
+              transition:"all .15s",display:"flex",alignItems:"center",justifyContent:"center",gap:4 }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            AI
           </button>
         </div>
       </div>
+
+      {chatMode === "ai" ? (
+        <AiChatPanel docId={docId} workspaceId={workspaceId}/>
+      ) : (
+        <>
+          <div className="dm-activity-body">
+            {apiComments?.map((c, i) => (
+              <div key={`api-${c.id||i}`} className="dm-activity-item" style={{ marginBottom:8 }}>
+                <div className="dm-activity-dot" style={{ background:"#A78BFA" }}/>
+                <span style={{ fontSize:12 }}>
+                  <strong style={{ color:"#374151" }}>{c.author_name || "User"}</strong>: {c.content}
+                </span>
+                <span className="dm-activity-time">
+                  {new Date(c.created_at).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}
+                </span>
+              </div>
+            ))}
+            {comments.map((c, i) => (
+              <div key={i} style={{ marginBottom:10 }}>
+                <div className="dm-activity-item">
+                  <div className="dm-activity-dot" style={{ background:"#2563EB" }}/>
+                  <span style={{ fontSize:12 }}>
+                    {c.text && <><strong>You</strong>: {c.text}</>}
+                  </span>
+                  <span className="dm-activity-time">{c.time}</span>
+                </div>
+                {c.images?.map((img, j) => (
+                  <div key={j} style={{ marginLeft:14, marginTop:4 }}>
+                    <img src={img.src} alt={img.name}
+                      style={{ maxWidth:"100%", maxHeight:120, borderRadius:8, border:".5px solid #E5E7EB", objectFit:"cover" }}/>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+
+          <div className="dm-comment-box">
+            {images.length > 0 && (
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
+                {images.map((img, i) => (
+                  <div key={i} style={{ position:"relative" }}>
+                    <img src={img.src} alt={img.name}
+                      style={{ width:56, height:56, borderRadius:8, objectFit:"cover", border:".5px solid #E5E7EB" }}/>
+                    <button onClick={() => setImages(imgs => imgs.filter((_,j)=>j!==i))}
+                      style={{ position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:"50%",background:"#EF4444",border:"none",cursor:"pointer",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10 }}>
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <textarea className="dm-comment-input" placeholder="Write a comment…"
+              value={text} onChange={e=>setText(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); } }}
+              rows={1}/>
+            <div className="dm-comment-actions">
+              <input ref={imgRef} type="file" accept="image/*" multiple style={{ display:"none" }} onChange={handleImg}/>
+              <button title="Attach photo" onClick={() => imgRef.current?.click()}
+                style={{ background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",display:"flex",alignItems:"center" }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="16" height="16">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <polyline points="21 15 16 10 5 21"/>
+                </svg>
+              </button>
+              <button style={{ background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",display:"flex",alignItems:"center" }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="16" height="16"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              </button>
+              <button style={{ background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",display:"flex",alignItems:"center",fontSize:14,fontWeight:600 }}>@</button>
+              <button className="dm-comment-send" onClick={send}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }
@@ -1144,7 +1364,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
     if (subtask._apiId && docId) {
       try {
         await apiUpdateSubtask(docId, subtask._apiId, { status: "done" });
-        try { await apiAddComment(docId, { content: msg, document: docId }); } catch {}
+        try { await apiAddComment(docId, { content: msg }); } catch {}
         qc.invalidateQueries({ queryKey: ["subtasks", docId] });
         qc.invalidateQueries({ queryKey: ["comments", docId] });
         toast.success("Subtask completed");
@@ -1514,13 +1734,14 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                 docStatus={apiDoc?.status || doc?.status}
                 uploaderName={apiDoc?.uploaded_by_name || ""}
                 subtasks={subtasks}
+                docId={docId}
               />
             )}
           </div>
 
           {/* RIGHT — Activity */}
           <div className="dm-right">
-            <ActivityPanel comments={comments} onComment={addComment} apiComments={apiComments}/>
+            <ActivityPanel comments={comments} onComment={addComment} apiComments={apiComments} workspaceId={workspaceId} docId={docId}/>
           </div>
         </div>
 
@@ -2036,7 +2257,7 @@ function ArchivedSection({ projects = [], docs = [] }) {
 /* ══════════════════════════════════════════════════════════
    MANAGED PROJECTS EMPTY STATE
 ══════════════════════════════════════════════════════════ */
-function EmptyState() {
+function EmptyState({ onNew }) {
   const { t } = useTranslation();
   return (
     <div className="pr-empty">
@@ -2052,7 +2273,14 @@ function EmptyState() {
         <text x="128" y="52" fontSize="9" fill="#D1D5DB">·</text>
       </svg>
       <p style={{ fontSize:14,fontWeight:600,color:"#374151",marginBottom:6 }}>{t("projects.managedEmpty")}</p>
-      <p style={{ fontSize:13,color:"#9CA3AF" }}>{t("projects.managedEmptyHint")}</p>
+      <p style={{ fontSize:13,color:"#9CA3AF",marginBottom:16 }}>{t("projects.managedEmptyHint")}</p>
+      {onNew && (
+        <button onClick={onNew}
+          style={{ background:"#2563EB",color:"#fff",border:"none",borderRadius:9,padding:"10px 22px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"inline-flex",alignItems:"center",gap:6 }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          {t("inbox.newProject")}
+        </button>
+      )}
     </div>
   );
 }
@@ -2075,9 +2303,9 @@ function ProjectTable({ projects, onManage }) {
           </tr>
         </thead>
         <tbody>
-          {projects.map(p=>(
+          {projects.map((p,idx)=>(
             <tr key={p.id}>
-              <td style={{ color:"#9CA3AF",fontSize:12 }}>{p.id}</td>
+              <td style={{ color:"#9CA3AF",fontSize:12 }}>{idx + 1}</td>
               <td style={{ fontWeight:500 }}>{p.name}</td>
               <td><span className={sc(p.status)}><span style={{ width:6,height:6,borderRadius:"50%",background:sd(p.status),display:"inline-block" }}/>{p.status}</span></td>
               <td>{p.members.length===0?<span style={{ color:"#9CA3AF",fontSize:12 }}>No members</span>:<AvatarStack members={p.members} extra={p.extra}/>}</td>
@@ -2326,14 +2554,15 @@ function ManageMembersModal({ project, onClose }) {
     if (errs.some(e => e.email && e.email !== " ")) { setErrors(errs); return; }
     setSaving(true);
     const results = await Promise.allSettled(
-      toInvite.map(m => addMember(project.id, { email: m.email, role: m.role || "viewer" }))
+      toInvite.map(m => inviteToWorkspace(project.id, m.email, m.role || "viewer"))
     );
     setSaving(false);
     const failed = results.filter(r => r.status === "rejected");
     if (failed.length) {
-      toast.error(`${failed.length} invite(s) failed — check emails or permissions`);
+      const msg = failed[0]?.reason?.response?.data?.detail || `${failed.length} invite(s) failed`;
+      toast.error(msg);
     } else {
-      toast.success("Members invited successfully");
+      toast.success("Приглашения отправлены! Пользователи увидят их в Inbox.");
     }
     qc.invalidateQueries({ queryKey: ["members", project.id] });
     onClose();
@@ -2432,19 +2661,23 @@ function ProjectDetail({ project }) {
           </div>
           <p style={{ fontSize:13,color:"#6B7280",maxWidth:600 }}>{project.description || "Document management workspace."}</p>
         </div>
-        {currentUserRole !== "editor" && (
-          <div style={{ display:"flex",alignItems:"center",gap:10,flexShrink:0 }}>
-            <button onClick={()=>setShowMembers(true)}
-              style={{ background:"#fff",color:"#374151",border:".5px solid #E5E7EB",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:500,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-              {t("projects.members")}
-            </button>
-            <button onClick={()=>setShowNewDoc(true)} style={{ background:"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              {t("projects.addDocument")}
-            </button>
+        <div style={{ display:"flex",alignItems:"center",gap:10,flexShrink:0 }}>
+            {/* Members button — только для owner */}
+            {currentUserRole === "owner" && (
+              <button onClick={()=>setShowMembers(true)}
+                style={{ background:"#fff",color:"#374151",border:".5px solid #E5E7EB",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:500,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                {t("projects.members")}
+              </button>
+            )}
+            {/* Add Document — для owner И editor */}
+            {(currentUserRole === "owner" || currentUserRole === "editor") && (
+              <button onClick={()=>setShowNewDoc(true)} style={{ background:"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",cursor:"pointer" }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                {t("projects.addDocument")}
+              </button>
+            )}
           </div>
-        )}
       </div>
       <div style={{ display:"flex",gap:0,borderBottom:".5px solid #E5E7EB",margin:"16px 0" }}>
         {[
@@ -2684,12 +2917,19 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   const [sbOpen, toggleSb] = useSidebarOpen();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
-  const [tab,       setTab]       = useState("managed");
-  const [showModal, setShowModal] = useState(false);
-  const [selected,  setSelected]  = useState(null);
-  const [selectedDoc, setSelectedDoc] = useState(null);
-  const [wsDropOpen, setWsDropOpen] = useState(false);
+  const [tab,           setTab]           = useState("managed");
+  const [showModal,     setShowModal]     = useState(false);
+  const [selected,      setSelected]      = useState(null);
+  const [selectedDoc,   setSelectedDoc]   = useState(null);
+  const [wsDropOpen,    setWsDropOpen]    = useState(false);
+  const [searchQuery,   setSearchQuery]   = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const wsDropRef = useRef(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 350);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!wsDropOpen) return;
@@ -2703,9 +2943,10 @@ export default function Projects({ onGoToAuth, onNavigate }) {
     queryFn: getWorkspaces,
   });
 
-  const { data: assignedDocsData, isLoading: assignedLoading } = useQuery({
-    queryKey: ["documents", "assigned"],
-    queryFn: () => getDocuments({ role: "editor,signer" }),
+  // Assigned tab: задачи назначенные текущему пользователю → уникальные документы
+  const { data: assignedTasksData, isLoading: assignedLoading } = useQuery({
+    queryKey: ["tasks", "assigned-projects"],
+    queryFn: () => getTasks({ status: "in_progress" }),
     enabled: tab === "assigned",
   });
 
@@ -2718,25 +2959,57 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   const allWs = wsData?.results ?? (Array.isArray(wsData) ? wsData : []);
   const orgName = allWs[0]?.title || "Organization";
 
-  const wsToRow = ws => ({
-    id: ws.id,
-    name: ws.title,
-    status: ws.status === "active" ? t("projects.active") : ws.status === "archived" ? t("projects.archive") : ws.status === "closed" ? t("workflow.done") : t("workflow.completed"),
-    members: [],
-    extra: 0,
-    files: 0,
-    updated: ws.created_at
-      ? new Date(ws.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })
-      : "—",
-  });
+  const wsToRow = ws => {
+    const statusMap = { active: "Active", archived: "Archived", closed: "Completed" };
+    const membersCount = ws.members_count ?? 0;
+    const filesCount   = ws.documents_count ?? 0;
+    // AvatarStack ожидает массив строк (инициалы)
+    const fakeMembers = Array.from({ length: Math.min(membersCount, 3) }, (_, i) =>
+      String.fromCharCode(65 + i) // "A", "B", "C"
+    );
+    return {
+      id:      ws.id,
+      name:    ws.title,
+      status:  statusMap[ws.status] || "Active",
+      members: fakeMembers,
+      extra:   Math.max(0, membersCount - 3),
+      files:   filesCount,
+      updated: ws.created_at
+        ? new Date(ws.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })
+        : "—",
+      _raw: ws,
+    };
+  };
 
-  // Managed: only workspaces the user owns
-  const managedProjects = allWs.filter(ws => ws.user_role === "owner").map(wsToRow);
+  const searchLower = debouncedSearch.toLowerCase();
+
+  // Managed: все активные workspace где пользователь участник (owner ИЛИ editor)
+  const managedProjects = allWs
+    .filter(ws => ws.status === "active")
+    .filter(ws => !searchLower || ws.title.toLowerCase().includes(searchLower))
+    .map(wsToRow);
 
   // Archive: workspaces that are closed or archived
-  const archivedProjects = allWs.filter(ws => ws.status === "archived" || ws.status === "closed").map(wsToRow);
+  const archivedProjects = allWs
+    .filter(ws => ws.status === "archived" || ws.status === "closed")
+    .filter(ws => !searchLower || ws.title.toLowerCase().includes(searchLower))
+    .map(wsToRow);
 
-  const assignedDocs = assignedDocsData?.results ?? (Array.isArray(assignedDocsData) ? assignedDocsData : []);
+  // Из задач формируем список уникальных документов для Assigned tab
+  const assignedTasks = assignedTasksData?.results ?? [];
+  const seenDocIds = new Set();
+  const assignedDocs = assignedTasks
+    .filter(t => t.document && !seenDocIds.has(t.document) && seenDocIds.add(t.document))
+    .map(t => ({
+      id:               t.document,
+      title:            t.document_title || t.title || "—",
+      file_type:        "docx",
+      status:           t.status,
+      due_date:         t.due_date || null,
+      uploaded_by_name: t.workspace_name || "—",
+      workspace:        t.workspace,
+      _task:            t,
+    }));
   const archivedDocs = archivedDocsData?.results ?? (Array.isArray(archivedDocsData) ? archivedDocsData : []);
 
   const handleCreate = (data) => {
@@ -2906,7 +3179,18 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                   <div style={{ display:"flex",alignItems:"center",gap:10 }}>
                     <div style={{ display:"flex",alignItems:"center",gap:6,border:".5px solid #E5E7EB",borderRadius:8,padding:"7px 12px",background:"#F9FAFB",minWidth:220 }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                      <input placeholder={t("projects.searchHint")} style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",width:190,fontFamily:"inherit" }}/>
+                      <input
+                        placeholder={t("projects.searchHint")}
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",width:190,fontFamily:"inherit" }}
+                      />
+                      {searchQuery && (
+                        <button onClick={() => { setSearchQuery(""); setDebouncedSearch(""); }}
+                          style={{ border:"none",background:"none",cursor:"pointer",color:"#9CA3AF",padding:0,display:"flex",alignItems:"center" }}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2924,7 +3208,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                     wsLoading
                       ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>{t("common.loading")}</div>
                       : managedProjects.length===0
-                        ? <EmptyState/>
+                        ? <EmptyState onNew={() => setShowModal(true)}/>
                         : <ProjectTable projects={managedProjects} onManage={p=>setSelected(p)}/>
                   )}
                   {tab==="assigned" && (

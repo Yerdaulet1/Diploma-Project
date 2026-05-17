@@ -11,9 +11,7 @@ export const getUsers = (params) =>
 export const getUser = (id) => api.get(`/users/${id}/`).then((r) => r.data);
 
 export const changePassword = (old_password, new_password) =>
-  api
-    .post("/auth/password/change/", { old_password, new_password })
-    .then((r) => r.data);
+  api.post("/auth/password/change/", { old_password, new_password }).then((r) => r.data);
 
 export const deleteAccount = () =>
   api.delete("/users/me/").then((r) => r.data);
@@ -29,7 +27,7 @@ export const serverUploadAvatar = (file) => {
   const fd = new FormData();
   fd.append("file", file);
   return api.post("/users/me/avatar/upload/", fd, {
-    headers: { "Content-Type": "multipart/form-data" },
+    headers: { "Content-Type": undefined },
   }).then((r) => r.data);
 };
 

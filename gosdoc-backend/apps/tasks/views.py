@@ -32,12 +32,25 @@ class TaskListView(generics.ListAPIView):
     filterset_fields = ["status", "workspace", "request_type"]
 
     def get_queryset(self):
-        qs = Task.objects.filter(
-            assigned_to=self.request.user
-        ).select_related("workspace", "document", "assigned_to")
+        user = self.request.user
+        direction = self.request.query_params.get("direction", "incoming")
+
+        if direction == "outgoing":
+            # Задачи в кабинетах, где я владелец/создатель, назначенные ДРУГИМ
+            qs = Task.objects.filter(
+                workspace__members__user=user,
+                workspace__members__role__in=["owner"],
+            ).exclude(
+                assigned_to=user,
+            ).select_related("workspace", "document", "assigned_to").distinct()
+        else:
+            # Incoming: задачи назначенные мне
+            qs = Task.objects.filter(
+                assigned_to=user,
+            ).select_related("workspace", "document", "assigned_to")
 
         date_from = self.request.query_params.get("date_from")
-        date_to = self.request.query_params.get("date_to")
+        date_to   = self.request.query_params.get("date_to")
         if date_from:
             qs = qs.filter(created_at__date__gte=date_from)
         if date_to:

@@ -6,6 +6,7 @@
 
 import hashlib
 import logging
+import os
 import uuid
 from typing import Optional
 
@@ -15,6 +16,31 @@ from botocore.exceptions import ClientError
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _is_local_storage() -> bool:
+    """True если используется локальное хранилище (dev-режим)."""
+    return getattr(settings, "DEFAULT_FILE_STORAGE", "") == "django.core.files.storage.FileSystemStorage"
+
+
+def _local_path(storage_key: str) -> str:
+    return os.path.join(settings.MEDIA_ROOT, storage_key)
+
+
+def _save_local(file_obj, storage_key: str) -> bool:
+    """Сохраняет файл в MEDIA_ROOT вместо S3 (dev-режим)."""
+    try:
+        dest = _local_path(storage_key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        file_obj.seek(0)
+        with open(dest, "wb") as f:
+            for chunk in iter(lambda: file_obj.read(8192), b""):
+                f.write(chunk)
+        logger.info("Файл сохранён локально: %s", dest)
+        return True
+    except Exception as exc:
+        logger.error("Ошибка локального сохранения %s: %s", storage_key, exc)
+        return False
 
 # Допустимые MIME-типы для каждого расширения
 CONTENT_TYPE_MAP = {
@@ -83,9 +109,10 @@ def compute_sha256(file_obj) -> str:
 def upload_to_s3(file_obj, storage_key: str, content_type: str = "application/octet-stream") -> bool:
     """
     Загружает файл в S3 напрямую через Django (серверная загрузка).
-    Используется для тестов и случаев, когда клиент не поддерживает presigned POST.
-    Для production рекомендуется presigned POST (раздел 6 ТЗ).
+    В dev-режиме (FileSystemStorage) сохраняет в MEDIA_ROOT.
     """
+    if _is_local_storage():
+        return _save_local(file_obj, storage_key)
     try:
         client = get_s3_client()
         file_obj.seek(0)
@@ -95,7 +122,7 @@ def upload_to_s3(file_obj, storage_key: str, content_type: str = "application/oc
             storage_key,
             ExtraArgs={
                 "ContentType": content_type,
-                "ServerSideEncryption": "AES256",  # Шифрование на стороне сервера
+                "ServerSideEncryption": "AES256",
             },
         )
         logger.info("Файл загружен в S3 (server-side): %s", storage_key)
@@ -179,10 +206,13 @@ def generate_presigned_post(
 def generate_presigned_url(storage_key: str, expiration: int = None, filename: str = None) -> Optional[str]:
     """
     Генерирует presigned GET URL для скачивания файла из S3.
-    TTL по умолчанию: 3600 сек (60 мин, раздел 6 ТЗ).
-
-    Параметр filename задаёт имя файла при скачивании (Content-Disposition header).
+    В dev-режиме возвращает URL локального медиа-файла.
     """
+    if _is_local_storage():
+        from django.conf import settings as s
+        media_url = getattr(s, "MEDIA_URL", "/media/")
+        return f"{media_url}{storage_key}"
+
     if expiration is None:
         expiration = settings.AWS_QUERYSTRING_EXPIRE
 
@@ -191,7 +221,6 @@ def generate_presigned_url(storage_key: str, expiration: int = None, filename: s
         "Key": storage_key,
     }
     if filename:
-        # Принудительное скачивание с заданным именем
         params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
 
     try:
@@ -209,9 +238,10 @@ def generate_presigned_url(storage_key: str, expiration: int = None, filename: s
 
 def check_object_exists(storage_key: str) -> bool:
     """
-    Проверяет, существует ли объект в S3.
-    Используется для подтверждения загрузки через presigned POST.
+    Проверяет, существует ли объект в S3 (или локально в dev-режиме).
     """
+    if _is_local_storage():
+        return os.path.exists(_local_path(storage_key))
     try:
         client = get_s3_client()
         client.head_object(
@@ -260,7 +290,12 @@ def copy_object_in_s3(source_key: str, dest_key: str) -> bool:
 
 
 def delete_from_s3(storage_key: str) -> bool:
-    """Удаляет объект из S3."""
+    """Удаляет объект из S3 или локального хранилища."""
+    if _is_local_storage():
+        path = _local_path(storage_key)
+        if os.path.exists(path):
+            os.remove(path)
+        return True
     try:
         client = get_s3_client()
         client.delete_object(

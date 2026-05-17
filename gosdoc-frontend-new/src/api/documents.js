@@ -134,22 +134,25 @@ export const copyDocument = (docId, targetWorkspaceId) =>
   api.post(`/documents/${docId}/copy/`, { workspace: targetWorkspaceId }).then((r) => r.data);
 
 // --- Server-side upload (no CORS issues) ---
+// Content-Type must NOT be set manually — browser adds boundary automatically
+const multipartHeaders = { headers: { "Content-Type": undefined } };
+
 export const serverUploadDocument = (workspaceId, title, file) => {
   const fd = new FormData();
   fd.append("workspace", workspaceId);
   fd.append("title", title);
   fd.append("file", file);
-  return api.post("/documents/server-upload/", fd, {
-    headers: { "Content-Type": "multipart/form-data" },
-  }).then((r) => r.data);
+  return api.post("/documents/server-upload/", fd, multipartHeaders).then((r) => r.data);
 };
+
+// --- Blockchain verification ---
+export const getBlockchain = (docId) =>
+  api.get(`/documents/${docId}/blockchain/`).then((r) => r.data);
 
 export const serverUploadAttachment = (docId, file) => {
   const fd = new FormData();
   fd.append("file", file);
-  return api.post(`/documents/${docId}/attachments/server-upload/`, fd, {
-    headers: { "Content-Type": "multipart/form-data" },
-  }).then((r) => r.data);
+  return api.post(`/documents/${docId}/attachments/server-upload/`, fd, multipartHeaders).then((r) => r.data);
 };
 
 // --- Content (Phase 7/8) ---

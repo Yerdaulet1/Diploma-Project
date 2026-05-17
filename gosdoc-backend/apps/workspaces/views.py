@@ -25,9 +25,11 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Workspace, WorkspaceMember
+from .models import Workspace, WorkspaceMember, WorkspaceInvitation
 from .serializers import (
     AddMemberSerializer,
+    WorkspaceInvitationSerializer,
+    WorkspaceInviteRequestSerializer,
     WorkspaceListSerializer,
     WorkspaceMemberSerializer,
     WorkspaceMemberUpdateSerializer,
@@ -80,7 +82,7 @@ class WorkspaceListCreateView(generics.ListCreateAPIView):
         qs = (
             Workspace.objects.filter(members__user=user)
             .select_related("organization", "created_by")
-            .prefetch_related("members")
+            .prefetch_related("members", "documents")
             .distinct()
             .order_by("-created_at")
         )
@@ -279,3 +281,125 @@ class WorkspaceMemberDetailView(APIView):
             user_email, workspace.title, request.user.email,
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ============================================================
+# Workspace Invitations
+# ============================================================
+
+class WorkspaceInviteView(APIView):
+    """POST /api/v1/workspaces/{id}/invite/  — отправить приглашение"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        workspace = get_object_or_404(Workspace, pk=pk)
+        require_workspace_owner(request.user, workspace)
+
+        serializer = WorkspaceInviteRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"]
+        role  = serializer.validated_data.get("role", "viewer")
+        invitee = get_object_or_404(User, email=email, is_active=True)
+
+        if workspace.members.filter(user=invitee).exists():
+            return Response(
+                {"detail": f"Пользователь {email} уже является участником кабинета."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        pending = WorkspaceInvitation.objects.filter(
+            workspace=workspace, invitee=invitee,
+            status=WorkspaceInvitation.Status.PENDING,
+        ).first()
+        if pending:
+            return Response(
+                {"detail": f"Приглашение для {email} уже отправлено и ожидает ответа."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        invitation = WorkspaceInvitation.objects.create(
+            workspace=workspace,
+            invitee=invitee,
+            inviter=request.user,
+            role=role,
+        )
+
+        from apps.notifications.models import Notification
+        Notification.objects.create(
+            user=invitee,
+            type=Notification.NotificationType.ORG_INVITATION,
+            title=f"Приглашение в кабинет «{workspace.title}»",
+            message=f"{request.user.full_name} приглашает вас в кабинет «{workspace.title}» с ролью {role}.",
+            entity_type="workspace_invitation",
+            entity_id=invitation.id,
+        )
+
+        logger.info("Приглашение в кабинет '%s' отправлено: %s (by %s)", workspace.title, email, request.user.email)
+        return Response({"detail": f"Приглашение отправлено пользователю {email}."}, status=status.HTTP_200_OK)
+
+
+class WorkspacePendingInvitationsView(APIView):
+    """GET /api/v1/workspaces/invitations/pending/"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        invitations = WorkspaceInvitation.objects.filter(
+            invitee=request.user,
+            status=WorkspaceInvitation.Status.PENDING,
+        ).select_related("workspace", "inviter")
+        return Response(WorkspaceInvitationSerializer(invitations, many=True).data)
+
+
+class WorkspaceInvitationAcceptView(APIView):
+    """POST /api/v1/workspaces/{id}/invitations/{inv_id}/accept/"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk, inv_id):
+        invitation = get_object_or_404(
+            WorkspaceInvitation,
+            pk=inv_id,
+            workspace_id=pk,
+            invitee=request.user,
+            status=WorkspaceInvitation.Status.PENDING,
+        )
+        invitation.status = WorkspaceInvitation.Status.ACCEPTED
+        invitation.save(update_fields=["status"])
+
+        WorkspaceMember.objects.get_or_create(
+            workspace=invitation.workspace,
+            user=request.user,
+            defaults={"role": invitation.role},
+        )
+
+        from apps.notifications.models import Notification
+        Notification.objects.create(
+            user=invitation.inviter,
+            type=Notification.NotificationType.STEP_COMPLETED,
+            title=f"{request.user.full_name} принял(а) приглашение",
+            message=f"{request.user.email} вступил(а) в кабинет «{invitation.workspace.title}».",
+            entity_type="workspace",
+            entity_id=invitation.workspace.id,
+        )
+
+        logger.info("%s принял приглашение в кабинет '%s'", request.user.email, invitation.workspace.title)
+        return Response({"detail": "Вы успешно вступили в кабинет."})
+
+
+class WorkspaceInvitationDeclineView(APIView):
+    """POST /api/v1/workspaces/{id}/invitations/{inv_id}/decline/"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk, inv_id):
+        invitation = get_object_or_404(
+            WorkspaceInvitation,
+            pk=inv_id,
+            workspace_id=pk,
+            invitee=request.user,
+            status=WorkspaceInvitation.Status.PENDING,
+        )
+        invitation.status = WorkspaceInvitation.Status.DECLINED
+        invitation.save(update_fields=["status"])
+
+        logger.info("%s отклонил приглашение в кабинет '%s'", request.user.email, invitation.workspace.title)
+        return Response({"detail": "Приглашение отклонено."})

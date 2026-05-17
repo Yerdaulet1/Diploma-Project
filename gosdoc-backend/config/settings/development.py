@@ -39,6 +39,20 @@ CORS_ALLOW_ALL_ORIGINS = True
 LOGGING["loggers"]["apps"]["level"] = "DEBUG"  # noqa: F405
 
 # ============================================================
-# Медиафайлы хранятся локально (не S3)
+# Кэш — локально используем in-memory (Redis не нужен)
 # ============================================================
-DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    }
+}
+
+# ============================================================
+# Celery — без Redis используем синхронный режим (задачи выполняются сразу)
+# ============================================================
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True
+
+# AI migrations applied manually via SQL (pgvector not installed locally)
+# ChatMessage table created directly, DocumentEmbedding skipped
+MIGRATION_MODULES = {}  # all migrations enabled

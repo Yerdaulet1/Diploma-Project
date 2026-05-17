@@ -5,11 +5,11 @@ eDoc — AI-сервис на базе Claude (apps/ai/services.py)
   - generate_document:  генерация текста официального документа по описанию
   - summarize_document: резюме и ключевые тезисы документа
   - analyze_diff:       анализ изменений между двумя версиями (используется в ai_diff.py)
-  - embed_document:       индексация документа в pgvector (чанки + embeddings)
-  - search_documents:     семантический поиск по кабинету через cosine similarity
-  - chat_with_document:   чат с конкретным документом (RAG по чанкам документа)
-  - general_chat:         общий AI ассистент (RAG по кабинету + свободный режим)
-  - classify_document:    ML-классификация типа документа (TF-IDF + keyword fallback)
+  - embed_document:     индексация документа в pgvector (чанки + embeddings)
+  - search_documents:   семантический поиск по кабинету через cosine similarity
+  - chat_with_document: чат с конкретным документом (RAG по чанкам документа)
+  - general_chat:       общий AI ассистент (RAG по кабинету + свободный режим)
+  - classify_document:  ML-классификация типа документа (TF-IDF + keyword fallback)
 
 SDK: anthropic >= 0.40.0
 """
@@ -60,17 +60,18 @@ _PLATFORM_CONTEXT = (
 
 
 class AIService:
-    """
-    Обёртка над Anthropic Claude API.
-
-    Использует prompt caching для системных промптов — снижает стоимость
-    повторяющихся запросов до ~10% от обычной цены.
-    Один экземпляр на запрос — клиент stateless.
-    """
+    """Обёртка над Anthropic Claude API для всех LLM-операций платформы eDoc."""
 
     def __init__(self):
-        self._client = anthropic.Anthropic(api_key=settings.CLAUDE_API_KEY)
+        self._claude_key = getattr(settings, "CLAUDE_API_KEY", "")
         self._model_name = getattr(settings, "CLAUDE_MODEL", "claude-opus-4-7")
+
+        if self._claude_key:
+            self._client = anthropic.Anthropic(api_key=self._claude_key)
+            self._backend = "claude"
+        else:
+            self._backend = "none"
+            logger.warning("CLAUDE_API_KEY не задан — AI-функции недоступны")
 
     # ------------------------------------------------------------------
     # Внутренние хелперы
@@ -97,7 +98,9 @@ class AIService:
         prompt: str,
         max_output_tokens: int = 1024,
     ) -> str:
-        """Однократный запрос с системным промптом и кэшированием."""
+        """Однократный запрос с системным промптом."""
+        if self._backend == "none":
+            return "AI недоступен: настройте CLAUDE_API_KEY."
         response = self._client.messages.create(
             model=self._model_name,
             max_tokens=max_output_tokens,
@@ -114,14 +117,9 @@ class AIService:
         message: str,
         max_output_tokens: int = 2048,
     ) -> str:
-        """
-        Multi-turn чат с историей диалога и кэшированием системного промпта.
-
-        Args:
-            system_instruction: инструкция для модели
-            history:            список {"role": "user"|"assistant", "content": "..."}
-            message:            текущее сообщение пользователя
-        """
+        """Multi-turn чат с историей диалога."""
+        if self._backend == "none":
+            return "AI недоступен: настройте CLAUDE_API_KEY."
         messages = _build_claude_history(history)
         messages.append({"role": "user", "content": message})
 
@@ -373,23 +371,24 @@ class AIService:
         Returns:
             {"reply": str, "context_chunks": [{"chunk_text": str, "chunk_index": int}]}
         """
-        from pgvector.django import CosineDistance
-        from apps.ai.models import DocumentEmbedding
-
-        encoder = _get_encoder()
-        query_vector = encoder.encode(message, normalize_embeddings=True).tolist()
-
-        chunk_rows = (
-            DocumentEmbedding.objects
-            .annotate(distance=CosineDistance("embedding", query_vector))
-            .filter(document_id=document_id)
-            .order_by("distance")[:5]
-        )
-
-        context_chunks = [
-            {"chunk_text": row.chunk_text, "chunk_index": row.chunk_index}
-            for row in chunk_rows
-        ]
+        context_chunks = []
+        try:
+            from pgvector.django import CosineDistance
+            from apps.ai.models import DocumentEmbedding
+            encoder = _get_encoder()
+            query_vector = encoder.encode(message, normalize_embeddings=True).tolist()
+            chunk_rows = (
+                DocumentEmbedding.objects
+                .annotate(distance=CosineDistance("embedding", query_vector))
+                .filter(document_id=document_id)
+                .order_by("distance")[:5]
+            )
+            context_chunks = [
+                {"chunk_text": row.chunk_text, "chunk_index": row.chunk_index}
+                for row in chunk_rows
+            ]
+        except Exception as emb_exc:
+            logger.warning("Document embedding unavailable (pgvector?): %s", emb_exc)
 
         context_text = "\n\n---\n\n".join(c["chunk_text"] for c in context_chunks)
 
@@ -510,7 +509,11 @@ class AIService:
             "• Давай конкретные, структурированные ответы"
         )
 
-        sources = self.search_documents(message, workspace_id, top_k=3)
+        try:
+            sources = self.search_documents(message, workspace_id, top_k=3)
+        except Exception as search_exc:
+            logger.warning("search_documents unavailable (pgvector?): %s", search_exc)
+            sources = []
 
         if sources:
             context_parts = [
@@ -663,10 +666,7 @@ def _parse_summary_response(text: str) -> dict:
 
 
 def get_ai_service() -> AIService:
-    """
-    Фабрика: возвращает экземпляр AIService.
-    Бросает RuntimeError, если CLAUDE_API_KEY не задан.
-    """
+    """Фабрика: возвращает экземпляр AIService. Бросает RuntimeError, если CLAUDE_API_KEY не задан."""
     if not getattr(settings, "CLAUDE_API_KEY", ""):
         raise RuntimeError(
             "CLAUDE_API_KEY не настроен. "

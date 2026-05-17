@@ -181,6 +181,66 @@ const docCss = `
 /* ══════════════════════════════════════════════════════════
    CONSTANTS / DATA
 ══════════════════════════════════════════════════════════ */
+/* ── Inbox-style filter shared styles ─────────────────────── */
+const DC_FBTN = {
+  display:"flex", alignItems:"center", gap:6, flexShrink:0,
+  border:"1.5px solid #2563EB", borderRadius:30,
+  padding:"6px 14px", fontSize:12.5, color:"#2563EB",
+  cursor:"pointer", background:"#fff", fontFamily:"inherit", fontWeight:500,
+};
+const DC_DD_ITEM = {
+  padding:"10px 18px", fontSize:13, cursor:"pointer",
+  whiteSpace:"nowrap", transition:"background 0.1s",
+};
+
+function DocDropdownFilter({ icon, label, value, options, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [pos,  setPos]  = useState({ top:0, left:0 });
+  const btnRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (!btnRef.current?.closest("[data-dc-filter]")?.contains(e.target)) setOpen(false); };
+    setTimeout(() => document.addEventListener("mousedown", h), 0);
+    return () => document.removeEventListener("mousedown", h);
+  }, [open]);
+
+  const toggle = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: r.left });
+    }
+    setOpen(v => !v);
+  };
+
+  const current = options.find(o => o.value === value)?.label || label;
+
+  return (
+    <div data-dc-filter="" style={{ position:"relative" }}>
+      <button ref={btnRef} onClick={toggle} style={DC_FBTN}>
+        {icon}
+        {current}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      {open && (
+        <div style={{ position:"fixed", top:pos.top, left:pos.left, background:"#fff", borderRadius:12,
+          boxShadow:"0 4px 24px rgba(0,0,0,0.14)", zIndex:9999, minWidth:160, padding:"6px 0", overflow:"hidden" }}>
+          {options.map(opt => (
+            <div key={opt.value}
+              onClick={() => { onChange(opt.value); setOpen(false); }}
+              onMouseEnter={e => e.currentTarget.style.background = "#F9FAFB"}
+              onMouseLeave={e => e.currentTarget.style.background = opt.value === value ? "#EFF6FF" : "transparent"}
+              style={{ ...DC_DD_ITEM, background: opt.value === value ? "#EFF6FF" : "transparent",
+                color: opt.value === value ? "#2563EB" : "#374151", fontWeight: opt.value === value ? 500 : 400 }}>
+              {opt.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const FONTS   = ["DM Sans","Arial","Times New Roman","Georgia","Courier New","Verdana","Trebuchet MS"];
 const FSIZES  = ["8","9","10","11","12","14","16","18","20","24","28","32","36","48","72"];
 const COLS_N  = 26;
@@ -1100,7 +1160,18 @@ export default function Documents({ onGoToAuth, onNavigate }) {
   const [page,            setPage]            = useState(1);
   const [saving,          setSaving]          = useState(false);
   const [wsDropOpen,      setWsDropOpen]      = useState(false);
+  const [searchQuery,     setSearchQuery]     = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [statusFilter,    setStatusFilter]    = useState("");   // "" | "draft" | "review" | "signed"
+  const [typeFilter,      setTypeFilter]      = useState("");   // "" | "docx" | "xlsx"
+  const [ownerFilter,     setOwnerFilter]     = useState("");   // "" | "me"
   const wsDropRef = useRef(null);
+
+  // Debounce search 350ms
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 350);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   const user    = useAuthStore(s => s.user);
   const setUser = useAuthStore(s => s.setUser);
@@ -1134,9 +1205,15 @@ export default function Documents({ onGoToAuth, onNavigate }) {
     setShowSigMenu(false);
   };
 
+  const docParams = {
+    ...(debouncedSearch && { search: debouncedSearch }),
+    ...(statusFilter    && { status: statusFilter }),
+    ...(typeFilter      && { file_type: typeFilter }),
+    ...(ownerFilter === "me" && { uploaded_by_me: true }),
+  };
   const { data: docsData } = useQuery({
-    queryKey: ["documents"],
-    queryFn: getDocuments,
+    queryKey: ["documents", debouncedSearch, statusFilter, typeFilter, ownerFilter],
+    queryFn: () => getDocuments(Object.keys(docParams).length ? docParams : undefined),
   });
   const { data: workspacesData } = useQuery({
     queryKey: ["workspaces"],
@@ -1476,9 +1553,67 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                     </div>
                     <div style={{ display:"flex",alignItems:"center",gap:8,border:".5px solid #E5E7EB",borderRadius:8,padding:"7px 14px",background:"#F9FAFB",minWidth:240 }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                      <input placeholder={t("documents.searchFiles")} style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",fontFamily:"inherit",flex:1 }}/>
+                      <input
+                        placeholder={t("documents.searchFiles")}
+                        value={searchQuery}
+                        onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
+                        style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",fontFamily:"inherit",flex:1 }}
+                      />
+                      {searchQuery && (
+                        <button onClick={() => { setSearchQuery(""); setDebouncedSearch(""); }}
+                          style={{ border:"none",background:"none",cursor:"pointer",color:"#9CA3AF",padding:0,display:"flex",alignItems:"center" }}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                      )}
                     </div>
                   </div>
+                  {/* Filters row — Inbox style */}
+                  <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap",overflow:"visible" }}>
+                    <DocDropdownFilter
+                      icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>}
+                      label="Status"
+                      value={statusFilter}
+                      options={[
+                        { label:"All statuses", value:"" },
+                        { label:"Draft",        value:"draft" },
+                        { label:"In Review",    value:"review" },
+                        { label:"Signed",       value:"signed" },
+                      ]}
+                      onChange={v => { setStatusFilter(v); setPage(1); }}
+                    />
+                    <DocDropdownFilter
+                      icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>}
+                      label="File type"
+                      value={typeFilter}
+                      options={[
+                        { label:"All types", value:"" },
+                        { label:"DOCX",      value:"docx" },
+                        { label:"XLSX",      value:"xlsx" },
+                      ]}
+                      onChange={v => { setTypeFilter(v); setPage(1); }}
+                    />
+                    <DocDropdownFilter
+                      icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}
+                      label="Owner"
+                      value={ownerFilter}
+                      options={[
+                        { label:"Anyone",    value:"" },
+                        { label:"Me",        value:"me" },
+                      ]}
+                      onChange={v => { setOwnerFilter(v); setPage(1); }}
+                    />
+                    {(statusFilter || typeFilter || ownerFilter) && (
+                      <button onClick={() => { setStatusFilter(""); setTypeFilter(""); setOwnerFilter(""); setPage(1); }}
+                        style={{ display:"flex",alignItems:"center",gap:4,fontSize:12,color:"#6B7280",background:"none",border:"none",fontFamily:"inherit",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0 }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
+                        {t("inbox.clearAll") || "Clear all"}
+                      </button>
+                    )}
+                    <span style={{ marginLeft:"auto",fontSize:12,color:"#9CA3AF",flexShrink:0 }}>
+                      {docs.length} {docs.length === 1 ? "document" : "documents"}
+                    </span>
+                  </div>
+
                   {/* Action cards */}
                   <div className="dc-action-cards">
                     <div className="dc-action-card" onClick={()=>setShowTypeModal(true)}>

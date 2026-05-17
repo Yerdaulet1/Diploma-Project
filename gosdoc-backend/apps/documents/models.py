@@ -413,3 +413,67 @@ class DocumentAttachment(models.Model):
 
     def __str__(self) -> str:
         return f"{self.title} → {self.document.title}"
+
+
+class BlockchainBlock(models.Model):
+    """
+    Блок hash chain для верификации целостности документа.
+    Создаётся при завершении каждой задачи.
+
+    block_hash = SHA-256(previous_hash + document_hash + task_id + timestamp)
+    Разрыв цепи или несовпадение document_hash = документ был изменён.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(
+        Document,
+        on_delete=models.CASCADE,
+        related_name="blockchain_blocks",
+        verbose_name="Документ",
+        db_index=True,
+    )
+    task = models.ForeignKey(
+        "tasks.Task",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="blockchain_block",
+        verbose_name="Задача",
+    )
+    step_order = models.IntegerField(default=0, verbose_name="Порядковый номер шага")
+    document_hash = models.CharField(
+        max_length=64,
+        verbose_name="SHA-256 документа",
+        help_text="Хеш файла документа в момент завершения задачи",
+    )
+    previous_hash = models.CharField(
+        max_length=64,
+        verbose_name="Хеш предыдущего блока",
+    )
+    block_hash = models.CharField(
+        max_length=64,
+        verbose_name="Хеш блока",
+        help_text="SHA-256(previous_hash + document_hash + task_id + timestamp)",
+        db_index=True,
+    )
+    timestamp = models.DateTimeField(verbose_name="Время создания блока")
+    tampered = models.BooleanField(
+        default=False,
+        verbose_name="Документ изменён",
+        help_text="True если хеш документа не совпадает с предыдущим блоком",
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Создан")
+
+    class Meta:
+        verbose_name = "Blockchain блок"
+        verbose_name_plural = "Blockchain блоки"
+        db_table = "document_blockchain"
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["document", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        status = "TAMPERED" if self.tampered else "OK"
+        return f"Block[{status}] doc={self.document_id} step={self.step_order}"

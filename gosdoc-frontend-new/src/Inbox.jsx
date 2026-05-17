@@ -4,8 +4,9 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import ProfileController, { ProfileMenu } from "./Profile";
 import logoImg from "./assets/Group 2.svg";
-import { getTasks, completeTask, skipTask } from "./api/tasks";
-import { getWorkspaces } from "./api/workspaces";
+import { getTasks, getOutgoingTasks, completeTask, skipTask } from "./api/tasks";
+import { getWorkspaces, getPendingWorkspaceInvitations, acceptWorkspaceInvitation, declineWorkspaceInvitation } from "./api/workspaces";
+import { getPendingInvitations, acceptInvitation, declineInvitation } from "./api/organizations";
 import useAuthStore from "./store/authStore";
 import CreateWorkspaceModal from "./CreateWorkspaceModal";
 import useSidebarOpen from "./hooks/useSidebarOpen";
@@ -455,7 +456,7 @@ function ContextMenu({ onClear, onOpenTask, onClose }) {
     const h = (e) => { if(ref.current&&!ref.current.contains(e.target)) onClose(); };
     setTimeout(()=>document.addEventListener("mousedown",h),0);
     return ()=>document.removeEventListener("mousedown",h);
-  },[]);
+  },[onClose]);
   return (
     <div ref={ref} style={{
       position:"absolute", right:0, top:"100%",
@@ -488,9 +489,7 @@ function CardRow({ item, isOut, onClearReq, onOpenTask }) {
       <div style={{ flex:1,minWidth:0 }}>
         <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{item.name}</div>
         <div style={{ fontSize:11.5,color:"#9CA3AF",marginTop:2 }}>
-          {isOut
-            ? <><span style={{ color:"#374151",fontWeight:500 }}>Sent to {item.to}</span> · {item.action}</>
-            : <>{item.from} · {item.action}</>}
+          {item.from} · {item.action}
         </div>
       </div>
       <div style={{ display:"flex",alignItems:"center",gap:8,flexShrink:0 }}>
@@ -533,6 +532,77 @@ function ConfirmModal({ onClose, onConfirm }) {
         <button onClick={()=>{onConfirm();onClose();}} style={{ width:"100%",background:"#2563EB",color:"#fff",border:"none",borderRadius:8,padding:12,fontSize:14,fontWeight:500,cursor:"pointer",fontFamily:"inherit" }}>
           {t("inbox.yes")}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+   INVITATION CARD
+══════════════════════════════════════════════════════════ */
+function InvitationCard({ invitation, onAccept, onDecline }) {
+  const [loading, setLoading] = useState(false);
+
+  const handle = async (action) => {
+    setLoading(true);
+    try { await action(); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div style={{
+      display:"flex", alignItems:"flex-start", gap:12,
+      borderBottom:"0.5px solid #F3F4F6", padding:"14px 4px",
+    }}>
+      <div style={{
+        width:36, height:36, borderRadius:8, background:"#EFF6FF",
+        display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+      }}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.8" width="18" height="18">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+      </div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:13, fontWeight:600, color:"#111827" }}>
+          {invitation._type === "workspace"
+            ? `Приглашение в кабинет «${invitation.workspace_name}»`
+            : `Приглашение в организацию «${invitation.organization_name}»`}
+        </div>
+        <div style={{ fontSize:11.5, color:"#6B7280", marginTop:2 }}>
+          {invitation.inviter_name} ({invitation.inviter_email}) приглашает вас
+        </div>
+        {invitation.role && (
+          <div style={{ fontSize:11, color:"#2563EB", marginTop:2, fontWeight:500 }}>
+            Роль: {invitation.role}
+          </div>
+        )}
+        <div style={{ display:"flex", gap:8, marginTop:10 }}>
+          <button
+            disabled={loading}
+            onClick={() => handle(onAccept)}
+            style={{
+              background:"#2563EB", color:"#fff", border:"none", borderRadius:7,
+              padding:"6px 16px", fontSize:12, fontWeight:600, cursor:"pointer",
+              fontFamily:"inherit", opacity: loading ? 0.7 : 1,
+            }}>
+            Принять
+          </button>
+          <button
+            disabled={loading}
+            onClick={() => handle(onDecline)}
+            style={{
+              background:"#F3F4F6", color:"#374151", border:"none", borderRadius:7,
+              padding:"6px 16px", fontSize:12, fontWeight:600, cursor:"pointer",
+              fontFamily:"inherit", opacity: loading ? 0.7 : 1,
+            }}>
+            Отклонить
+          </button>
+        </div>
+      </div>
+      <div style={{ fontSize:11, color:"#9CA3AF", whiteSpace:"nowrap", marginTop:2 }}>
+        {new Date(invitation.created_at).toLocaleDateString("ru-RU", { day:"numeric", month:"short" })}
       </div>
     </div>
   );
@@ -685,7 +755,7 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
     // Custom range: "DD.MM.YY-DD.MM.YY" or "DD.MM.YY"
     const match = date.match(/^(\d{2})\.(\d{2})\.(\d{2})(?:-(\d{2})\.(\d{2})\.(\d{2}))?$/);
     if (match) {
-      const parse = (d, m, y) => `20${y}-${m}-${d}`;
+      const parse = (d, m, y) => `20${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
       const from = parse(match[1], match[2], match[3]);
       const to   = match[4] ? parse(match[4], match[5], match[6]) : from;
       return { date_from: from, date_to: to };
@@ -693,25 +763,85 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
     return {};
   })();
 
-  // Always fetch all tasks — split incoming/outgoing by status
+  // Конвертируем выбранный проект (title) → workspace ID
+  const selectedWs = workspaces.find(w => w.title === project);
+  const wsParam    = selectedWs ? { workspace: selectedWs.id } : {};
+
+  // Fetch incoming tasks (assigned to me)
   const { data: tasksData } = useQuery({
-    queryKey: ["tasks", dateParams],
-    queryFn: () => getTasks(dateParams),
+    queryKey: ["tasks", "incoming", dateParams, wsParam],
+    queryFn: () => getTasks({ ...dateParams, ...wsParam }),
+    enabled: !isOut,
   });
 
-  const TERMINAL = new Set(["done", "skipped"]);
-  const rawTasks = tasksData?.results ?? [];
+  // Fetch outgoing tasks (in my workspaces, assigned to others)
+  const { data: outgoingData } = useQuery({
+    queryKey: ["tasks", "outgoing", dateParams, wsParam],
+    queryFn: () => getOutgoingTasks({ ...dateParams, ...wsParam }),
+    enabled: isOut,
+  });
 
-  const activeTasks = rawTasks.filter(t => !TERMINAL.has(t.status));
-  const doneTasks   = rawTasks.filter(t =>  TERMINAL.has(t.status));
+  // Fetch pending org invitations
+  const { data: invitationsData, refetch: refetchOrgInvitations } = useQuery({
+    queryKey: ["pendingOrgInvitations"],
+    queryFn: getPendingInvitations,
+    refetchInterval: 30_000,
+  });
+  const pendingOrgInvitations = Array.isArray(invitationsData) ? invitationsData : [];
 
-  const todayIn  = activeTasks.filter(t =>  isToday(t.created_at)).map(taskToCard);
-  const weekIn   = activeTasks.filter(t => !isToday(t.created_at)).map(taskToCard);
-  const todayOut = doneTasks.filter(t =>  isToday(t.created_at)).map(taskToCard);
-  const weekOut  = doneTasks.filter(t => !isToday(t.created_at)).map(taskToCard);
+  // Fetch pending workspace invitations
+  const { data: wsInvitationsData, refetch: refetchWsInvitations } = useQuery({
+    queryKey: ["pendingWsInvitations"],
+    queryFn: getPendingWorkspaceInvitations,
+    refetchInterval: 30_000,
+  });
+  const pendingWsInvitations = Array.isArray(wsInvitationsData) ? wsInvitationsData : [];
 
-  const todayData = isOut ? todayOut : todayIn;
-  const weekData  = isOut ? weekOut  : weekIn;
+  // Объединяем все приглашения: workspace-приглашения + org-приглашения
+  const pendingInvitations = [
+    ...pendingWsInvitations.map(inv => ({ ...inv, _type: "workspace" })),
+    ...pendingOrgInvitations.map(inv => ({ ...inv, _type: "org" })),
+  ];
+
+  const activeData = isOut
+    ? (outgoingData?.results ?? [])
+    : (tasksData?.results ?? []);
+  const todayData = activeData.filter(t =>  isToday(t.created_at)).map(taskToCard);
+  const weekData  = activeData.filter(t => !isToday(t.created_at)).map(taskToCard);
+
+  const handleAcceptInvitation = async (inv) => {
+    try {
+      if (inv._type === "workspace") {
+        await acceptWorkspaceInvitation(inv.workspace_id, inv.id);
+        toast.success(`Вы вступили в кабинет «${inv.workspace_name}»`);
+        refetchWsInvitations();
+        queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+        queryClient.invalidateQueries({ queryKey: ["members", inv.workspace_id] });
+      } else {
+        await acceptInvitation(inv.organization_id, inv.id);
+        toast.success(`Вы вступили в организацию «${inv.organization_name}»`);
+        refetchOrgInvitations();
+        queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось принять приглашение");
+    }
+  };
+
+  const handleDeclineInvitation = async (inv) => {
+    try {
+      if (inv._type === "workspace") {
+        await declineWorkspaceInvitation(inv.workspace_id, inv.id);
+        refetchWsInvitations();
+      } else {
+        await declineInvitation(inv.organization_id, inv.id);
+        refetchOrgInvitations();
+      }
+      toast.success("Приглашение отклонено");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось отклонить приглашение");
+    }
+  };
 
   const handleComplete = async (taskId, taskStatus) => {
     if (!taskId) return;
@@ -891,10 +1021,17 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
           <ProfileController show={!!profileView} view={profileView} setView={setProfileView} onLogOut={onGoToAuth}/>
 
           <div className="ib-container">
-            {/* Tabs */}
             <div className="ib-tabs">
-              <button className={`ib-tab${tab==="incoming"?" active":""}`} onClick={()=>setTab("incoming")}>{t("inbox.incoming")}</button>
-              <button className={`ib-tab${tab==="outgoing"?" active":""}`} onClick={()=>setTab("outgoing")}>{t("inbox.outgoing")}</button>
+              <button
+                className={`ib-tab${tab === "incoming" ? " active" : ""}`}
+                onClick={() => setTab("incoming")}>
+                {t("inbox.incoming")}
+              </button>
+              <button
+                className={`ib-tab${tab === "outgoing" ? " active" : ""}`}
+                onClick={() => setTab("outgoing")}>
+                {t("inbox.outgoing") || "Outgoing"}
+              </button>
             </div>
 
             {/* Filters */}
@@ -911,6 +1048,24 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
             {/* Scrollable content */}
             <div className="ib-inner">
               <div className="ib-content">
+
+                {/* Приглашения — только во вкладке Incoming */}
+                {!isOut && pendingInvitations.length > 0 && (
+                  <>
+                    <div className="ib-sec" style={{ color:"#2563EB" }}>
+                      Приглашения ({pendingInvitations.length})
+                    </div>
+                    {pendingInvitations.map(inv => (
+                      <InvitationCard
+                        key={inv.id}
+                        invitation={inv}
+                        onAccept={() => handleAcceptInvitation(inv)}
+                        onDecline={() => handleDeclineInvitation(inv)}
+                      />
+                    ))}
+                  </>
+                )}
+
                 <div className="ib-sec">{t("inbox.today")}</div>
                 {todayData.length === 0 && <div style={{ fontSize:12.5,color:"#9CA3AF",padding:"12px 4px" }}>{t("inbox.noItems")}</div>}
                 {todayData.map(item=>(

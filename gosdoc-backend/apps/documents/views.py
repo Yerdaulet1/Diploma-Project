@@ -24,7 +24,7 @@ from rest_framework.views import APIView
 
 from apps.workspaces.models import Workspace, WorkspaceMember
 from .audit_log import get_client_ip, log_document_action
-from .models import Comment, Document, DocumentAttachment, DocumentAuditLog, DocumentVersion, Subtask
+from .models import BlockchainBlock, Comment, Document, DocumentAttachment, DocumentAuditLog, DocumentVersion, Subtask
 from .serializers import (
     AttachmentConfirmSerializer,
     AttachmentRequestUploadSerializer,
@@ -166,17 +166,40 @@ class DocumentListCreateView(generics.ListCreateAPIView):
             "workspace", "uploaded_by", "current_version"
         ).distinct().order_by("-created_at")
 
-        # Фильтрация по статусу, кабинету, роли пользователя в кабинете
-        status_filter = self.request.query_params.get("status")
+        # По умолчанию скрываем архивированные (удалённые)
+        status_filter    = self.request.query_params.get("status")
         workspace_filter = self.request.query_params.get("workspace")
-        role_filter = self.request.query_params.get("role")
+        role_filter      = self.request.query_params.get("role")
+        search_query     = self.request.query_params.get("search", "").strip()
+
         if status_filter:
             qs = qs.filter(status=status_filter)
+        else:
+            qs = qs.exclude(status=Document.DocumentStatus.ARCHIVED)
+
         if workspace_filter:
             qs = qs.filter(workspace_id=workspace_filter)
+
         if role_filter:
             roles = [r.strip() for r in role_filter.split(",") if r.strip()]
             qs = qs.filter(workspace__members__user=self.request.user, workspace__members__role__in=roles)
+
+        file_type_filter = self.request.query_params.get("file_type", "").strip()
+        if file_type_filter:
+            qs = qs.filter(file_type__iexact=file_type_filter)
+
+        uploaded_by_me = self.request.query_params.get("uploaded_by_me", "").lower()
+        if uploaded_by_me in ("true", "1", "yes"):
+            qs = qs.filter(uploaded_by=self.request.user)
+
+        if search_query:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(title__icontains=search_query) |
+                Q(file_type__icontains=search_query) |
+                Q(workspace__title__icontains=search_query)
+            )
+
         return qs
 
     def create(self, request, *args, **kwargs):
@@ -416,7 +439,9 @@ class DocumentDetailView(generics.RetrieveUpdateDestroyAPIView):
         if request.method in ("PATCH", "PUT"):
             assert_workspace_role(request.user, obj.workspace, ["owner", "editor"])
         elif request.method == "DELETE":
-            assert_workspace_role(request.user, obj.workspace, ["owner"])
+            is_uploader = obj.uploaded_by_id == request.user.pk
+            if not is_uploader:
+                assert_workspace_role(request.user, obj.workspace, ["owner"])
 
     def destroy(self, request, *args, **kwargs):
         """Мягкое удаление: переводим в статус archived."""
@@ -1251,3 +1276,53 @@ class DocumentExtractContentView(APIView):
                 return Response({"detail": "Could not extract spreadsheet data."}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
         return Response({"detail": f"Extraction not supported for file type: {ft}"}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+
+
+# ============================================================
+# Blockchain верификация
+# ============================================================
+
+class BlockchainView(APIView):
+    """
+    GET /api/v1/documents/{pk}/blockchain/
+    Возвращает blockchain-цепочку верификации документа.
+    Каждый блок = хеш документа на момент завершения задачи.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        document = get_object_or_404(
+            Document.objects.filter(workspace__members__user=request.user).distinct(),
+            pk=pk,
+        )
+        from apps.documents.blockchain import verify_chain
+        blocks = verify_chain(str(pk))
+
+        data = []
+        for b in blocks:
+            data.append({
+                "id":            str(b.id),
+                "step_order":    b.step_order,
+                "document_hash": b.document_hash,
+                "previous_hash": b.previous_hash,
+                "block_hash":    b.block_hash,
+                "timestamp":     b.timestamp.isoformat() if b.timestamp else None,
+                "tampered":      b.tampered,
+                "chain_valid":   getattr(b, "chain_valid", True),
+                "task_title":    b.task.title if b.task else "—",
+                "task_status":   b.task.status if b.task else "—",
+                "assigned_to":   b.task.assigned_to.full_name if b.task and b.task.assigned_to else "—",
+            })
+
+        any_tampered  = any(b["tampered"] for b in data)
+        chain_intact  = all(b["chain_valid"] for b in data)
+
+        return Response({
+            "document_id":    str(document.id),
+            "document_title": document.title,
+            "blocks":         data,
+            "total_blocks":   len(data),
+            "any_tampered":   any_tampered,
+            "chain_intact":   chain_intact,
+            "status":         "TAMPERED" if any_tampered else ("VERIFIED" if data else "PENDING"),
+        })

@@ -23,7 +23,3 @@ export const resetPasswordConfirm = (email, code, new_password) =>
     .post("/auth/password/reset/confirm/", { email, code, new_password })
     .then((r) => r.data);
 
-export const changePassword = (old_password, new_password) =>
-  api
-    .post("/auth/password/change/", { old_password, new_password })
-    .then((r) => r.data);

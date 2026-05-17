@@ -207,7 +207,7 @@ function ContextMenu({ onClear, onOpen, onClose }) {
     const h = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
     setTimeout(()=>document.addEventListener("mousedown", h), 0);
     return () => document.removeEventListener("mousedown", h);
-  }, []);
+  }, [onClose]);
   return (
     <div ref={ref} className="nt-ctx">
       <div className="nt-ctx-item" onClick={()=>{ onClear(); onClose(); }}>

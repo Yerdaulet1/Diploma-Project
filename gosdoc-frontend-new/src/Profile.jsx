@@ -9,6 +9,12 @@ import {
   requestEmailChange, confirmEmailChange,
 } from "./api/users";
 
+/* Применяет тему к <html> и сохраняет в localStorage */
+export function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme || "light");
+  localStorage.setItem("gosdoc_theme", theme || "light");
+}
+
 /* ══════════════════════════════════════════════════════════
    CSS
 ══════════════════════════════════════════════════════════ */
@@ -734,7 +740,9 @@ export function SettingsModal({ onClose }) {
       .then(s => {
         setNotifEmail(s.notification_email);
         setNotifPush(s.notification_push);
-        setTheme(s.theme || "light");
+        const savedTheme = s.theme || "light";
+        setTheme(savedTheme);
+        applyTheme(savedTheme);
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
@@ -793,13 +801,13 @@ export function SettingsModal({ onClose }) {
             <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
               <span className="pf-toggle-label">{t("settings.theme")}</span>
               <div className="pf-theme-sel">
-                <button className={`pf-theme-btn${theme==="light"?" active":""}`} onClick={()=>{ setTheme("light"); persist({ theme:"light" }); }} title="Light">
+                <button className={`pf-theme-btn${theme==="light"?" active":""}`} onClick={()=>{ setTheme("light"); applyTheme("light"); persist({ theme:"light" }); }} title="Light">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
                 </button>
-                <button className={`pf-theme-btn${theme==="dark"?" active":""}`} onClick={()=>{ setTheme("dark"); persist({ theme:"dark" }); }} title="Dark">
+                <button className={`pf-theme-btn${theme==="dark"?" active":""}`} onClick={()=>{ setTheme("dark"); applyTheme("dark"); persist({ theme:"dark" }); }} title="Dark">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                 </button>
-                <button className={`pf-theme-btn${theme==="auto"?" active":""}`} onClick={()=>{ setTheme("auto"); persist({ theme:"auto" }); }} title="Auto">
+                <button className={`pf-theme-btn${theme==="auto"?" active":""}`} onClick={()=>{ setTheme("auto"); applyTheme("auto"); persist({ theme:"auto" }); }} title="Auto">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                 </button>
               </div>
