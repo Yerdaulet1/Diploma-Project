@@ -42,6 +42,9 @@ openpyxl==3.1.*
 django-ratelimit==4.1.*
 django-cors-headers==4.4.*
 
+# Search (опционально — без пакета поиск падает на PostgreSQL FTS)
+meilisearch==0.31.*
+
 # Monitoring
 sentry-sdk==2.13.*
 

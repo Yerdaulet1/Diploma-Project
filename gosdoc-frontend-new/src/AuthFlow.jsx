@@ -12,24 +12,6 @@ import logoImg from "./assets/Group 2.svg";
 ═══════════════════════════════════════════════════════ */
 const TOTAL_STEPS = 3;
 
-const features = [
-  {
-    icon: <UsersIcon />,
-    title: "Structured Team Workflows",
-    desc: "Assign roles, define approval steps, and track progress in real time.",
-  },
-  {
-    icon: <DocIcon />,
-    title: "AI Change Verification",
-    desc: "Automatically detects meaningful document changes before approval.",
-  },
-  {
-    icon: <ShieldIcon />,
-    title: "Secure Digital Signatures",
-    desc: "Sign documents directly within the platform with verified electronic signatures.",
-  },
-];
-
 /* ═══════════════════════════════════════════════════════
    ICONS
 ═══════════════════════════════════════════════════════ */
@@ -176,10 +158,11 @@ function SocialButtons() {
 }
 
 function Divider() {
+  const { t } = useTranslation();
   return (
     <div style={s.dividerRow}>
       <div style={s.divLine} />
-      <span style={{ fontSize: 12, color: "#9CA3AF" }}>or</span>
+      <span style={{ fontSize: 12, color: "#9CA3AF" }}>{t("auth.or")}</span>
       <div style={s.divLine} />
     </div>
   );
@@ -201,21 +184,77 @@ function ProgressBar({ step }) {
 /* ═══════════════════════════════════════════════════════
    RIGHT PANEL (shared across all pages)
 ═══════════════════════════════════════════════════════ */
+const LANGUAGES = [
+  { code: "en", short: "EN", label: "English" },
+  { code: "ru", short: "RU", label: "Русский" },
+  { code: "kk", short: "KK", label: "Қазақша" },
+];
+
 function RightPanel({ activePage, onNavigate }) {
+  const { t, i18n } = useTranslation();
+  const [langOpen, setLangOpen] = useState(false);
+  const langRef = useRef(null);
+
+  const features = [
+    { icon: <UsersIcon />,  title: t("auth.feat1Title"), desc: t("auth.feat1Desc") },
+    { icon: <DocIcon />,    title: t("auth.feat2Title"), desc: t("auth.feat2Desc") },
+    { icon: <ShieldIcon />, title: t("auth.feat3Title"), desc: t("auth.feat3Desc") },
+  ];
+
+  useEffect(() => {
+    if (!langOpen) return;
+    const h = (e) => { if (langRef.current && !langRef.current.contains(e.target)) setLangOpen(false); };
+    setTimeout(() => document.addEventListener("mousedown", h), 0);
+    return () => document.removeEventListener("mousedown", h);
+  }, [langOpen]);
+
+  const currentLang = LANGUAGES.find(l => l.code === i18n.language) || LANGUAGES[0];
+
+  const selectLang = (code) => {
+    i18n.changeLanguage(code);
+    localStorage.setItem("gosdoc_lang", code);
+    setLangOpen(false);
+  };
+
   return (
     <div className="auth-right">
       <div style={s.rightTopBar}>
-        <div style={s.langPicker}>
-          EN
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12" style={{ marginLeft: 3 }}>
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
+        <div ref={langRef} style={{ position: "relative" }}>
+          <button
+            type="button"
+            onClick={() => setLangOpen(v => !v)}
+            style={{ ...s.langPicker, background: "none", border: "none", padding: 0, fontFamily: "inherit" }}
+          >
+            {currentLang.short}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12" style={{ marginLeft: 3, transform: langOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {langOpen && (
+            <div style={s.langDropdown}>
+              {LANGUAGES.map(opt => (
+                <div
+                  key={opt.code}
+                  onClick={() => selectLang(opt.code)}
+                  style={{
+                    ...s.langItem,
+                    color: opt.code === currentLang.code ? "#2563EB" : "#374151",
+                    fontWeight: opt.code === currentLang.code ? 600 : 400,
+                    background: opt.code === currentLang.code ? "#EFF6FF" : "transparent",
+                  }}
+                >
+                  <span style={{ fontWeight: 700, fontSize: 12, color: "#9CA3AF", width: 22 }}>{opt.short}</span>
+                  <span>{opt.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <button
           onClick={() => onNavigate(activePage === "signin" ? "signup" : "signin")}
           style={s.navBtn}
         >
-          {activePage === "signin" ? "SIGN UP" : "SIGN IN"}
+          {activePage === "signin" ? t("auth.signUpUpper") : t("auth.signInUpper")}
         </button>
       </div>
 
@@ -236,8 +275,7 @@ function RightPanel({ activePage, onNavigate }) {
 
       {/* Tagline pinned to bottom */}
       <p style={{ ...s.tagline, paddingTop: 0, marginTop: 0 }}>
-        Collaborate in real time, automate approvals, and<br />
-        manage document workflows in one secure workspace.
+        {t("auth.tagline")}
       </p>
     </div>
   );
@@ -262,8 +300,8 @@ function SignInPage({ onNavigate }) {
 
   const submit = async () => {
     const errs = {};
-    if (!form.email.trim() || !/\S+@\S+\.\S+/.test(form.email)) errs.email = "Valid email required.";
-    if (!form.password) errs.password = "Password is required.";
+    if (!form.email.trim() || !/\S+@\S+\.\S+/.test(form.email)) errs.email = t("auth.validEmailRequired");
+    if (!form.password) errs.password = t("auth.passwordRequired");
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
     setLoading(true);
@@ -276,7 +314,7 @@ function SignInPage({ onNavigate }) {
     } catch (err) {
       const detail = err.response?.data?.detail;
       const nonField = err.response?.data?.non_field_errors?.[0];
-      toast.error(detail || nonField || "Invalid email or password.");
+      toast.error(detail || nonField || t("auth.invalidCredentials"));
       setLoading(false);
     }
   };
@@ -292,7 +330,7 @@ function SignInPage({ onNavigate }) {
       <div className="auth-formwrap">
         <div className="auth-inner">
           <h1 className="auth-heading" style={{ ...s.heading, textAlign: "center" }}>{t("auth.signIn")}</h1>
-          <p style={{ ...s.subtext, textAlign: "center" }}>Welcome back! Please enter your details.</p>
+          <p style={{ ...s.subtext, textAlign: "center" }}>{t("auth.welcomeBack")}</p>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <FieldGroup label={t("auth.email")} required error={errors.email}>
@@ -300,7 +338,7 @@ function SignInPage({ onNavigate }) {
                 <MailIcon />
                 <input
                   name="email" type="email" style={s.input}
-                  placeholder="ex: example@gmail.com"
+                  placeholder={t("auth.emailPlaceholder")}
                   value={form.email} onChange={change}
                   onKeyDown={e => e.key === "Enter" && submit()}
                 />
@@ -331,7 +369,7 @@ function SignInPage({ onNavigate }) {
                 onChange={e => setRemember(e.target.checked)}
                 style={{ accentColor: "#2563EB", width: 14, height: 14 }}
               />
-              <span style={{ fontSize: 13, color: "#6B7280" }}>Remember me</span>
+              <span style={{ fontSize: 13, color: "#6B7280" }}>{t("auth.rememberMe")}</span>
             </label>
             <button onClick={() => onNavigate("forgot")} style={{ ...s.ghostBtn, color: "#2563EB", fontSize: 13 }}>
               {t("auth.forgotPassword")}
@@ -344,7 +382,7 @@ function SignInPage({ onNavigate }) {
             onClick={submit}
             disabled={loading}
           >
-            {loading ? "Signing in…" : t("auth.signIn")}
+            {loading ? t("auth.signingIn") : t("auth.signIn")}
           </button>
 
           <Divider />
@@ -383,11 +421,11 @@ function SignUpStep1({ onNext, onNavigate }) {
 
   const submit = async () => {
     const errs = {};
-    if (!form.fullName.trim()) errs.fullName = "Full name is required.";
-    if (!form.email.trim() || !/\S+@\S+\.\S+/.test(form.email)) errs.email = "Valid email required.";
+    if (!form.fullName.trim()) errs.fullName = t("auth.fullNameRequired");
+    if (!form.email.trim() || !/\S+@\S+\.\S+/.test(form.email)) errs.email = t("auth.validEmailRequired");
     if (form.password.length < 8 || !/[A-Z]/.test(form.password) || !/\d/.test(form.password))
-      errs.password = "Min 8 chars, one uppercase and one number.";
-    if (!form.agreed) errs.agreed = "You must agree to continue.";
+      errs.password = t("auth.passwordRule");
+    if (!form.agreed) errs.agreed = t("auth.agreeRequired");
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
     setLoading(true);
@@ -408,7 +446,7 @@ function SignUpStep1({ onNext, onNavigate }) {
       if (Object.keys(newErrs).length) {
         setErrors(newErrs);
       } else {
-        toast.error(data.detail || "Registration failed. Please try again.");
+        toast.error(data.detail || t("auth.registrationFailed"));
       }
       setLoading(false);
     }
@@ -422,20 +460,20 @@ function SignUpStep1({ onNext, onNavigate }) {
       <div className="auth-formwrap">
         <div className="auth-inner">
           <h1 className="auth-heading" style={s.heading}>{t("auth.signUp")}</h1>
-          <p style={s.stepLabel}>STEP 1 OF 3</p>
-          <p style={s.subtext}>Please fill in the form to create an account.</p>
+          <p style={s.stepLabel}>{t("auth.stepOf", { step: 1, total: TOTAL_STEPS })}</p>
+          <p style={s.subtext}>{t("auth.step1Subtitle")}</p>
 
           <div className="auth-row-split">
             <FieldGroup label={t("auth.fullName")} required error={errors.fullName}>
               <InputWrap error={errors.fullName}>
                 <PersonIcon />
-                <input name="fullName" style={s.input} placeholder="ex: John Doe" value={form.fullName} onChange={change} />
+                <input name="fullName" style={s.input} placeholder={t("auth.fullNamePlaceholder")} value={form.fullName} onChange={change} />
               </InputWrap>
             </FieldGroup>
             <FieldGroup label={t("auth.email")} required error={errors.email}>
               <InputWrap error={errors.email}>
                 <MailIcon />
-                <input name="email" type="email" style={s.input} placeholder="ex: example@gmail.com" value={form.email} onChange={change} />
+                <input name="email" type="email" style={s.input} placeholder={t("auth.emailPlaceholder")} value={form.email} onChange={change} />
               </InputWrap>
             </FieldGroup>
           </div>
@@ -444,12 +482,12 @@ function SignUpStep1({ onNext, onNavigate }) {
             <FieldGroup label={t("auth.password")} required error={errors.password}>
               <InputWrap error={errors.password}>
                 <LockIcon />
-                <input name="password" type={showPw ? "text" : "password"} style={s.input} placeholder="Create a password" value={form.password} onChange={change} />
+                <input name="password" type={showPw ? "text" : "password"} style={s.input} placeholder={t("auth.createPasswordPlaceholder")} value={form.password} onChange={change} />
                 <button onClick={() => setShowPw(v => !v)} style={s.iconBtn}><EyeIcon open={showPw} /></button>
               </InputWrap>
               {!errors.password && (
                 <span style={{ fontSize: 11, color: "#9CA3AF", marginTop: 3, display: "block" }}>
-                  Min 8 characters, one uppercase letter and one number.*
+                  {t("auth.passwordHint")}
                 </span>
               )}
             </FieldGroup>
@@ -459,15 +497,15 @@ function SignUpStep1({ onNext, onNavigate }) {
             <input type="checkbox" name="agreed" checked={form.agreed} onChange={change}
               style={{ marginTop: 2, accentColor: "#2563EB", width: 14, height: 14, flexShrink: 0 }} />
             <span style={{ fontSize: 12.5, color: "#6B7280", lineHeight: 1.4 }}>
-              I have read and agree to the{" "}
-              <a href="#" style={s.blueLink}>User Agreement</a> &amp;{" "}
-              <a href="#" style={s.blueLink}>Privacy Policy</a>.
+              {t("auth.agreementPrefix")}{" "}
+              <a href="#" style={s.blueLink}>{t("auth.userAgreement")}</a> &amp;{" "}
+              <a href="#" style={s.blueLink}>{t("auth.privacyPolicy")}</a>.
             </span>
           </label>
           {errors.agreed && <span style={{ fontSize: 11, color: "#EF4444" }}>{errors.agreed}</span>}
 
           <button style={{ ...s.ctaBtn, marginTop: 14, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
-            {loading ? "Creating account…" : t("auth.register")}
+            {loading ? t("auth.creatingAccount") : t("auth.register")}
           </button>
           <Divider />
           <SocialButtons />
@@ -490,6 +528,7 @@ function SignUpStep1({ onNext, onNavigate }) {
    SIGN UP — STEP 2 (OTP)
 ═══════════════════════════════════════════════════════ */
 function SignUpStep2({ data, onNext }) {
+  const { t } = useTranslation();
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [timer, setTimer] = useState(60);
   const [status, setStatus] = useState("idle"); // "idle" | "error" | "success" | "loading"
@@ -545,9 +584,9 @@ function SignUpStep2({ data, onNext }) {
       setTimer(60);
       setCode(["", "", "", "", "", ""]);
       setStatus("idle");
-      toast.success("A new code has been sent to your email.");
+      toast.success(t("auth.newCodeSent"));
     } catch (err) {
-      toast.error("Failed to resend code. Please try again.");
+      toast.error(t("auth.resendFailed"));
     }
   };
 
@@ -572,13 +611,13 @@ function SignUpStep2({ data, onNext }) {
       </div>
       <div className="auth-formwrap">
         <div className="auth-inner">
-          <h1 className="auth-heading" style={s.heading}>Sign Up</h1>
-          <p style={s.stepLabel}>STEP 2 OF 3</p>
-          <p style={s.subtext}>We've sent a 6-digit confirmation code to your email.</p>
+          <h1 className="auth-heading" style={s.heading}>{t("auth.signUp")}</h1>
+          <p style={s.stepLabel}>{t("auth.stepOf", { step: 2, total: TOTAL_STEPS })}</p>
+          <p style={s.subtext}>{t("auth.step2Subtitle")}</p>
 
           <div style={{ textAlign: "center", marginTop: 36, marginBottom: 28 }}>
             <p style={{ fontSize: 14, color: "#374151", marginBottom: 6 }}>
-              Please enter the verification code sent to
+              {t("auth.enterCodeSentTo")}
             </p>
             <p style={{ fontSize: 14, color: "#2563EB", fontWeight: 600 }}>
               {data?.email || "example@gmail.com"}
@@ -612,7 +651,7 @@ function SignUpStep2({ data, onNext }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13">
                 <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
               </svg>
-              Invalid code. Please try again.
+              {t("auth.invalidCode")}
             </p>
           )}
           {status === "success" && (
@@ -620,19 +659,19 @@ function SignUpStep2({ data, onNext }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="13" height="13">
                 <circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/>
               </svg>
-              Code verified!
+              {t("auth.codeVerified")}
             </p>
           )}
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 20 }}>
             <span style={{ fontSize: 13, color: "#6B7280" }}>
-              Didn't receive the code?{" "}
+              {t("auth.didntReceive")}{" "}
               <button
                 onClick={handleResend}
                 disabled={timer > 0}
                 style={{ ...s.ghostBtn, color: timer > 0 ? "#9CA3AF" : "#2563EB", fontSize: 13, cursor: timer > 0 ? "not-allowed" : "pointer" }}
               >
-                Resend
+                {t("auth.resend")}
               </button>
             </span>
             <span style={{ fontSize: 13, fontWeight: 600, color: "#EF4444" }}>{fmt}</span>
@@ -643,7 +682,7 @@ function SignUpStep2({ data, onNext }) {
             onClick={submit}
             disabled={isLoading || status === "success"}
           >
-            {isLoading ? "Verifying…" : status === "success" ? "✓ Verified" : "Verify Code"}
+            {isLoading ? t("auth.verifying") : status === "success" ? t("auth.verified") : t("auth.verifyBtn")}
           </button>
         </div>
       </div>
@@ -655,18 +694,19 @@ function SignUpStep2({ data, onNext }) {
 /* ═══════════════════════════════════════════════════════
    SIGN UP — STEP 3 (Workspace)
 ═══════════════════════════════════════════════════════ */
-const WORKSPACE_TYPES = [
-  { value: "personal",      label: "Personal"      },
-  { value: "team",          label: "Team"          },
-  { value: "organization",  label: "Organization"  },
-];
-
 function SignUpStep3({ onNext, onBack, onSkip }) {
+  const { t } = useTranslation();
   const [form, setForm] = useState({ name: "", type: "" });
   const [typeOpen, setTypeOpen] = useState(false);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const typeRef = useRef(null);
+
+  const WORKSPACE_TYPES = [
+    { value: "personal",     label: t("auth.wsPersonal")     },
+    { value: "team",         label: t("auth.wsTeam")         },
+    { value: "organization", label: t("auth.wsOrganization") },
+  ];
 
   useEffect(() => {
     if (!typeOpen) return;
@@ -677,8 +717,8 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
 
   const submit = async () => {
     const errs = {};
-    if (!form.name.trim()) errs.name = "Workspace name is required.";
-    if (!form.type) errs.type = "Please select a workspace type.";
+    if (!form.name.trim()) errs.name = t("auth.workspaceNameRequired");
+    if (!form.type) errs.type = t("auth.workspaceTypeRequired");
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
     setLoading(true);
@@ -686,12 +726,12 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
       await createWorkspace({ title: form.name, type: form.type });
       onNext({});
     } catch (err) {
-      toast.error("Failed to create workspace. You can set it up later.");
+      toast.error(t("auth.wsCreateFailed"));
       onNext({});
     }
   };
 
-  const selectedLabel = WORKSPACE_TYPES.find(t => t.value === form.type)?.label || "";
+  const selectedLabel = WORKSPACE_TYPES.find(opt => opt.value === form.type)?.label || "";
 
   return (
     <>
@@ -700,19 +740,19 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
           <button onClick={onBack} style={s.backBtn}><BackIcon /></button>
           <img src={logoImg} alt="GosDoc" style={{ height: 36 }} />
         </div>
-        <button onClick={onSkip} style={s.skipBtn}>Skip and start</button>
+        <button onClick={onSkip} style={s.skipBtn}>{t("auth.skipAndStart")}</button>
       </div>
       <div className="auth-formwrap">
         <div className="auth-inner">
-          <h1 className="auth-heading" style={s.heading}>Sign Up</h1>
-          <p style={s.stepLabel}>STEP 3 OF 3</p>
-          <p style={s.subtext}>Create your first workspace to start managing documents.</p>
+          <h1 className="auth-heading" style={s.heading}>{t("auth.signUp")}</h1>
+          <p style={s.stepLabel}>{t("auth.stepOf", { step: 3, total: TOTAL_STEPS })}</p>
+          <p style={s.subtext}>{t("auth.step3Subtitle")}</p>
 
-          <FieldGroup label="Workspace Name" required error={errors.name}>
+          <FieldGroup label={t("auth.workspaceName")} required error={errors.name}>
             <InputWrap error={errors.name}>
               <BuildingIcon />
               <input
-                name="name" style={s.input} placeholder="ex: Dream"
+                name="name" style={s.input} placeholder={t("auth.workspaceNamePlaceholder")}
                 value={form.name}
                 onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setErrors(er => ({ ...er, name: "" })); }}
               />
@@ -720,7 +760,7 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
           </FieldGroup>
 
           <div style={{ marginTop: 14 }}>
-            <FieldGroup label="Workspace Type" required error={errors.type}>
+            <FieldGroup label={t("auth.workspaceType")} required error={errors.type}>
               <div ref={typeRef} style={{ position: "relative" }}>
                 <div
                   onClick={() => setTypeOpen(v => !v)}
@@ -730,7 +770,7 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
                     background: "#fff", padding: "0 12px", height: 44, cursor: "pointer",
                   }}>
                   <span style={{ fontSize: 13.5, color: selectedLabel ? "#374151" : "#9CA3AF" }}>
-                    {selectedLabel || "Select one"}
+                    {selectedLabel || t("auth.selectOne")}
                   </span>
                   <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="14" height="14">
                     <polyline points="6 9 12 15 18 9"/>
@@ -762,7 +802,7 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
           </div>
 
           <button style={{ ...s.ctaBtn, marginTop: 28, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
-            {loading ? "Creating…" : "Start"}
+            {loading ? t("auth.creatingWs") : t("auth.startBtn")}
           </button>
         </div>
       </div>
@@ -776,6 +816,7 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
    SUCCESS SCREEN
 ═══════════════════════════════════════════════════════ */
 function SuccessScreen({ onNavigate }) {
+  const { t } = useTranslation();
   const { setIsRegistering } = useAuthStore();
 
   const handleGo = () => {
@@ -799,18 +840,18 @@ function SuccessScreen({ onNavigate }) {
           <polyline points="20 6 9 17 4 12" />
         </svg>
       </div>
-      <h2 style={{ fontSize: 28, fontWeight: 700, color: "#111827", marginBottom: 8 }}>You're all set!</h2>
+      <h2 style={{ fontSize: 28, fontWeight: 700, color: "#111827", marginBottom: 8 }}>{t("auth.allSet")}</h2>
       <p style={{ fontSize: 14, color: "#6B7280", marginBottom: 32, lineHeight: 1.6 }}>
-        Your account has been created successfully.<br />Start collaborating with your team.
+        {t("auth.successLine1")}<br />{t("auth.successLine2")}
       </p>
       <button style={{ ...s.ctaBtn, maxWidth: 320 }} onClick={handleGo}>
-        Go to Dashboard
+        {t("auth.goDashboard")}
       </button>
       <button
         style={{ ...s.ghostBtn, color: "#6B7280", marginTop: 14, fontSize: 13 }}
         onClick={() => onNavigate("signin")}
       >
-        Back to Sign In
+        {t("auth.backToSignIn")}
       </button>
     </div>
   );
@@ -821,13 +862,14 @@ function SuccessScreen({ onNavigate }) {
 ═══════════════════════════════════════════════════════ */
 /* ── Forgot Step 1: Enter email ── */
 function ForgotStep1({ onNext, onNavigate }) {
+  const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
     if (!email.trim() || !/\S+@\S+\.\S+/.test(email)) {
-      setError("Please enter a valid email address.");
+      setError(t("auth.validEmailMsg"));
       return;
     }
     setLoading(true);
@@ -835,7 +877,7 @@ function ForgotStep1({ onNext, onNavigate }) {
       await resetPasswordRequest(email);
       onNext({ email });
     } catch (err) {
-      const msg = err.response?.data?.detail || err.response?.data?.email?.[0] || "Failed to send reset code.";
+      const msg = err.response?.data?.detail || err.response?.data?.email?.[0] || t("auth.sendCodeFailed");
       toast.error(msg);
       setLoading(false);
     }
@@ -851,17 +893,17 @@ function ForgotStep1({ onNext, onNavigate }) {
       </div>
       <div className="auth-formwrap">
         <div className="auth-inner">
-          <h1 className="auth-heading" style={s.heading}>Forgot Password</h1>
+          <h1 className="auth-heading" style={s.heading}>{t("auth.forgotTitle")}</h1>
           <p style={{ ...s.subtext, marginBottom: 28 }}>
-            Enter your email and we'll send you a 6-digit confirmation code.
+            {t("auth.forgotDesc")}
           </p>
 
-          <FieldGroup label="Email Address" required error={error}>
+          <FieldGroup label={t("auth.emailAddress")} required error={error}>
             <InputWrap error={error}>
               <MailIcon />
               <input
                 type="email" style={s.input}
-                placeholder="ex: example@gmail.com"
+                placeholder={t("auth.emailPlaceholder")}
                 value={email}
                 onChange={e => { setEmail(e.target.value); setError(""); }}
                 onKeyDown={e => e.key === "Enter" && submit()}
@@ -870,14 +912,14 @@ function ForgotStep1({ onNext, onNavigate }) {
           </FieldGroup>
 
           <button style={{ ...s.ctaBtn, marginTop: 20, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
-            {loading ? "Sending code…" : "Send Code"}
+            {loading ? t("auth.sendingCode") : t("auth.sendCode")}
           </button>
 
           <p style={{ textAlign: "center", fontSize: 13, color: "#6B7280", marginTop: 20 }}>
-            Remembered it?{" "}
+            {t("auth.remembered")}{" "}
             <button onClick={() => onNavigate("signin")}
               style={{ ...s.ghostBtn, color: "#2563EB", fontSize: 13, fontWeight: 600 }}>
-              Back to Sign In
+              {t("auth.backToSignIn")}
             </button>
           </p>
         </div>
@@ -888,6 +930,7 @@ function ForgotStep1({ onNext, onNavigate }) {
 
 /* ── Forgot Step 2: OTP verification ── */
 function ForgotStep2({ data, onNext, onBack }) {
+  const { t } = useTranslation();
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [timer, setTimer] = useState(60);
   const [status, setStatus] = useState("idle"); // "idle" | "error" | "success"
@@ -922,9 +965,9 @@ function ForgotStep2({ data, onNext, onBack }) {
       setTimer(60);
       setCode(["", "", "", "", "", ""]);
       setStatus("idle");
-      toast.success("A new code has been sent to your email.");
+      toast.success(t("auth.newCodeSent"));
     } catch (err) {
-      toast.error("Failed to resend code.");
+      toast.error(t("auth.forgotResendFailed"));
     }
   };
 
@@ -959,12 +1002,12 @@ function ForgotStep2({ data, onNext, onBack }) {
       </div>
       <div className="auth-formwrap">
         <div className="auth-inner">
-          <h1 className="auth-heading" style={s.heading}>Request sent</h1>
-          <p style={s.subtext}>We've sent a 6-digit confirmation code to your email.</p>
+          <h1 className="auth-heading" style={s.heading}>{t("auth.requestSent")}</h1>
+          <p style={s.subtext}>{t("auth.step2Subtitle")}</p>
 
           <div style={{ textAlign: "center", marginTop: 32, marginBottom: 24 }}>
             <p style={{ fontSize: 14, color: "#374151", marginBottom: 6 }}>
-              Please enter the verification code sent to
+              {t("auth.enterCodeSentTo")}
             </p>
             <p style={{ fontSize: 14, color: "#EF4444", fontWeight: 600 }}>
               {data?.email || "example@gmail.com"}
@@ -995,7 +1038,7 @@ function ForgotStep2({ data, onNext, onBack }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13">
                 <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
               </svg>
-              Please enter all 6 digits.
+              {t("auth.enterAllDigits")}
             </p>
           )}
           {status === "success" && (
@@ -1003,19 +1046,19 @@ function ForgotStep2({ data, onNext, onBack }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="13" height="13">
                 <circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/>
               </svg>
-              Code accepted!
+              {t("auth.codeAccepted")}
             </p>
           )}
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 20 }}>
             <span style={{ fontSize: 13, color: "#6B7280" }}>
-              Didn't receive the code?{" "}
+              {t("auth.didntReceive")}{" "}
               <button
                 onClick={handleResend}
                 disabled={timer > 0}
                 style={{ ...s.ghostBtn, color: timer > 0 ? "#9CA3AF" : "#2563EB", fontSize: 13, cursor: timer > 0 ? "not-allowed" : "pointer" }}
               >
-                Resend
+                {t("auth.resend")}
               </button>
             </span>
             <span style={{ fontSize: 13, fontWeight: 600, color: "#EF4444" }}>{fmt}</span>
@@ -1026,7 +1069,7 @@ function ForgotStep2({ data, onNext, onBack }) {
             onClick={submit}
             disabled={status === "success"}
           >
-            {status === "success" ? "✓ Continue" : "Confirm"}
+            {status === "success" ? t("auth.continueBtn") : t("auth.confirmBtn")}
           </button>
         </div>
       </div>
@@ -1036,6 +1079,7 @@ function ForgotStep2({ data, onNext, onBack }) {
 
 /* ── Forgot Step 3: Reset password ── */
 function ForgotStep3({ data, onNavigate }) {
+  const { t } = useTranslation();
   const [form, setForm] = useState({ password: "", confirm: "" });
   const [show, setShow] = useState({ pw: false, confirm: false });
   const [errors, setErrors] = useState({});
@@ -1049,18 +1093,18 @@ function ForgotStep3({ data, onNavigate }) {
   const submit = async () => {
     const errs = {};
     if (form.password.length < 8 || !/[A-Z]/.test(form.password) || !/\d/.test(form.password))
-      errs.password = "Min 8 chars, one uppercase letter and one number.";
+      errs.password = t("auth.passwordRule");
     if (form.confirm !== form.password)
-      errs.confirm = "Passwords do not match.";
+      errs.confirm = t("auth.passwordsDontMatch");
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
     setLoading(true);
     try {
       await resetPasswordConfirm(data?.email, data?.code, form.password);
-      toast.success("Password reset successfully!");
+      toast.success(t("auth.resetSuccess"));
       onNavigate("signin");
     } catch (err) {
-      const detail = err.response?.data?.detail || "Failed to reset password. Please try again.";
+      const detail = err.response?.data?.detail || t("auth.resetFailed");
       toast.error(detail);
       setLoading(false);
     }
@@ -1076,12 +1120,12 @@ function ForgotStep3({ data, onNavigate }) {
       </div>
       <div className="auth-formwrap">
         <div className="auth-inner">
-          <h1 className="auth-heading" style={s.heading}>Reset password</h1>
+          <h1 className="auth-heading" style={s.heading}>{t("auth.resetTitle")}</h1>
           <p style={{ ...s.subtext, marginBottom: 28 }}>
-            Enter a new password below to change your password.
+            {t("auth.resetDesc")}
           </p>
 
-          <FieldGroup label="New Password" required error={errors.password}>
+          <FieldGroup label={t("auth.newPasswordLabel")} required error={errors.password}>
             <InputWrap error={errors.password}>
               <LockIcon />
               <input
@@ -1095,18 +1139,18 @@ function ForgotStep3({ data, onNavigate }) {
             </InputWrap>
             {!errors.password && (
               <span style={{ fontSize: 11, color: "#9CA3AF", marginTop: 3, display: "block" }}>
-                Must be at least 8 characters, including one uppercase letter and one number.*
+                {t("auth.passwordHint")}
               </span>
             )}
           </FieldGroup>
 
           <div style={{ marginTop: 16 }}>
-            <FieldGroup label="Re-enter New Password" required error={errors.confirm}>
+            <FieldGroup label={t("auth.reEnterPassword")} required error={errors.confirm}>
               <InputWrap error={errors.confirm}>
                 <LockIcon />
                 <input
                   name="confirm" type={show.confirm ? "text" : "password"} style={s.input}
-                  placeholder="Re-enter password"
+                  placeholder={t("auth.reEnterPlaceholder")}
                   value={form.confirm} onChange={change}
                 />
                 <button onClick={() => setShow(v => ({ ...v, confirm: !v.confirm }))} style={s.iconBtn}>
@@ -1117,7 +1161,7 @@ function ForgotStep3({ data, onNavigate }) {
           </div>
 
           <button style={{ ...s.ctaBtn, marginTop: 28, opacity: loading ? 0.7 : 1 }} onClick={submit} disabled={loading}>
-            {loading ? "Resetting…" : "Done"}
+            {loading ? t("auth.resetting") : t("auth.doneBtn")}
           </button>
         </div>
       </div>
@@ -1267,6 +1311,17 @@ const s = {
   langPicker: {
     display: "flex", alignItems: "center",
     color: "rgba(255,255,255,0.85)", fontSize: 13, fontWeight: 500, cursor: "pointer",
+  },
+  langDropdown: {
+    position: "absolute", top: "calc(100% + 6px)", right: 0,
+    minWidth: 160, background: "#fff", borderRadius: 10,
+    boxShadow: "0 8px 28px rgba(0,0,0,0.18)", overflow: "hidden",
+    zIndex: 1000, padding: "4px 0",
+  },
+  langItem: {
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "10px 14px", fontSize: 13.5, cursor: "pointer",
+    transition: "background 0.15s",
   },
   navBtn: {
     color: "#fff", fontSize: 13, fontWeight: 700, letterSpacing: "0.05em",

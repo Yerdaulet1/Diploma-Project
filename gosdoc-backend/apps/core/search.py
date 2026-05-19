@@ -1,11 +1,14 @@
 """
 ГосДок — MeiliSearch service (apps/core/search.py)
 Индексирование и поиск документов, workspace'ов, пользователей.
+
+MeiliSearch — опциональная зависимость. Если пакет `meilisearch` не установлен
+или сервер недоступен, все функции тихо возвращают пустые результаты и логируют
+warning — приложение продолжает работать через PostgreSQL FTS.
 """
 
 import logging
 
-import meilisearch
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -16,12 +19,20 @@ IDX_DOCUMENTS = "documents"
 IDX_WORKSPACES = "workspaces"
 
 
-def get_client() -> meilisearch.Client:
+def get_client():
+    """Возвращает клиент MeiliSearch или None, если пакет не установлен."""
+    try:
+        import meilisearch  # ленивый импорт — пакет опциональный
+    except ImportError:
+        logger.warning("MeiliSearch package not installed — search features disabled")
+        return None
     return meilisearch.Client(MEILI_URL, MEILI_KEY)
 
 
 def _ensure_indexes():
     client = get_client()
+    if client is None:
+        return
     try:
         # Documents index
         client.create_index(IDX_DOCUMENTS, {"primaryKey": "id"})
@@ -93,9 +104,12 @@ def _ws_to_record(workspace) -> dict:
 
 def index_document(document):
     """Индексирует или обновляет документ в MeiliSearch."""
+    client = get_client()
+    if client is None:
+        return
     try:
         _ensure_indexes()
-        get_client().index(IDX_DOCUMENTS).add_documents([_doc_to_record(document)])
+        client.index(IDX_DOCUMENTS).add_documents([_doc_to_record(document)])
         logger.debug("MeiliSearch: indexed document %s", document.id)
     except Exception as e:
         logger.warning("MeiliSearch index_document error: %s", e)
@@ -103,17 +117,23 @@ def index_document(document):
 
 def delete_document(document_id: str):
     """Удаляет документ из индекса."""
+    client = get_client()
+    if client is None:
+        return
     try:
-        get_client().index(IDX_DOCUMENTS).delete_document(str(document_id))
+        client.index(IDX_DOCUMENTS).delete_document(str(document_id))
     except Exception as e:
         logger.warning("MeiliSearch delete_document error: %s", e)
 
 
 def index_workspace(workspace):
     """Индексирует или обновляет workspace."""
+    client = get_client()
+    if client is None:
+        return
     try:
         _ensure_indexes()
-        get_client().index(IDX_WORKSPACES).add_documents([_ws_to_record(workspace)])
+        client.index(IDX_WORKSPACES).add_documents([_ws_to_record(workspace)])
     except Exception as e:
         logger.warning("MeiliSearch index_workspace error: %s", e)
 
@@ -123,9 +143,12 @@ def search_documents(query: str, workspace_ids: list, limit: int = 20, offset: i
     Ищет документы по query в рамках доступных workspace_ids.
     Возвращает словарь с hits и totalHits.
     """
+    client = get_client()
+    if client is None:
+        return {"hits": [], "estimatedTotalHits": 0}
     try:
         filters = " OR ".join(f'workspace_id = "{wid}"' for wid in workspace_ids)
-        result = get_client().index(IDX_DOCUMENTS).search(query, {
+        result = client.index(IDX_DOCUMENTS).search(query, {
             "filter":           filters if workspace_ids else None,
             "limit":            limit,
             "offset":           offset,
@@ -141,8 +164,11 @@ def search_documents(query: str, workspace_ids: list, limit: int = 20, offset: i
 
 def search_workspaces(query: str, user_id: str, limit: int = 10) -> dict:
     """Ищет workspace'ы, доступные пользователю."""
+    client = get_client()
+    if client is None:
+        return {"hits": [], "estimatedTotalHits": 0}
     try:
-        result = get_client().index(IDX_WORKSPACES).search(query, {
+        result = client.index(IDX_WORKSPACES).search(query, {
             "filter": f'member_ids = "{user_id}" OR created_by_id = "{user_id}"',
             "limit":  limit,
         })
@@ -157,8 +183,12 @@ def reindex_all():
     from apps.documents.models import Document
     from apps.workspaces.models import Workspace
 
-    _ensure_indexes()
     client = get_client()
+    if client is None:
+        logger.warning("reindex_all skipped — MeiliSearch unavailable")
+        return
+
+    _ensure_indexes()
 
     docs = list(
         Document.objects.exclude(status="archived")

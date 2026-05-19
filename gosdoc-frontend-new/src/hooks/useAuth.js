@@ -4,7 +4,7 @@ import { getMe } from "../api/users";
 import useAuthStore from "../store/authStore";
 
 export default function useAuth() {
-  const { user, isAuthenticated, isLoading, setUser, setLoading, logout } =
+  const { user, isAuthenticated, isLoading, isRegistering, setUser, setLoading, logout } =
     useAuthStore();
 
   const hasToken = !!localStorage.getItem("gosdoc_access_token");
@@ -12,7 +12,7 @@ export default function useAuth() {
   const { data, isError, isSuccess, isLoading: queryLoading } = useQuery({
     queryKey: ["me"],
     queryFn: getMe,
-    enabled: hasToken,
+    enabled: hasToken && !isRegistering,
     retry: false,
     staleTime: 5 * 60 * 1000,
   });
@@ -22,17 +22,21 @@ export default function useAuth() {
       setLoading(false);
       return;
     }
+    if (isRegistering) {
+      setLoading(false);
+      return;
+    }
     if (isSuccess && data) {
       setUser(data);
     }
     if (isError) {
       logout();
     }
-  }, [hasToken, isSuccess, isError, data, setUser, setLoading, logout]);
+  }, [hasToken, isRegistering, isSuccess, isError, data, setUser, setLoading, logout]);
 
   return {
     user,
     isAuthenticated: hasToken && isAuthenticated,
-    isLoading: hasToken ? queryLoading || isLoading : false,
+    isLoading: hasToken && !isRegistering ? queryLoading || isLoading : false,
   };
 }

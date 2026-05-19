@@ -5,6 +5,13 @@ const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
+// Notifies the app that auth has been lost. Subscribers (e.g. router) decide
+// what to do — clear stores, redirect, etc. Avoids window.location.href which
+// causes a hard reload and wipes in-memory state (e.g. multi-step registration).
+function emitAuthLost() {
+  window.dispatchEvent(new CustomEvent("auth:lost"));
+}
+
 const PUBLIC_PATHS = [
   "/auth/register/",
   "/auth/login/",
@@ -47,7 +54,7 @@ api.interceptors.response.use(
       if (original.url?.includes("/auth/refresh/")) {
         localStorage.removeItem("gosdoc_access_token");
         localStorage.removeItem("gosdoc_refresh_token");
-        window.location.href = "/login";
+        emitAuthLost();
         return Promise.reject(error);
       }
 
@@ -79,7 +86,7 @@ api.interceptors.response.use(
         processQueue(err);
         localStorage.removeItem("gosdoc_access_token");
         localStorage.removeItem("gosdoc_refresh_token");
-        window.location.href = "/login";
+        emitAuthLost();
         return Promise.reject(err);
       } finally {
         isRefreshing = false;
