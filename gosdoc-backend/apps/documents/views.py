@@ -87,13 +87,7 @@ def assert_workspace_role(user, workspace, allowed_roles: list):
 # ============================================================
 
 class RequestUploadView(APIView):
-    """
-    POST /api/v1/documents/request-upload/
-    JWT — возвращает presigned POST URL для прямой загрузки в S3.
 
-    Шаг 1 из 2: клиент получает URL и поля формы, загружает файл в S3.
-    После успешной загрузки вызывает POST /api/v1/documents/ (подтверждение).
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(

@@ -37,19 +37,6 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    """
-    Пользователь ГосДок.
-
-    Поля по разделу 3.2 ТЗ:
-    - id: UUID PK
-    - email: логин (уникальный)
-    - full_name: полное имя
-    - phone: телефон
-    - organization_id: FK → organizations
-    - password (AbstractBaseUser): bcrypt-хэш
-    - is_active, is_staff
-    - created_at, last_login
-    """
 
     id = models.UUIDField(
         primary_key=True,

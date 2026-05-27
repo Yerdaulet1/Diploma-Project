@@ -9,21 +9,6 @@ from django.db import models
 
 
 class Document(models.Model):
-    """
-    Документ — основная сущность системы.
-
-    Поля по разделу 3.5 ТЗ:
-    - id: UUID PK
-    - workspace_id: FK → workspaces
-    - title: название
-    - file_type: расширение файла (pdf, docx и т.д.)
-    - storage_key: ключ объекта в S3
-    - storage_url: публичная/presigned URL (кэш)
-    - current_version_id: FK → document_versions (текущая версия)
-    - status: draft | review | signed | archived
-    - uploaded_by: FK → users
-    - created_at, updated_at
-    """
 
     class DocumentStatus(models.TextChoices):
         DRAFT = "draft", "Черновик"

@@ -35,6 +35,10 @@ services:
       retries: 5
 
   # ---- MeiliSearch ----
+  # Образ getmeili/meilisearch — distroless, нет wget/curl, поэтому без
+  # healthcheck. Зависящие сервисы используют condition: service_started.
+  # Если MeiliSearch не готов к моменту первого обращения — search.py
+  # тихо логирует warning и приложение работает без поиска.
   meilisearch:
     image: getmeili/meilisearch:v1.10
     restart: unless-stopped
@@ -46,11 +50,6 @@ services:
       - "7700:7700"
     volumes:
       - meili_data:/meili_data
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--spider", "http://localhost:7700/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   # ---- Django Backend ----
   backend:
@@ -73,13 +72,23 @@ services:
       - .:/app
       - static_volume:/app/staticfiles
       - media_volume:/app/media
+    # Healthcheck отмечает контейнер healthy только когда gunicorn слушает
+    # порт 8000 — а это происходит ПОСЛЕ применения миграций.
+    # Поэтому celery/celery-beat могут безопасно ждать "backend healthy",
+    # чтобы не лезть в БД без таблиц django_celery_beat.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/api/schema/', timeout=3).status < 500 else sys.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
       meilisearch:
-        condition: service_healthy
+        condition: service_started
 
   # ---- Celery Worker ----
   celery:
@@ -103,7 +112,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      meilisearch:
+      backend:
         condition: service_healthy
 
   # ---- Celery Beat (планировщик) ----
@@ -126,6 +135,8 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      backend:
         condition: service_healthy
 
   # ---- Frontend (React dev server) ----

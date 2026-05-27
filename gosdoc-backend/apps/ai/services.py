@@ -309,17 +309,7 @@ class AIService:
         workspace_id: str,
         top_k: int = 5,
     ) -> list:
-        """
-        Ищет top_k наиболее релевантных чанков по cosine similarity.
-
-        Args:
-            query:        поисковый запрос
-            workspace_id: UUID кабинета
-            top_k:        количество результатов
-
-        Returns:
-            list[dict] с ключами: document_id, title, chunk_text, score
-        """
+        
         from pgvector.django import CosineDistance
         from apps.ai.models import DocumentEmbedding
 
