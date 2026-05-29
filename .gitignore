@@ -49,3 +49,20 @@ yarn-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# Local artifacts (recovered bundle, extraction helpers, scratch)
+.recovered/
+.extract_*.py
+.find_*.py
+tmp_*.db
+*.output
+
+# Local services data
+gosdoc-backend/.meilisearch/
+
+# One-off local test / verify scripts
+gosdoc-backend/test_signer_flow.py
+gosdoc-backend/verify_signer_ui.mjs
+
+# Local screenshots
+gosdoc-backend/screens/

@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
-import useSidebarOpen from "./hooks/useSidebarOpen";
+import Sidebar from "./components/Sidebar";
+import EmailAutocomplete from "./components/EmailAutocomplete";
 import { useParams } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import {
@@ -17,11 +18,11 @@ const orgCss = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   html,body,#root{width:100%;height:100%;overflow:hidden;margin:0;padding:0}
-  button{font-family:'DM Sans','Segoe UI',sans-serif;cursor:pointer}
+  button{font-family:'Gilroy','Segoe UI',sans-serif;cursor:pointer}
   button:hover{opacity:unset}
-  input,select{font-family:'DM Sans','Segoe UI',sans-serif}
+  input,select{font-family:'Gilroy','Segoe UI',sans-serif}
 
-  .org-page{display:flex;flex-direction:column;width:100vw;height:100vh;font-family:'DM Sans','Segoe UI',sans-serif;background:#EEEDF0;overflow:hidden}
+  .org-page{display:flex;flex-direction:column;width:100vw;height:100vh;font-family:'Gilroy','Segoe UI',sans-serif;letter-spacing:0.02em;background:#EEEDF0;overflow:hidden}
 
   /* TOPBAR */
   .org-topbar{display:flex;align-items:center;padding:0 20px;height:52px;gap:10px;flex-shrink:0;background:#fff;border-bottom:.5px solid #E5E7EB;z-index:30}
@@ -156,12 +157,11 @@ function InviteModal({ workspaceId, onClose }) {
           <div key={i} style={{ display:"flex",gap:10,alignItems:"flex-end",marginBottom:12 }}>
             <div style={{ flex:1 }}>
               <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:4 }}>Team Member Email*</label>
-              <div style={{ display:"flex",alignItems:"center",border:"1.5px solid #E2E5EF",borderRadius:8,height:40,padding:"0 12px",gap:8 }}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="14" height="14"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg>
-                <input style={{ flex:1,border:"none",outline:"none",fontSize:13,color:"#374151",fontFamily:"inherit" }}
-                  placeholder="ex: name@workplace.com" type="email"
-                  value={row.email} onChange={e => updateRow(i, "email", e.target.value)} />
-              </div>
+              <EmailAutocomplete
+                value={row.email}
+                onChange={(v) => updateRow(i, "email", v)}
+                excludeEmails={rows.filter((_, j) => j !== i).map(r => r.email)}
+              />
             </div>
             <div style={{ width:140 }}>
               <label style={{ fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:4 }}>Role*</label>
@@ -250,12 +250,11 @@ function RoleBadge({ role, memberId, workspaceId }) {
 
 /* ── MAIN EXPORT ───────────────────────────────────────────── */
 export default function Organization({ onNavigate, onGoToAuth }) {
-  const { t } = useTranslation();
+  const { t: _t } = useTranslation();
   const { id: workspaceId } = useParams();
   const user = useAuthStore(s => s.user);
   const qc   = useQueryClient();
 
-  const [sbOpen, toggleSb] = useSidebarOpen();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView,    setProfileView]    = useState(null);
   const [showInvite,     setShowInvite]     = useState(false);
@@ -328,7 +327,7 @@ export default function Organization({ onNavigate, onGoToAuth }) {
   const wsType  = WS_TYPE_LABEL[ws?.type] || ws?.type || "—";
   const owner   = ws?.created_by_name || ws?.owner_name || user?.full_name || "—";
   const created = fmtDate(ws?.created_at);
-  const orgName = workspaces[0]?.title || wsName;
+  const _orgName = workspaces[0]?.title || wsName;
 
   return (
     <div className="org-page">
@@ -384,84 +383,7 @@ export default function Organization({ onNavigate, onGoToAuth }) {
       {/* ── BODY ── */}
       <div className="org-body">
 
-        {/* ── SIDEBAR ── */}
-        <aside className={`org-sb${!sbOpen ? " closed" : ""}`}>
-          <div className="org-profile">
-            <button className="org-toggle" onClick={toggleSb}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
-            </button>
-            <div className="org-av">
-              {user?.avatar_url
-                ? <img src={user.avatar_url} alt="avatar" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
-                : <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
-              }
-            </div>
-          </div>
-          <div className="org-pinfo">
-            <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{user?.full_name || "—"}</div>
-            <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>{user?.email || ""}</div>
-          </div>
-
-          {/* workspace switcher */}
-          <div ref={wsDropRef} style={{ position:"relative",margin:"0 10px 4px" }}>
-            <div className="org-wsdrop" onClick={() => setWsDropOpen(v=>!v)}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-              <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{wsName}</span>
-              <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"
-                style={{ transform:wsDropOpen?"rotate(180deg)":"none",transition:"transform .2s" }}>
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </div>
-            {wsDropOpen && (
-              <div style={{ position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:"#fff",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:200,overflow:"hidden",border:"1px solid #F3F4F6" }}>
-                <div style={{ padding:"6px 12px 4px",fontSize:10.5,color:"#9CA3AF",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>
-                  Switch Workplaces
-                </div>
-                {workspaces.map((wsp) => (
-                  <div key={wsp.id}
-                    onClick={() => { setWsDropOpen(false); onNavigate?.(`organization/${wsp.id}`); }}
-                    style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 14px",fontSize:13,cursor:"pointer",color: wsp.id===workspaceId?"#2563EB":"#374151",fontWeight:wsp.id===workspaceId?600:400,background:wsp.id===workspaceId?"#EFF6FF":"transparent",borderTop:".5px solid #F9FAFB" }}
-                    onMouseEnter={e=>{ if(wsp.id!==workspaceId) e.currentTarget.style.background="#F9FAFB"; }}
-                    onMouseLeave={e=>{ e.currentTarget.style.background=wsp.id===workspaceId?"#EFF6FF":"transparent"; }}>
-                    <div style={{ width:22,height:22,borderRadius:6,background:"#DBEAFE",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="12" height="12"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-                    </div>
-                    <span style={{ flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{wsp.title}</span>
-                  </div>
-                ))}
-                <div style={{ borderTop:"1px solid #F3F4F6" }}>
-                  <div onClick={() => { setWsDropOpen(false); setShowCreateWs(true); }}
-                    style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 14px",fontSize:13,cursor:"pointer",color:"#2563EB",fontWeight:500 }}
-                    onMouseEnter={e=>e.currentTarget.style.background="#EFF6FF"}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Create Workplace
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* nav */}
-          <div className="org-navlist">
-            {NAV_ITEMS.map((n, i) => (
-              <button key={i} className="org-navitem"
-                onClick={() => onNavigate?.(n.navKey)}>
-                {n.icon}
-                <span className="org-navlabel">{t(`nav.${n.key}`)}</span>
-                <svg className="org-navchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
-              </button>
-            ))}
-          </div>
-
-          <div className="org-sbbottom">
-            <button className="org-addbtn" onClick={() => onNavigate?.("projects")}>
-              <svg className="org-addbtn-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              <span className="org-addbtn-label">{t("inbox.newProject")}</span>
-            </button>
-          </div>
-        </aside>
+        <Sidebar active="projects" onNavigate={onNavigate}/>
 
         {/* ── MAIN ── */}
         <div className="org-main">

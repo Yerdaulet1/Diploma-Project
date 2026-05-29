@@ -23,7 +23,17 @@ class FaqListView(APIView):
         if topic:
             qs = qs.filter(topic=topic)
         data = [
-            {"id": faq.id, "topic": faq.topic, "question": faq.question, "answer": faq.answer, "order": faq.order}
+            {
+                "id": faq.id,
+                "topic": faq.topic,
+                "order": faq.order,
+                "question": faq.question,
+                "answer": faq.answer,
+                "question_ru": faq.question_ru or faq.question,
+                "answer_ru": faq.answer_ru or faq.answer,
+                "question_kk": faq.question_kk or faq.question,
+                "answer_kk": faq.answer_kk or faq.answer,
+            }
             for faq in qs
         ]
         return Response(data)

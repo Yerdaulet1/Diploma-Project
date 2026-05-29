@@ -64,14 +64,16 @@ class AIService:
 
     def __init__(self):
         self._claude_key = getattr(settings, "CLAUDE_API_KEY", "")
-        self._model_name = getattr(settings, "CLAUDE_MODEL", "claude-opus-4-7")
+        self._model_name = getattr(settings, "CLAUDE_MODEL", "claude-sonnet-4-6")
 
-        if self._claude_key:
-            self._client = anthropic.Anthropic(api_key=self._claude_key)
-            self._backend = "claude"
-        else:
-            self._backend = "none"
-            logger.warning("CLAUDE_API_KEY не задан — AI-функции недоступны")
+        if not self._claude_key:
+            raise RuntimeError(
+                "CLAUDE_API_KEY не задан — AI-функции недоступны. "
+                "Добавьте переменную окружения и перезапустите сервис."
+            )
+
+        self._client = anthropic.Anthropic(api_key=self._claude_key)
+        self._backend = "claude"
 
     # ------------------------------------------------------------------
     # Внутренние хелперы
@@ -99,8 +101,6 @@ class AIService:
         max_output_tokens: int = 1024,
     ) -> str:
         """Однократный запрос с системным промптом."""
-        if self._backend == "none":
-            return "AI недоступен: настройте CLAUDE_API_KEY."
         response = self._client.messages.create(
             model=self._model_name,
             max_tokens=max_output_tokens,
@@ -118,8 +118,6 @@ class AIService:
         max_output_tokens: int = 2048,
     ) -> str:
         """Multi-turn чат с историей диалога."""
-        if self._backend == "none":
-            return "AI недоступен: настройте CLAUDE_API_KEY."
         messages = _build_claude_history(history)
         messages.append({"role": "user", "content": message})
 

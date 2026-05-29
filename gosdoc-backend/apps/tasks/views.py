@@ -42,12 +42,12 @@ class TaskListView(generics.ListAPIView):
                 workspace__members__role__in=["owner"],
             ).exclude(
                 assigned_to=user,
-            ).select_related("workspace", "document", "assigned_to").distinct()
+            ).select_related("workspace", "workspace__organization", "document", "assigned_to").distinct()
         else:
             # Incoming: задачи назначенные мне
             qs = Task.objects.filter(
                 assigned_to=user,
-            ).select_related("workspace", "document", "assigned_to")
+            ).select_related("workspace", "workspace__organization", "document", "assigned_to")
 
         date_from = self.request.query_params.get("date_from")
         date_to   = self.request.query_params.get("date_to")

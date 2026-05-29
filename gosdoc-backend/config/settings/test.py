@@ -3,17 +3,21 @@
 """
 
 from .base import *  # noqa: F401, F403
-import dj_database_url
 
 # ============================================================
-# Локальная БД для тестов (localhost, не docker hostname)
+# SQLite in-memory — нет зависимости от pgvector / PostgreSQL расширений.
+# Хватает для интеграционных smoke-тестов; полные тесты против Postgres
+# гоняем в CI.
 # ============================================================
 DATABASES = {
-    "default": dj_database_url.config(
-        default="postgres://gosdoc_user:gosdoc_pass@localhost:5432/gosdoc",
-        conn_max_age=0,
-    )
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME":   ":memory:",
+    }
 }
+
+# Миграции AI-приложения завязаны на pgvector — пропускаем их в SQLite.
+MIGRATION_MODULES = {"ai": None}
 
 # ============================================================
 # Быстрый хэш паролей (ускоряет тесты в ~10 раз)

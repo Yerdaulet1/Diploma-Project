@@ -160,6 +160,7 @@
     "lastWeek": "Last 7 days",
     "noItems": "No items",
     "newProject": "New project",
+    "createOrganization": "Create organization",
     "openTask": "Open task",
     "clear": "Clear",
     "sentTo": "Sent to",
@@ -174,6 +175,9 @@
     "archive": "Archive",
     "timeline": "Timeline",
     "createProject": "Create Project",
+    "creating": "Creating…",
+    "allOrgs": "All organizations",
+    "noOrg": "No organization",
     "createWorkspace": "Create Workspace",
     "workspaceName": "Workspace name",
     "workspaceType": "Type",
@@ -258,6 +262,8 @@
   },
   "documents": {
     "title": "Documents",
+    "allOrgs": "All organizations",
+    "noOrg": "No organization",
     "newDocument": "New document",
     "myDocuments": "My Documents",
     "manageFilesDesc": "Manage and organize your files and documents in one place.",
@@ -443,8 +449,26 @@
     "aiDesc": "Using this feature, you can ask questions or report issues related to your projects and tasks.",
     "start": "Start",
     "helpCenter": "Help Center",
+    "helpCenterDesc": "To get familiar with GosDoc and learn how to work with it, you can find everything you need here — from getting started to managing your workspace and projects, and answers to common questions.",
     "searchArticles": "Search for articles...",
     "learnMore": "Learn More",
+    "topics": {
+      "platform": {
+        "title": "About Platform",
+        "subtitle": "Here you can find answers to questions about using the platform.",
+        "desc": "Get an overview of the platform and understand what it provides and how it can help you."
+      },
+      "tasks": {
+        "title": "Task Management",
+        "subtitle": "Find out how to create, assign, and track tasks across your team.",
+        "desc": "Learn how to create, assign, and track tasks across your team."
+      },
+      "orgs": {
+        "title": "Organization & Projects",
+        "subtitle": "Learn how to manage organizations, teams, and projects effectively.",
+        "desc": "Understand how to set up organizations and manage your projects efficiently."
+      }
+    },
     "noResults": "No results found.",
     "loading": "Loading…",
     "askAnything": "Ask anything",

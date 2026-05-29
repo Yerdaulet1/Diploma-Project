@@ -1,7 +1,6 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { createWorkspace, addMember } from "./api/workspaces";
-import { getDocuments } from "./api/documents";
 
 const TOTAL = 4;
 

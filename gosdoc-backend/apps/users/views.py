@@ -586,3 +586,87 @@ class ChangeEmailConfirmView(APIView):
             "detail": "Email успешно изменён.",
             "email": new_email,
         })
+
+
+# ============================================================
+# Social Auth: Google
+# ============================================================
+
+class GoogleAuthView(APIView):
+    """
+    POST /api/v1/auth/google/
+    Принимает Google ID-token (из GIS на фронтенде),
+    верифицирует через Google API, создаёт/находит пользователя,
+    возвращает JWT как при обычном логине.
+
+    Body: { "id_token": "<google_id_token>" }
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        id_token_str = request.data.get("id_token", "").strip()
+        if not id_token_str:
+            return Response(
+                {"detail": "id_token обязателен."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        client_id = getattr(settings, "GOOGLE_CLIENT_ID", "")
+        if not client_id:
+            return Response(
+                {"detail": "Google OAuth не настроен на сервере (GOOGLE_CLIENT_ID не задан)."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        try:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport import requests as google_requests
+
+            id_info = google_id_token.verify_oauth2_token(
+                id_token_str,
+                google_requests.Request(),
+                client_id,
+            )
+        except ValueError as exc:
+            logger.warning("Google OAuth: невалидный токен: %s", exc)
+            return Response(
+                {"detail": "Невалидный Google-токен."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        email = id_info.get("email", "").lower().strip()
+        if not email:
+            return Response(
+                {"detail": "Email не найден в Google-токене."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not id_info.get("email_verified"):
+            return Response(
+                {"detail": "Email не подтверждён в Google."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        full_name = id_info.get("name") or email.split("@")[0]
+
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={"full_name": full_name, "is_active": True},
+        )
+        if not created and not user.is_active:
+            user.is_active = True
+            user.save(update_fields=["is_active"])
+
+        refresh = RefreshToken.for_user(user)
+        refresh["email"] = user.email
+        refresh["full_name"] = user.full_name
+
+        logger.info("Google OAuth: user=%s created=%s", user.email, created)
+        return Response({
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": str(user.id),
+                "email": user.email,
+                "full_name": user.full_name,
+            },
+        })

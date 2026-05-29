@@ -157,7 +157,7 @@ class DocumentListCreateView(generics.ListCreateAPIView):
         qs = Document.objects.filter(
             workspace__members__user=self.request.user
         ).select_related(
-            "workspace", "uploaded_by", "current_version"
+            "workspace", "workspace__organization", "uploaded_by", "current_version"
         ).distinct().order_by("-created_at")
 
         # По умолчанию скрываем архивированные (удалённые)
@@ -174,6 +174,19 @@ class DocumentListCreateView(generics.ListCreateAPIView):
         if workspace_filter:
             qs = qs.filter(workspace_id=workspace_filter)
 
+        organization_filter = self.request.query_params.get("organization")
+        if organization_filter:
+            if organization_filter == "_none":
+                qs = qs.filter(workspace__organization__isnull=True)
+            else:
+                # Validate UUID — otherwise a junk value triggers a 500 from psycopg
+                import uuid as _uuid
+                try:
+                    org_uuid = _uuid.UUID(organization_filter)
+                except (ValueError, AttributeError, TypeError):
+                    return qs.none()
+                qs = qs.filter(workspace__organization_id=org_uuid)
+
         if role_filter:
             roles = [r.strip() for r in role_filter.split(",") if r.strip()]
             qs = qs.filter(workspace__members__user=self.request.user, workspace__members__role__in=roles)
@@ -185,6 +198,42 @@ class DocumentListCreateView(generics.ListCreateAPIView):
         uploaded_by_me = self.request.query_params.get("uploaded_by_me", "").lower()
         if uploaded_by_me in ("true", "1", "yes"):
             qs = qs.filter(uploaded_by=self.request.user)
+
+        # Документы, ждущие моей подписи как signer:
+        #   - я в workspace с role=signer
+        #   - все подзадачи выполнены ИЛИ их нет
+        #   - я ещё не подписал
+        #   - статус не signed/archived
+        awaiting_sig = self.request.query_params.get("awaiting_my_signature", "").lower()
+        if awaiting_sig in ("true", "1", "yes"):
+            from django.db.models import Q, Count
+            from apps.workspaces.models import WorkspaceMember
+            from apps.signatures.models import Signature
+
+            signer_ws_ids = WorkspaceMember.objects.filter(
+                user=self.request.user,
+                role=WorkspaceMember.Role.SIGNER,
+            ).values_list("workspace_id", flat=True)
+
+            already_signed = Signature.objects.filter(
+                user=self.request.user, is_valid=True,
+            ).values_list("document_id", flat=True)
+
+            qs = (
+                qs.filter(workspace_id__in=signer_ws_ids)
+                .exclude(status__in=[
+                    Document.DocumentStatus.SIGNED,
+                    Document.DocumentStatus.ARCHIVED,
+                ])
+                .exclude(pk__in=already_signed)
+                .annotate(
+                    _pending_subtasks=Count(
+                        "subtasks",
+                        filter=~Q(subtasks__status="done"),
+                    ),
+                )
+                .filter(_pending_subtasks=0)
+            )
 
         if search_query:
             from django.db.models import Q
@@ -426,7 +475,7 @@ class DocumentDetailView(generics.RetrieveUpdateDestroyAPIView):
             workspace__members__user=self.request.user
         ).select_related(
             "workspace", "uploaded_by", "current_version"
-        ).distinct()
+        ).prefetch_related("subtasks").distinct()
 
     def check_object_permissions(self, request, obj):
         super().check_object_permissions(request, obj)
@@ -881,7 +930,7 @@ class SubtaskListCreateView(generics.ListCreateAPIView):
 class SubtaskDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     GET    /api/v1/documents/{pk}/subtasks/{sid}/ — деталь
-    PATCH  /api/v1/documents/{pk}/subtasks/{sid}/ — обновить (owner/editor)
+    PATCH  /api/v1/documents/{pk}/subtasks/{sid}/ — обновить (owner/editor + назначенный исполнитель)
     DELETE /api/v1/documents/{pk}/subtasks/{sid}/ — удалить (owner/editor)
     """
     permission_classes = [permissions.IsAuthenticated]
@@ -894,9 +943,94 @@ class SubtaskDetailView(generics.RetrieveUpdateDestroyAPIView):
             pk=self.kwargs["pk"],
         )
         subtask = get_object_or_404(Subtask, pk=self.kwargs["sid"], document=document)
-        if self.request.method in ("PATCH", "PUT", "DELETE"):
+        if self.request.method == "DELETE":
             assert_workspace_role(self.request.user, document.workspace, ["owner", "editor"])
+        elif self.request.method in ("PATCH", "PUT"):
+            # Назначенный исполнитель может обновить статус своей подзадачи;
+            # все остальные правки — только owner/editor.
+            is_assignee = subtask.assignee_id == self.request.user.id
+            data_keys = set(self.request.data.keys()) if hasattr(self.request, "data") else set()
+            only_status = data_keys.issubset({"status"})
+            if not (is_assignee and only_status):
+                assert_workspace_role(self.request.user, document.workspace, ["owner", "editor"])
         return subtask
+
+    def perform_update(self, serializer):
+        prev_status = serializer.instance.status
+        subtask = serializer.save()
+        new_status = subtask.status
+
+        if prev_status != Subtask.Status.DONE and new_status == Subtask.Status.DONE:
+            _notify_after_subtask_done(subtask)
+
+
+def _notify_after_subtask_done(completed_subtask):
+    """
+    Когда подзадача переходит в статус "done":
+      • если есть ещё незакрытые подзадачи — уведомляем исполнителя следующей
+        (порядок — по created_at);
+      • если все подзадачи закрыты — уведомляем всех signer'ов кабинета
+        о том, что документ готов к подписи.
+    """
+    from apps.notifications.models import Notification
+    from apps.workspaces.models import WorkspaceMember
+
+    document = completed_subtask.document
+    pending = (
+        Subtask.objects
+        .filter(document=document)
+        .exclude(status=Subtask.Status.DONE)
+        .order_by("created_at")
+    )
+
+    next_pending = pending.first()
+    if next_pending and next_pending.assignee_id:
+        # Переводим следующую подзадачу в работу
+        if next_pending.status != Subtask.Status.IN_PROGRESS:
+            next_pending.status = Subtask.Status.IN_PROGRESS
+            next_pending.save(update_fields=["status", "updated_at"])
+
+        Notification.objects.create(
+            user_id=next_pending.assignee_id,
+            type=Notification.NotificationType.TASK_ASSIGNED,
+            title=f"Ваш ход: «{next_pending.title}»",
+            message=(
+                f"Предыдущий шаг по документу «{document.title}» завершён. "
+                f"Теперь ваш черёд: «{next_pending.title}»."
+                + (f" Срок: {next_pending.deadline}." if next_pending.deadline else "")
+            ),
+            entity_type="document",
+            entity_id=document.id,
+        )
+        return
+
+    # Все подзадачи выполнены → зовём signer'ов
+    signer_user_ids = (
+        WorkspaceMember.objects
+        .filter(
+            workspace=document.workspace,
+            role=WorkspaceMember.Role.SIGNER,
+        )
+        .values_list("user_id", flat=True)
+    )
+
+    if not signer_user_ids:
+        return
+
+    Notification.objects.bulk_create([
+        Notification(
+            user_id=uid,
+            type=Notification.NotificationType.STEP_COMPLETED,
+            title=f"Документ «{document.title}» готов к подписи",
+            message=(
+                "Все подзадачи выполнены. "
+                "Документ ожидает вашей электронной подписи."
+            ),
+            entity_type="document",
+            entity_id=document.id,
+        )
+        for uid in signer_user_ids
+    ], ignore_conflicts=True)
 
 
 # ============================================================
@@ -1194,7 +1328,8 @@ class DocumentContentView(APIView):
 
     def put(self, request, pk):
         document = self._get_document(request, pk)
-        assert_workspace_role(request.user, document.workspace, ["owner", "editor"])
+        # signer тоже сохраняет содержимое: ему нужно зафиксировать поставленную подпись
+        assert_workspace_role(request.user, document.workspace, ["owner", "editor", "signer"])
 
         serializer = DocumentContentSerializer(document, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)

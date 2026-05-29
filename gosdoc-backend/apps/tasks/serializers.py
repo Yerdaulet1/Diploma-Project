@@ -11,11 +11,15 @@ class TaskSerializer(serializers.ModelSerializer):
     document_title = serializers.CharField(source="document.title", read_only=True)
 
     workspace_name = serializers.CharField(source="workspace.title", read_only=True)
+    organization_id = serializers.UUIDField(source="workspace.organization_id", read_only=True)
+    organization_name = serializers.CharField(source="workspace.organization.name", read_only=True)
 
     class Meta:
         model = Task
         fields = [
-            "id", "workspace", "workspace_name", "document", "document_title",
+            "id", "workspace", "workspace_name",
+            "organization_id", "organization_name",
+            "document", "document_title",
             "assigned_to", "assigned_to_name",
             "step_order", "title", "status", "request_type",
             "due_date", "completed_at", "created_at",

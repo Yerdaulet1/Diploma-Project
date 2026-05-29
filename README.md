@@ -216,6 +216,58 @@ npm run dev
 | [ai](gosdoc-backend/apps/ai/) | `/ai/` | Классификатор документов, AI-чат на базе Claude |
 | [core](gosdoc-backend/apps/core/) | `/help/`, `/search/` | FAQ, гибридный поиск (FTS + векторный pgvector + MeiliSearch) |
 
+### Архитектурная схема
+
+```
+                ┌──────────────┐
+                │  Браузер     │  React 19 + Vite (JSX)
+                │  i18next     │  ru / kk / en
+                └──────┬───────┘
+                       │ HTTPS · JWT (access 15m / refresh 7d)
+                       │
+                  ┌────▼─────┐         ┌─────────────────┐
+                  │  Nginx   │◀───────▶│ S3 / Yandex OS  │ presigned POST
+                  │ (prod)   │         └─────────────────┘
+                  └────┬─────┘
+                       │
+                ┌──────▼───────┐       ┌─────────────────┐
+                │ Gunicorn +   │──────▶│  Anthropic      │  AI-diff,
+                │ Django 5     │       │  Claude         │  чат
+                │ DRF          │       └─────────────────┘
+                └─┬───┬───┬───┘
+                  │   │   │
+        ┌─────────┘   │   └───────────┐
+        ▼             ▼               ▼
+┌──────────────┐ ┌──────────┐ ┌───────────────┐
+│ PostgreSQL 16│ │ Redis 7  │ │ Celery worker │
+│ + pgvector   │ │  cache/  │ │ + Celery beat │
+│  FTS         │ │  broker  │ │  (отчёты,     │
+└──────────────┘ └──────────┘ │   email)      │
+                              └───────────────┘
+```
+
+### ER-диаграмма (ключевые модели)
+
+```
+User ──┬─< WorkspaceMember >── Workspace ─── Organization
+       │                          │
+       │                          └─< Document ─< DocumentVersion
+       │                                │
+       │                                ├─< Task (workflow)
+       │                                ├─< Comment
+       │                                ├─< Subtask
+       │                                ├─< DocumentAttachment
+       │                                ├─< BlockchainBlock (hash-chain)
+       │                                └─< DocumentEmbedding (pgvector)
+       │
+       └─< Signature ── Document
+```
+
+- `Workspace.organization` — опциональный FK (workspace может быть и без организации)
+- `WorkspaceMember.step_order` — порядок участника в workflow согласования
+- `Task.step_order` совпадает с `WorkspaceMember.step_order` подписанта
+- `BlockchainBlock.prev_hash` — указатель на предыдущий блок, обеспечивает chain-of-trust
+
 ### Frontend ([gosdoc-frontend-new/src/](gosdoc-frontend-new/src/))
 
 Роутинг через `react-router-dom`, защищённые маршруты в [router.jsx](gosdoc-frontend-new/src/router.jsx):
@@ -275,6 +327,11 @@ docker compose exec backend python manage.py reindex_search
 # Открыть Django shell
 docker compose exec backend python manage.py shell
 
+# Загрузить демо-данные (организации + назначенные документы + FAQ на ru/kk/en)
+docker compose exec backend python manage.py seed_demo
+# Можно ограничить разделом: --only=faqs | --only=orgs,assigned
+# По умолчанию "я" — 220103248@stu.sdu.edu.kz, можно переопределить: --me=user@example.com
+
 # Тесты
 docker compose exec backend pytest
 
@@ -292,6 +349,32 @@ npm run lint
 # Остановить всё (с удалением данных БД)
 docker compose down -v
 ```
+
+---
+
+## Тесты
+
+Стек: **pytest + pytest-django + factory_boy + pytest-cov** (конфигурация в `gosdoc-backend/pytest.ini`).
+
+```powershell
+cd gosdoc-backend
+venv\Scripts\activate
+
+# Запустить весь suite (требуется PostgreSQL 16 для прод-конфигурации;
+# тестовая конфигурация по умолчанию использует SQLite — не нужно ничего ставить)
+pytest --no-cov                    # быстрый прогон без покрытия
+pytest                             # с покрытием (требует ≥ 70%)
+pytest tests/test_smoke_recent.py  # smoke-тесты последних правок
+```
+
+Smoke-suite (`tests/test_smoke_recent.py`) проверяет ключевые регрессии:
+- `/users/me/` возвращает текущего пользователя
+- `/documents/?organization=<uuid|_none|invalid>` корректно фильтрует/валидирует
+- `/tasks/` отдаёт `organization_id`/`organization_name` и не утекает чужие задачи
+- `/help/faqs/?topic=...` возвращает все три языка с fallback на EN
+- `manage.py seed_demo` идемпотентен
+
+CI-конфигурация (рекомендуется): GitHub Actions с матрицей Python 3.12 и Postgres 16 service, шаги — `ruff`, `pytest`, `npm ci`, `npm run lint`.
 
 ---
 

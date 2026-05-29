@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import useSidebarOpen from "./hooks/useSidebarOpen";
+import Sidebar from "./components/Sidebar";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import { getNotifications } from "./api/notifications";
 import {
   getDocuments, getDocument, updateDocument,
   getComments, addComment as apiAddComment,
@@ -12,13 +14,14 @@ import {
   getAttachments, serverUploadAttachment,
   deleteAttachment as apiDeleteAttachment,
   serverUploadDocument, copyDocument, getSignatures,
-  getBlockchain,
+  getBlockchain, startWorkflow,
 } from "./api/documents";
-import { getWorkspaces, createWorkspace, getMembers, inviteToWorkspace } from "./api/workspaces";
+import { getWorkspaces, createWorkspace, getMembers, inviteToWorkspace, addMember } from "./api/workspaces";
 import { getTasks } from "./api/tasks";
 import { generalChat, chatWithDocument, getChatHistory } from "./api/ai";
 import useAuthStore from "./store/authStore";
 import ProfileController, { ProfileMenu } from "./Profile";
+import CreateWorkspaceModal from "./CreateWorkspaceModal";
 import logoImg from "./assets/Group 2.svg";
 
 /* ══════════════════════════════════════════════════════════
@@ -33,6 +36,15 @@ function calSame(a,b){ return a&&b&&a.getFullYear()===b.getFullYear()&&a.getMont
 function isoToDate(iso){ if(!iso)return null; const [y,m,d]=iso.split("-"); return new Date(+y,+m-1,+d); }
 function dateToIso(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function fmtDeadline(iso){ if(!iso)return null; const [,m,d]=iso.split("-"); return `${CAL_MONTHS_S[+m-1]} ${+d}`; }
+function fmtDateRange(startIso, endIso) {
+  if (!startIso && !endIso) return null;
+  if (!startIso) return fmtDeadline(endIso);
+  if (!endIso)   return fmtDeadline(startIso);
+  const [sy, sm, sd] = startIso.split("-");
+  const [ey, em, ed] = endIso.split("-");
+  if (sm === em && sy === ey) return `${+sd}–${+ed} ${CAL_MONTHS_S[+sm-1]}`;
+  return `${+sd} ${CAL_MONTHS_S[+sm-1]}–${+ed} ${CAL_MONTHS_S[+em-1]}`;
+}
 
 const DL_NAV_BTN = { background:"none",border:"none",cursor:"pointer",color:"#6B7280",display:"flex",alignItems:"center",padding:4,borderRadius:6 };
 const DL_CANCEL  = { flex:1,border:".5px solid #E5E7EB",borderRadius:8,padding:"8px",fontSize:13,cursor:"pointer",background:"#fff",fontFamily:"inherit",color:"#6B7280" };
@@ -57,11 +69,11 @@ const css = `
   .dm-title-row{display:flex;align-items:center;gap:8px;margin-bottom:18px}
   .dm-title{font-size:20px;font-weight:700;color:#111827;border:none;outline:none;background:none;font-family:inherit;flex:1;padding:0}
   .dm-title:focus{border-bottom:1.5px solid #2563EB}
-  .dm-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;margin-bottom:20px}
-  .dm-meta-row{display:flex;align-items:center;gap:8px}
-  .dm-meta-label{font-size:12px;color:#9CA3AF;width:72px;flex-shrink:0}
-  .dm-meta-btn{display:flex;align-items:center;gap:5px;border:.5px solid #E5E7EB;border-radius:7px;padding:4px 10px;font-size:12px;color:#374151;cursor:pointer;background:#F9FAFB;font-family:inherit}
-  .dm-meta-btn:hover{background:#F3F4F6}
+  .dm-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 24px;margin-bottom:22px}
+  .dm-meta-row{display:flex;align-items:center;gap:10px}
+  .dm-meta-label{font-size:12.5px;color:#9CA3AF;width:78px;flex-shrink:0;display:flex;align-items:center;gap:6px}
+  .dm-meta-btn{display:flex;align-items:center;gap:6px;border:.5px solid #E5E7EB;border-radius:8px;padding:5px 12px;font-size:12px;color:#374151;cursor:pointer;background:#F3F4F6;font-family:inherit;font-weight:500;transition:background .15s,border-color .15s}
+  .dm-meta-btn:hover{background:#E5E7EB;border-color:#D1D5DB}
   .dm-tabs{display:flex;gap:0;border-bottom:.5px solid #E5E7EB;margin-bottom:20px}
   .dm-tab{display:flex;align-items:center;gap:5px;padding:8px 16px;font-size:13px;cursor:pointer;border:none;background:none;font-family:inherit;color:#9CA3AF;border-bottom:2px solid transparent;margin-bottom:-.5px;font-weight:500}
   .dm-tab.active{color:#2563EB;border-bottom-color:#2563EB}
@@ -82,11 +94,27 @@ const css = `
   .dm-desc-edit-btn{position:absolute;top:6px;right:6px;font-size:11px;color:#2563EB;background:#fff;border:.5px solid #DBEAFE;border-radius:5px;padding:2px 8px;cursor:pointer;font-family:inherit}
 
   /* Attachments */
-  .dm-attach-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border:.5px solid #E5E7EB;border-radius:8px;margin-bottom:8px;background:#F9FAFB}
-  .dm-attach-icon{width:34px;height:38px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}
-  .dm-attach-del{margin-left:auto;font-size:12px;color:#EF4444;cursor:pointer;border:none;background:none;font-family:inherit;padding:2px 6px}
-  .dm-attach-del:hover{text-decoration:underline}
-  .dm-attach-link{display:flex;align-items:center;gap:5px;font-size:12.5px;color:#2563EB;cursor:pointer;background:none;border:none;font-family:inherit;padding:0;margin-top:4px}
+  .dm-attach-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border:.5px solid #E5E7EB;border-radius:10px;margin-bottom:8px;background:#fff;transition:border-color .15s,box-shadow .15s;cursor:pointer}
+  .dm-attach-item:hover{border-color:#BFDBFE;box-shadow:0 2px 8px rgba(37,99,235,.08)}
+  .dm-attach-icon{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}
+  .dm-attach-del{margin-left:auto;font-size:12px;color:#6B7280;cursor:pointer;border:none;background:none;font-family:inherit;padding:3px 8px;border-radius:6px;transition:background .15s,color .15s;flex-shrink:0}
+  .dm-attach-del:hover{background:#FEE2E2;color:#EF4444}
+  .dm-attach-link{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#2563EB;cursor:pointer;background:none;border:none;font-family:inherit;padding:6px 0;margin-top:2px;font-weight:500}
+  .dm-attach-link:hover{text-decoration:underline}
+
+  /* Attachment preview overlay */
+  .dm-att-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9800;display:flex;align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(2px)}
+  .dm-att-box{background:#fff;border-radius:14px;max-width:860px;width:100%;max-height:calc(100vh - 48px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,0.3)}
+  .dm-att-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:.5px solid #F3F4F6;flex-shrink:0}
+  .dm-att-head-icon{width:34px;height:34px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}
+  .dm-att-head-title{flex:1;font-size:14px;font-weight:600;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dm-att-head-meta{font-size:12px;color:#9CA3AF;white-space:nowrap}
+  .dm-att-close{background:none;border:none;cursor:pointer;color:#9CA3AF;display:flex;align-items:center;padding:4px;border-radius:6px;transition:background .15s}
+  .dm-att-close:hover{background:#F3F4F6;color:#374151}
+  .dm-att-body{flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;min-height:200px;background:#F9FAFB}
+  .dm-att-download{display:flex;flex-direction:column;align-items:center;gap:14px;padding:40px;text-align:center}
+  .dm-att-dl-btn{background:#2563EB;color:#fff;border:none;border-radius:9px;padding:"10px 24px";font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:8px;transition:background .15s}
+  .dm-att-dl-btn:hover{background:#1D4ED8}
 
   /* Subtasks */
   .dm-subtask-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border:.5px solid #E5E7EB;border-radius:8px;margin-bottom:6px;background:#fff}
@@ -414,7 +442,7 @@ function DeadlinePicker({ value, onChange, onClose, pos, maxDate }) {
   return (
     <div ref={ref} style={{ position:"fixed", top, left, zIndex:99999,
       background:"#fff", borderRadius:14, padding:16, width:292,
-      boxShadow:"0 8px 40px rgba(0,0,0,0.22)", fontFamily:"'DM Sans','Segoe UI',sans-serif" }}>
+      boxShadow:"0 8px 40px rgba(0,0,0,0.22)", fontFamily:"'Gilroy','Segoe UI',sans-serif" }}>
 
       {/* Month/Year overlay */}
       {picker && (
@@ -509,6 +537,141 @@ function DeadlinePicker({ value, onChange, onClose, pos, maxDate }) {
       {/* Footer */}
       <div style={{ display:"flex",gap:8,marginTop:14 }}>
         <button onClick={() => { onChange(null); onClose(); }} style={DL_CANCEL}>Clear</button>
+        <button onClick={doSelect} style={DL_SELECT}>Select</button>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+   RANGE DEADLINE PICKER (start–end date)
+══════════════════════════════════════════════════════════ */
+function RangeDeadlinePicker({ startValue, endValue, onChange, onClose, pos }) {
+  const today    = new Date();
+  const initBase = isoToDate(endValue) || isoToDate(startValue) || today;
+  const [vm, setVm]           = useState(initBase.getMonth());
+  const [vy, setVy]           = useState(initBase.getFullYear());
+  const [rangeStart, setRS]   = useState(isoToDate(startValue));
+  const [rangeEnd,   setRE]   = useState(isoToDate(endValue));
+  const [phase, setPhase]     = useState(startValue ? "end" : "start");
+  const ref = useRef(null);
+
+  const PICKER_H = 350;
+  const top  = pos.top + PICKER_H > window.innerHeight
+    ? pos.top - PICKER_H - (pos.buttonHeight || 32) - 6
+    : pos.top;
+  const left = Math.min(pos.left, window.innerWidth - 310);
+
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    setTimeout(() => document.addEventListener("mousedown", h), 0);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  const prevM = () => vm === 0 ? (setVm(11), setVy(y => y - 1)) : setVm(v => v - 1);
+  const nextM = () => vm === 11 ? (setVm(0), setVy(y => y + 1)) : setVm(v => v + 1);
+
+  const totalDays = calDays(vy, vm);
+  const firstDay  = calFirst(vy, vm);
+  const cells = [...Array(firstDay).fill(null), ...Array.from({ length: totalDays }, (_, i) => i + 1)];
+
+  const clickDay = (day) => {
+    const d = new Date(vy, vm, day);
+    if (phase === "start" || !rangeStart) {
+      setRS(d); setRE(null); setPhase("end");
+    } else {
+      if (d < rangeStart) { setRE(rangeStart); setRS(d); }
+      else                  setRE(d);
+      setPhase("done");
+    }
+  };
+
+  const isS   = (day) => calSame(new Date(vy, vm, day), rangeStart);
+  const isE   = (day) => calSame(new Date(vy, vm, day), rangeEnd);
+  const inR   = (day) => rangeStart && rangeEnd && new Date(vy, vm, day) > rangeStart && new Date(vy, vm, day) < rangeEnd;
+  const isTod = (day) => calSame(new Date(vy, vm, day), today);
+
+  const doSelect = () => {
+    const start = rangeStart ? dateToIso(rangeStart) : null;
+    const end   = rangeEnd   ? dateToIso(rangeEnd)   : start;
+    onChange({ start, end });
+    onClose();
+  };
+
+  const doClear = () => { setRS(null); setRE(null); setPhase("start"); onChange({ start: null, end: null }); onClose(); };
+
+  return (
+    <div ref={ref} style={{ position:"fixed", top, left, zIndex:99999,
+      background:"#fff", borderRadius:14, padding:16, width:300,
+      boxShadow:"0 8px 40px rgba(0,0,0,0.22)", fontFamily:"'Gilroy','Segoe UI',sans-serif" }}>
+
+      {/* Range summary bar */}
+      <div style={{ display:"flex", gap:8, marginBottom:12, background:"#F9FAFB", borderRadius:8, padding:"7px 10px" }}>
+        <div style={{ flex:1, textAlign:"center" }}>
+          <div style={{ fontSize:10, color:"#9CA3AF", fontWeight:600, letterSpacing:.4, marginBottom:2 }}>FROM</div>
+          <div style={{ fontSize:13, fontWeight:700,
+            color: phase==="start" ? "#2563EB" : rangeStart ? "#111827" : "#D1D5DB" }}>
+            {rangeStart ? `${rangeStart.getDate()} ${CAL_MONTHS_S[rangeStart.getMonth()]}` : "–"}
+          </div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", color:"#D1D5DB", fontSize:16 }}>→</div>
+        <div style={{ flex:1, textAlign:"center" }}>
+          <div style={{ fontSize:10, color:"#9CA3AF", fontWeight:600, letterSpacing:.4, marginBottom:2 }}>TO</div>
+          <div style={{ fontSize:13, fontWeight:700,
+            color: phase==="end" ? "#2563EB" : rangeEnd ? "#111827" : "#D1D5DB" }}>
+            {rangeEnd ? `${rangeEnd.getDate()} ${CAL_MONTHS_S[rangeEnd.getMonth()]}` : "–"}
+          </div>
+        </div>
+      </div>
+
+      {/* Hint */}
+      <div style={{ fontSize:11, color:"#9CA3AF", textAlign:"center", marginBottom:10 }}>
+        {phase === "start" ? "Click start date" : phase === "end" ? "Click end date" : ""}
+      </div>
+
+      {/* Month nav */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+        <button onClick={prevM} style={DL_NAV_BTN}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span style={{ fontSize:13, fontWeight:600, color:"#111827" }}>{CAL_MONTHS[vm]} {vy}</span>
+        <button onClick={nextM} style={DL_NAV_BTN}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><polyline points="9 6 15 12 9 18"/></svg>
+        </button>
+      </div>
+
+      {/* Day labels */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2, marginBottom:2 }}>
+        {CAL_DAYS.map(d => (
+          <div key={d} style={{ fontSize:10, color:"#9CA3AF", textAlign:"center", fontWeight:500 }}>{d}</div>
+        ))}
+      </div>
+
+      {/* Day grid */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2 }}>
+        {cells.map((day, i) => {
+          if (day === null) return <div key={`e${i}`}/>;
+          const s = isS(day), e = isE(day), r = inR(day), t = isTod(day);
+          return (
+            <div key={day} onClick={() => clickDay(day)}
+              style={{
+                width:36, height:36, margin:"1px auto",
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:12.5, userSelect:"none", cursor:"pointer", borderRadius:"50%",
+                background: (s || e) ? "#2563EB" : r ? "#EFF6FF" : "transparent",
+                color:      (s || e) ? "#fff"    : r ? "#2563EB" : t ? "#2563EB" : "#374151",
+                fontWeight: (s || e) ? 700 : t ? 600 : 400,
+                boxShadow:  t && !s && !e ? "0 0 0 1.5px #2563EB" : "none",
+              }}>
+              {day}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Footer */}
+      <div style={{ display:"flex", gap:8, marginTop:14 }}>
+        <button onClick={doClear} style={DL_CANCEL}>Clear</button>
         <button onClick={doSelect} style={DL_SELECT}>Select</button>
       </div>
     </div>
@@ -674,7 +837,7 @@ function BlockchainBadge({ status, blocks = [] }) {
       {blocks.length > 0 && (
         <div style={{ display:"flex",flexDirection:"column",gap:4 }}>
           {blocks.map((b, i) => {
-            const ok = !b.tampered && b.chain_valid;
+            const _ok = !b.tampered && b.chain_valid;
             return (
               <div key={b.id || i} style={{ display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#6B7280" }}>
                 <div style={{ width:6,height:6,borderRadius:"50%",background: b.tampered ? "#EF4444" : "#10B981",flexShrink:0 }}/>
@@ -695,7 +858,9 @@ function BlockchainBadge({ status, blocks = [] }) {
   );
 }
 
-function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploaderName = "", subtasks = [], docId }) {
+function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploaderName = "", uploadDate = "", subtasks = [], attachmentsCount = 0, docId, userRole = null, onStatusChange }) {
+  const qc = useQueryClient();
+  const [starting, setStarting] = useState(false);
   const rawMembers = Array.isArray(members) ? members : (members?.results ?? []);
   const rawSigs    = Array.isArray(signatures) ? signatures : (signatures?.results ?? []);
 
@@ -706,16 +871,7 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
     refetchInterval: 15_000,
   });
 
-  // Stage state derived from docStatus
-  // draft → stage1 done, stage2 active
-  // review → stage1+2 done, stage3 active
-  // signed / archived → all done
-  const stageIdx = docStatus === "draft" ? 1
-    : docStatus === "review"   ? 2
-    : docStatus === "signed"   ? 3
-    : docStatus === "archived" ? 3
-    : 1;
-
+  // Members by role
   const editors = rawMembers
     .filter(m => m.role === "editor")
     .sort((a, b) => (a.step_order ?? 999) - (b.step_order ?? 999));
@@ -724,159 +880,244 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
     .filter(m => m.role === "owner" || m.role === "signer")
     .sort((a, b) => (a.step_order ?? 999) - (b.step_order ?? 999));
 
+  // Signatures progress — computed before stageIdx so we can use it for accurate stage detection
   const signedUserIds = new Set(rawSigs.filter(s => s.is_valid).map(s => String(s.user)));
+  const signedCnt     = signers.filter(s => signedUserIds.has(String(s.user))).length;
+  const signersTotal  = signers.length;
+
+  // 3-stage index:
+  //   1 = Upload done, Legal Review active    (draft OR review-with-no-sigs)
+  //   2 = Review done, Signing active         (review AND at least one sig collected)
+  //   3 = All done                            (signed / archived)
+  const stageIdx =
+    (docStatus === "signed" || docStatus === "archived") ? 3
+    : (docStatus === "review" && signedCnt > 0)          ? 2
+    : 1;
+
+  const fmtDateTime = (iso) => {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      const date = d.toLocaleDateString("en-GB", { day:"2-digit", month:"2-digit", year:"numeric" });
+      const time = d.toLocaleTimeString("en-GB", { hour:"2-digit", minute:"2-digit", hour12:false });
+      return `${date} at ${time}`;
+    } catch { return ""; }
+  };
+
+  const reviewerName = editors[0]?.user_name || editors[0]?.user_email || "";
+  const signerName   = signers[0]?.user_name  || signers[0]?.user_email  || "";
+
+  // Progress for Legal Review based on subtasks
+  const stList   = subtasks.filter(st => st.name?.trim());
+  const doneCnt  = stList.filter(st => st.status === "done").length;
+  const totalCnt = stList.length;
+  const reviewPct = totalCnt > 0 ? Math.round((doneCnt / totalCnt) * 100) : (stageIdx > 1 ? 100 : 0);
 
   const stages = [
-    { label: "Document Created", icon: "doc", sub: uploaderName ? [{ name: uploaderName, done: true }] : [] },
-    { label: "Review",           icon: "eye", sub: editors.map(m => ({ name: m.user_name || m.user_email || "Member", done: stageIdx > 2 })) },
-    { label: "Signing",          icon: "pen", sub: signers.map(m => ({ name: m.user_name || m.user_email || "Member", done: signedUserIds.has(String(m.user)) })) },
-    { label: "Completed",        icon: "check", sub: [] },
+    {
+      key: "upload",
+      label: "Document Upload",
+      doneSubtitle: uploadDate
+        ? `Completed on ${fmtDateTime(uploadDate)}${attachmentsCount > 0 ? ` · ${attachmentsCount} file${attachmentsCount !== 1 ? "s" : ""}` : ""}`
+        : (attachmentsCount > 0 ? `${attachmentsCount} file${attachmentsCount !== 1 ? "s" : ""} uploaded` : "Document uploaded"),
+      pendingSubtitle: "Waiting for document upload",
+      personPrefix: "Document uploaded by",
+      personName: uploaderName,
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+        </svg>
+      ),
+    },
+    {
+      key: "review",
+      label: "Legal Review",
+      doneSubtitle: totalCnt > 0 ? `All ${totalCnt} subtask${totalCnt !== 1 ? "s" : ""} completed` : "Review completed",
+      pendingSubtitle: "Awaiting document upload",
+      personPrefix: "This task was assigned to",
+      personName: reviewerName,
+      showProgress: true,
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          <line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/>
+        </svg>
+      ),
+    },
+    {
+      key: "signing",
+      label: "Signing",
+      doneSubtitle: signersTotal > 0 ? `Signed by all ${signersTotal} signer${signersTotal !== 1 ? "s" : ""}` : "All signatures collected",
+      pendingSubtitle: signersTotal > 0
+        ? `${signedCnt}/${signersTotal} signature${signersTotal !== 1 ? "s" : ""} · Waiting for legal review`
+        : "Waiting for completion of the examination",
+      personPrefix: "This task was assigned to",
+      personName: signerName,
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+        </svg>
+      ),
+    },
   ];
-
-  const stageIcons = {
-    doc: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-      </svg>
-    ),
-    eye: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
-        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
-      </svg>
-    ),
-    pen: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
-        <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
-      </svg>
-    ),
-    check: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
-        <polyline points="20 6 9 17 4 12"/>
-      </svg>
-    ),
-  };
 
   const bcBlocks = blockchainData?.blocks ?? [];
   const bcStatus = blockchainData?.status ?? "PENDING";
 
+  const initials = (name) => (name || "?").split(" ").filter(Boolean).map(p => p[0]).join("").toUpperCase().slice(0,2);
+
+  const handleStartWorkflow = async () => {
+    if (!docId || starting) return;
+    setStarting(true);
+    try {
+      await startWorkflow(docId);
+      await qc.invalidateQueries({ queryKey: ["document", docId] });
+      await qc.invalidateQueries({ queryKey: ["signatures", docId] });
+      onStatusChange?.("IN PROGRESS");
+      toast.success("Workflow started — document sent for review");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not start workflow");
+    } finally {
+      setStarting(false);
+    }
+  };
+
   return (
-    <div style={{ padding:"24px 8px" }}>
+    <div style={{ padding:"20px 4px 8px" }}>
+      {/* Start Workflow CTA — shown only to owners when document is still in draft */}
+      {docStatus === "draft" && userRole === "owner" && (
+        <div style={{
+          border:"1.5px dashed #BFDBFE", borderRadius:10, background:"#EFF6FF",
+          padding:"12px 14px", marginBottom:16,
+          display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
+        }}>
+          <div>
+            <div style={{ fontSize:13,fontWeight:600,color:"#1D4ED8",marginBottom:2 }}>Ready to send for review?</div>
+            <div style={{ fontSize:11.5,color:"#3B82F6" }}>Starting the workflow creates tasks for each workspace member in step order.</div>
+          </div>
+          <button
+            onClick={handleStartWorkflow}
+            disabled={starting}
+            style={{
+              background:"#2563EB",color:"#fff",border:"none",borderRadius:8,
+              padding:"7px 14px",fontSize:12.5,fontWeight:600,cursor:"pointer",
+              fontFamily:"inherit",whiteSpace:"nowrap",flexShrink:0,
+              opacity: starting ? 0.7 : 1,
+            }}
+          >
+            {starting ? "Starting…" : "Start Workflow"}
+          </button>
+        </div>
+      )}
       {stages.map((stage, si) => {
         const isDone    = si < stageIdx;
         const isActive  = si === stageIdx;
         const isPending = si > stageIdx;
-        const dotColor  = isDone ? "#10B981" : isActive ? "#2563EB" : "#D1D5DB";
-        const lineColor = isDone ? "#10B981" : "#E5E7EB";
         const isLast    = si === stages.length - 1;
 
+        // Status badge
+        const badge = isDone
+          ? { label: "Completed",   bg: "#DCFCE7", color: "#16A34A" }
+          : isActive
+          ? { label: "In progress", bg: "#DBEAFE", color: "#2563EB" }
+          : { label: "Pending",     bg: "#FEF3C7", color: "#B45309" };
+
+        // Circle icon styling
+        const circleBg     = isDone ? "#22C55E" : isActive ? "#2563EB" : "#F3F4F6";
+        const circleStroke = isDone ? "#22C55E" : isActive ? "#2563EB" : "#D1D5DB";
+        const circleColor  = (isDone || isActive) ? "#fff" : "#9CA3AF";
+        const lineColor    = isDone ? "#22C55E" : "#E5E7EB";
+
+        // Card styling
+        const cardBorder = isActive ? "1.5px solid #2563EB" : "1px solid #E5E7EB";
+        const cardBg     = isPending ? "#FAFAFA" : "#fff";
+
+        // Subtitle text
+        const subtitle = isDone ? stage.doneSubtitle : (isPending ? stage.pendingSubtitle : "");
+
         return (
-          <div key={si} style={{ display:"flex", gap:14 }}>
-            {/* Left column: dot + line */}
-            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", width:28, flexShrink:0 }}>
+          <div key={stage.key} style={{ display:"flex", gap:14, alignItems:"stretch" }}>
+            {/* Left column: circle + connector line */}
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", width:32, flexShrink:0 }}>
               <div style={{
-                width:28, height:28, borderRadius:"50%",
-                background: isDone ? "#D1FAE5" : isActive ? "#DBEAFE" : "#F3F4F6",
-                border: `2px solid ${dotColor}`,
+                width:32, height:32, borderRadius:"50%",
+                background: circleBg,
+                border: `2px solid ${circleStroke}`,
                 display:"flex", alignItems:"center", justifyContent:"center",
-                color: dotColor, flexShrink:0,
+                color: circleColor, flexShrink:0,
               }}>
                 {isDone
-                  ? <svg viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
-                  : <span style={{ color: dotColor }}>{stageIcons[stage.icon]}</span>
+                  ? <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" width="15" height="15"><polyline points="20 6 9 17 4 12"/></svg>
+                  : stage.icon
                 }
               </div>
               {!isLast && (
-                <div style={{ width:2, flex:1, minHeight:20, background: lineColor, marginTop:2, marginBottom:2 }}/>
+                <div style={{ width:2, flex:1, minHeight:24, background: lineColor, marginTop:4, marginBottom:4 }}/>
               )}
             </div>
 
-            {/* Right column: stage content */}
-            <div style={{ flex:1, paddingBottom: isLast ? 0 : 20 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom: stage.sub.length ? 10 : 0 }}>
-                <span style={{ fontSize:14, fontWeight:600, color: isPending ? "#9CA3AF" : "#111827" }}>
+            {/* Right column: card */}
+            <div style={{
+              flex:1, marginBottom: isLast ? 0 : 14,
+              border: cardBorder, borderRadius:12, padding:"12px 14px",
+              background: cardBg,
+              boxShadow: isActive ? "0 2px 10px rgba(37,99,235,0.08)" : "none",
+            }}>
+              {/* Header row: title + badge */}
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+                <div style={{ fontSize:14, fontWeight:600, color: isPending ? "#9CA3AF" : "#111827" }}>
                   {stage.label}
-                </span>
+                </div>
                 <span style={{
-                  fontSize:11, fontWeight:500, padding:"2px 8px", borderRadius:999,
-                  background: isDone ? "#D1FAE5" : isActive ? "#DBEAFE" : "#F3F4F6",
-                  color: isDone ? "#065F46" : isActive ? "#1D4ED8" : "#9CA3AF",
+                  fontSize:10.5, fontWeight:600,
+                  padding:"3px 9px", borderRadius:999,
+                  background: badge.bg, color: badge.color,
                 }}>
-                  {isDone ? "Done" : isActive ? "In Progress" : "Pending"}
+                  {badge.label}
                 </span>
               </div>
 
-              {/* Sub-steps (people) */}
-              {stage.sub.map((person, pi) => (
-                <div key={pi} style={{
+              {/* Subtitle */}
+              {subtitle && (
+                <div style={{ fontSize:12, color:"#9CA3AF", marginTop:3 }}>
+                  {subtitle}
+                </div>
+              )}
+
+              {/* Assignee row */}
+              {stage.personName && (
+                <div style={{
                   display:"flex", alignItems:"center", gap:8,
-                  padding:"6px 10px", marginBottom:4, borderRadius:8,
-                  background: person.done ? "#F0FDF4" : "#F9FAFB",
-                  border: `1px solid ${person.done ? "#A7F3D0" : "#E5E7EB"}`,
+                  marginTop:10, padding:"7px 10px",
+                  borderRadius:8, background:"#F9FAFB", border:"1px solid #F3F4F6",
                 }}>
                   <div style={{
-                    width:24, height:24, borderRadius:"50%",
-                    background: person.done ? "#10B981" : "#E5E7EB",
+                    width:22, height:22, borderRadius:"50%",
+                    background: isPending ? "#E5E7EB" : "#DBEAFE",
                     display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:10, fontWeight:700, color: person.done ? "#fff" : "#6B7280", flexShrink:0,
+                    fontSize:9.5, fontWeight:700,
+                    color: isPending ? "#9CA3AF" : "#2563EB", flexShrink:0,
                   }}>
-                    {(person.name || "?").split(" ").map(p => p[0]).join("").toUpperCase().slice(0,2)}
+                    {initials(stage.personName)}
                   </div>
-                  <span style={{ fontSize:13, color: person.done ? "#065F46" : "#374151", flex:1 }}>
-                    {person.name}
-                  </span>
-                  {person.done
-                    ? <svg viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
-                    : <svg viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="2" width="14" height="14"><circle cx="12" cy="12" r="10"/></svg>
-                  }
+                  <div style={{ fontSize:12, color:"#6B7280" }}>
+                    {stage.personPrefix} <strong style={{ color:"#374151", fontWeight:600 }}>{stage.personName}</strong>
+                  </div>
                 </div>
-              ))}
+              )}
 
-              {/* Legal Review subtask tracker (Review stage only) */}
-              {si === 1 && (() => {
-                const stList = subtasks.filter(st => st.name?.trim());
-                if (stList.length === 0) return null;
-                const doneCnt  = stList.filter(st => st.status === "done").length;
-                const totalCnt = stList.length;
-                const pct      = Math.round((doneCnt / totalCnt) * 100);
-                return (
-                  <div style={{ marginTop: stage.sub.length ? 10 : 0 }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, marginBottom:5 }}>
-                      <span style={{ color:"#374151", fontWeight:600 }}>Legal Review Subtasks</span>
-                      <span style={{ color:"#2563EB", fontWeight:700 }}>{doneCnt}/{totalCnt} ({pct}%)</span>
+              {/* Progress bar (only on active Legal Review) */}
+              {stage.showProgress && isActive && (
+                <div style={{ marginTop:10 }}>
+                  {totalCnt > 0 && (
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:11, marginBottom:5 }}>
+                      <span style={{ color:"#6B7280" }}>Subtasks</span>
+                      <span style={{ color:"#2563EB", fontWeight:600 }}>{doneCnt}/{totalCnt}</span>
                     </div>
-                    <div className="wf-progress" style={{ marginBottom:8 }}>
-                      <div className="wf-progress-fill" style={{ width:`${pct}%`, transition:"width .3s" }}/>
-                    </div>
-                    {stList.map((st, idx) => (
-                      <div key={st.id || idx} style={{
-                        display:"flex", alignItems:"center", gap:8,
-                        padding:"5px 10px", marginBottom:4, borderRadius:8,
-                        background: st.status==="done" ? "#F0FDF4" : "#F9FAFB",
-                        border: `1px solid ${st.status==="done" ? "#A7F3D0" : "#E5E7EB"}`,
-                      }}>
-                        <div style={{
-                          width:20, height:20, borderRadius:"50%", flexShrink:0,
-                          background: st.status==="done" ? "#10B981" : "#E5E7EB",
-                          display:"flex", alignItems:"center", justifyContent:"center",
-                        }}>
-                          {st.status==="done"
-                            ? <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" width="10" height="10"><polyline points="20 6 9 17 4 12"/></svg>
-                            : <span style={{ fontSize:9, fontWeight:700, color:"#6B7280" }}>{idx+1}</span>
-                          }
-                        </div>
-                        <span style={{ fontSize:12, flex:1, color: st.status==="done" ? "#065F46" : "#374151",
-                          textDecoration: st.status==="done" ? "line-through" : "none" }}>
-                          {st.name}
-                        </span>
-                      </div>
-                    ))}
+                  )}
+                  <div className="wf-progress">
+                    <div className="wf-progress-fill" style={{ width:`${reviewPct}%`, transition:"width .3s" }}/>
                   </div>
-                );
-              })()}
-
-              {stage.sub.length === 0 && !isLast && (
-                <div style={{ fontSize:12, color:"#9CA3AF", marginBottom:4 }}>
-                  {si === 1 ? "No reviewers assigned" : si === 2 ? "No signers assigned" : ""}
                 </div>
               )}
             </div>
@@ -1181,12 +1422,12 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   const { data: apiDoc } = useQuery({
     queryKey: ["document", docId],
     queryFn: () => getDocument(docId),
-    enabled: (!readOnly || isEditor) && !!docId,
+    enabled: !!docId,
   });
   const { data: apiSubtasks } = useQuery({
     queryKey: ["subtasks", docId],
     queryFn: () => getSubtasks(docId),
-    enabled: (!readOnly || isEditor) && !!docId,
+    enabled: !!docId,
   });
   const { data: apiAttachments } = useQuery({
     queryKey: ["attachments", docId],
@@ -1215,19 +1456,22 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
     color: AV_COLORS_MEMBERS[i % AV_COLORS_MEMBERS.length],
   }));
 
-  const [status,     setStatus]     = useState("TO DO");
-  const [priority,   setPriority]   = useState("Empty");
-  const [assignee,   setAssignee]   = useState(null);
-  const [dueDate,    setDueDate]    = useState(null);
-  const [showDueDl,  setShowDueDl]  = useState(false);
-  const [dueDlPos,   setDueDlPos]   = useState({ top:0, left:0 });
+  const [status,       setStatus]       = useState("TO DO");
+  const [priority,     setPriority]     = useState("Empty");
+  const [assignee,     setAssignee]     = useState(null);
+  const [dueDate,      setDueDate]      = useState(null);
+  const [dueStartDate, setDueStartDate] = useState(null);
+  const [showDueDl,    setShowDueDl]    = useState(false);
+  const [dueDlPos,     setDueDlPos]     = useState({ top:0, left:0 });
+  const apiDocRef = useRef(null);
   const [showPriDd,  setShowPriDd]  = useState(false);
   const [showAsnDd,  setShowAsnDd]  = useState(false);
-  const priRef    = useRef(null);
-  const asnRef    = useRef(null);
+  const _priRef   = useRef(null);
+  const _asnRef   = useRef(null);
   const dueBtnRef = useRef(null);
   const [desc,       setDesc]       = useState("");
   const [attachments,setAttachments]= useState([]);
+  const [previewAtt, setPreviewAtt] = useState(null);
   const [subtasks,   setSubtasks]   = useState([{ id:1, name:"", mode:"action", assignee:null, deadline:null, status:"pending" }]);
   const [activeTab,  setActiveTab]  = useState("task");
   const [comments,   setComments]   = useState([]);
@@ -1240,14 +1484,31 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
 
   // Sync doc metadata from API
   useEffect(() => {
-    if (apiDoc) {
-      setTitle(apiDoc.title || "");
-      setStatus(docStatusDisplay(apiDoc.status));
-      setPriority(priFromApi(apiDoc.priority));
-      setDueDate(apiDoc.due_date || null);
-      if (apiDoc.description) setDesc(apiDoc.description);
-    }
+    if (!apiDoc) return;
+    apiDocRef.current = apiDoc;
+    setTitle(apiDoc.title || "");
+    setStatus(docStatusDisplay(apiDoc.status));
+    setPriority(priFromApi(apiDoc.priority));
+    setDueDate(apiDoc.due_date || null);
+    setDueStartDate(apiDoc.metadata?.start_date || null);
+    setDesc(apiDoc.metadata?.description || "");
   }, [apiDoc]);
+
+  // Restore assignee — runs when either apiDoc or membersData arrives (handles any load order)
+  useEffect(() => {
+    if (!apiDoc || !membersData) return;
+    const savedId = apiDoc.metadata?.assignee_id;
+    if (!savedId) return;
+    const rawList = membersData?.results ?? (Array.isArray(membersData) ? membersData : []);
+    const found = rawList.find(m => String(m.user || m.id) === String(savedId));
+    if (!found) return;
+    setAssignee({
+      id:       found.user || found.id,
+      name:     found.user_name || found.user_email || "Member",
+      initials: (found.user_name || found.user_email || "M").split(" ").map(p => p[0]).join("").toUpperCase().slice(0, 2),
+      color:    AV_COLORS_MEMBERS[0],
+    });
+  }, [apiDoc, membersData]);  
 
   // Sync subtasks from API (only on first load)
   useEffect(() => {
@@ -1292,6 +1553,12 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
           status: DISPLAY_TO_API_STATUS[status] || "draft",
           ...(priority !== "Empty" && { priority: priToApi(priority) }),
           due_date: dueDate || null,
+          metadata: {
+            ...(apiDocRef.current?.metadata || {}),
+            assignee_id: assignee?.id || null,
+            start_date:  dueStartDate || null,
+            description: desc || null,
+          },
         });
         // Delete removed subtasks
         for (const id of deletedSubtaskIds) {
@@ -1330,7 +1597,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
     }
   };
 
-  const handleCancel = () => {
+  const _handleCancel = () => {
     const s = snapshot.current;
     setStatus(s.status);
     setPriority(s.priority);
@@ -1428,6 +1695,78 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   return (
     <div className="dm-overlay" onClick={onClose}>
       <style>{css}</style>
+
+      {/* ── Attachment preview lightbox ───────────────────────────── */}
+      {previewAtt && (() => {
+        const name  = previewAtt.name || "";
+        const ext   = name.split(".").pop()?.toLowerCase() || "";
+        const isImg = ["jpg","jpeg","png","gif","webp","svg","bmp"].includes(ext);
+        const isPdf = ext === "pdf";
+        const dt    = getDocType(name);
+
+        return (
+          <div className="dm-att-overlay" onClick={() => setPreviewAtt(null)}>
+            <div className="dm-att-box" onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className="dm-att-head">
+                <div className="dm-att-head-icon" style={{ background:dt.bg }}>
+                  <span style={{ fontSize:8,fontWeight:800,color:dt.color }}>{dt.ext}</span>
+                </div>
+                <div style={{ flex:1,minWidth:0 }}>
+                  <div className="dm-att-head-title">{name}</div>
+                  {previewAtt.size && (
+                    <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>{previewAtt.size}{previewAtt.date ? ` · ${previewAtt.date}` : ""}</div>
+                  )}
+                </div>
+                {previewAtt.downloadUrl && (
+                  <a href={previewAtt.downloadUrl} target="_blank" rel="noreferrer"
+                    style={{ display:"flex",alignItems:"center",gap:5,background:"#EFF6FF",color:"#2563EB",border:"1px solid #BFDBFE",borderRadius:7,padding:"5px 12px",fontSize:12,fontWeight:600,textDecoration:"none",flexShrink:0 }}
+                    onClick={e => e.stopPropagation()}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Download
+                  </a>
+                )}
+                <button className="dm-att-close" onClick={() => setPreviewAtt(null)} style={{ marginLeft:8 }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="dm-att-body">
+                {isImg && previewAtt.downloadUrl ? (
+                  <img src={previewAtt.downloadUrl} alt={name}
+                    style={{ maxWidth:"100%",maxHeight:"calc(100vh - 160px)",objectFit:"contain",borderRadius:4 }}/>
+                ) : isPdf && previewAtt.downloadUrl ? (
+                  <iframe src={previewAtt.downloadUrl} title={name}
+                    style={{ width:"100%",height:"calc(100vh - 160px)",border:"none" }}/>
+                ) : (
+                  <div className="dm-att-download">
+                    <div style={{
+                      width:64,height:64,borderRadius:14,background:dt.bg,
+                      display:"flex",alignItems:"center",justifyContent:"center",
+                      fontSize:14,fontWeight:800,color:dt.color,
+                    }}>
+                      {dt.ext}
+                    </div>
+                    <div style={{ fontSize:15,fontWeight:600,color:"#111827" }}>{name}</div>
+                    <div style={{ fontSize:12,color:"#9CA3AF" }}>
+                      Preview is not available for this file type.<br/>Click Download to open it.
+                    </div>
+                    {previewAtt.downloadUrl && (
+                      <a href={previewAtt.downloadUrl} target="_blank" rel="noreferrer"
+                        style={{ display:"inline-flex",alignItems:"center",gap:8,background:"#2563EB",color:"#fff",borderRadius:9,padding:"10px 24px",fontSize:14,fontWeight:600,textDecoration:"none" }}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Download file
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="dm-modal" onClick={e=>e.stopPropagation()}>
 
         {/* Header breadcrumb */}
@@ -1503,11 +1842,11 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                 {(readOnly || isEditor)
                   ? <span className="dm-deadline-btn" style={{ cursor:"default" }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                      {dueDate ? fmtDeadline(dueDate) : (doc?.deadline || "—")}
+                      {(dueDate || dueStartDate) ? fmtDateRange(dueStartDate, dueDate) : (doc?.deadline || "—")}
                     </span>
                   : <div style={{ position:"relative" }}>
                       <button ref={dueBtnRef}
-                        className={`dm-deadline-btn${dueDate ? "" : " empty"}`}
+                        className={`dm-deadline-btn${(dueDate || dueStartDate) ? "" : " empty"}`}
                         onClick={() => {
                           if (dueBtnRef.current) {
                             const r = dueBtnRef.current.getBoundingClientRect();
@@ -1516,11 +1855,17 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                           setShowDueDl(v => !v);
                         }}>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                        {dueDate ? fmtDeadline(dueDate) : "Empty"}
+                        {(dueDate || dueStartDate) ? fmtDateRange(dueStartDate, dueDate) : "Empty"}
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="10" height="10"><polyline points="6 9 12 15 18 9"/></svg>
                       </button>
                       {showDueDl && (
-                        <DeadlinePicker value={dueDate} pos={dueDlPos} onChange={iso=>setDueDate(iso)} onClose={()=>setShowDueDl(false)}/>
+                        <RangeDeadlinePicker
+                          startValue={dueStartDate}
+                          endValue={dueDate}
+                          pos={dueDlPos}
+                          onChange={({ start, end }) => { setDueStartDate(start); setDueDate(end); }}
+                          onClose={() => setShowDueDl(false)}
+                        />
                       )}
                     </div>
                 }
@@ -1529,10 +1874,18 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                 <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="14" height="14"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                 <span className="dm-meta-label">Assignees</span>
                 {(readOnly || isEditor)
-                  ? <AvatarStack members={doc?.members||[]}/>
+                  ? <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      {assignee
+                        ? <><MiniAv member={assignee} size={22}/><span style={{ fontSize:12.5, color:"#374151" }}>{assignee.name}</span></>
+                        : <span style={{ fontSize:12.5, color:"#9CA3AF" }}>—</span>
+                      }
+                    </div>
                   : <div style={{ position:"relative" }}>
                       <button className="dm-meta-btn" onClick={()=>setShowAsnDd(v=>!v)} style={{ display:"flex",alignItems:"center",gap:5 }}>
-                        {assignee ? assignee.name.split(" ")[0] : "Empty"}
+                        {assignee
+                          ? <><MiniAv member={assignee} size={18}/>{assignee.name.split(" ")[0]}</>
+                          : "Empty"
+                        }
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="10" height="10"><polyline points="9 6 15 12 9 18"/></svg>
                       </button>
                       {showAsnDd && (
@@ -1582,8 +1935,11 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                     Description
                   </div>
                   {(readOnly || isEditor)
-                    ? <div className="dm-desc-view" style={{ cursor:"default",padding:"8px 0",minHeight:50,color:"#6B7280" }}>
-                        {desc || "No description."}
+                    ? <div className="dm-desc-view" style={{ cursor:"default", padding:"8px 0", minHeight:50 }}>
+                        {desc
+                          ? <div dangerouslySetInnerHTML={{ __html: desc }} style={{ fontSize:13, color:"#374151", lineHeight:1.7 }}/>
+                          : <span style={{ color:"#9CA3AF", fontSize:13 }}>No description.</span>
+                        }
                       </div>
                     : <DescEditor value={desc} onChange={setDesc}/>
                   }
@@ -1598,14 +1954,17 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                         <svg viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                         Main Document
                       </div>
-                      <div className="dm-attach-item">
+                      <div className="dm-attach-item" onClick={() => doc?.downloadUrl && setPreviewAtt({ name: doc.title||doc.name, downloadUrl: doc.downloadUrl, size: doc.size, date: doc.date })}>
                         <div className="dm-attach-icon" style={{ background:dt.bg }}>
                           <span style={{ fontSize:9,fontWeight:700,color:dt.color }}>{dt.ext}</span>
                         </div>
-                        <div>
-                          <div style={{ fontSize:13,fontWeight:500,color:"#374151" }}>{doc?.title || doc?.name}</div>
-                          <div style={{ fontSize:11,color:"#9CA3AF" }}>{doc?.size} · {doc?.date}</div>
+                        <div style={{ flex:1,minWidth:0 }}>
+                          <div style={{ fontSize:13,fontWeight:500,color:"#374151",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{doc?.title || doc?.name}</div>
+                          <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>{doc?.size}{doc?.date ? ` · ${doc.date}` : ""}</div>
                         </div>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="1.8" width="15" height="15" style={{ flexShrink:0 }}>
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                        </svg>
                       </div>
                     </div>
                   );
@@ -1620,24 +1979,34 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                   {attachments.map((a,i)=>{
                     const dt = getDocType(a.name);
                     return (
-                      <div key={i} className="dm-attach-item">
+                      <div key={i} className="dm-attach-item" onClick={() => setPreviewAtt(a)}>
+                        {/* Square file-type icon */}
                         <div className="dm-attach-icon" style={{ background:dt.bg }}>
                           <span style={{ fontSize:9,fontWeight:700,color:dt.color }}>{dt.ext}</span>
                         </div>
-                        <div>
-                          <div style={{ fontSize:13,fontWeight:500,color:"#374151" }}>{a.name}</div>
-                          <div style={{ fontSize:11,color:"#9CA3AF" }}>{a.size} · {a.date}</div>
+                        {/* File info */}
+                        <div style={{ flex:1,minWidth:0 }}>
+                          <div style={{ fontSize:13,fontWeight:500,color:"#374151",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{a.name}</div>
+                          <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>{a.size}{a.date ? ` · ${a.date}` : ""}</div>
                         </div>
+                        {/* Eye icon hint */}
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="1.8" width="15" height="15" style={{ flexShrink:0,marginRight:4 }}>
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                        </svg>
                         {isEditor
-                          ? <a href={a.downloadUrl} target="_blank" rel="noreferrer"
-                              style={{ marginLeft:"auto",padding:"3px 10px",background:"#EFF6FF",color:"#2563EB",border:"1px solid #BFDBFE",borderRadius:6,fontSize:12,fontWeight:500,cursor:"pointer",textDecoration:"none",flexShrink:0 }}>
-                              View
-                            </a>
-                          : <button className="dm-attach-del" onClick={async()=>{
-                              const att=attachments[i];
-                              if(att?._apiId&&docId){try{await apiDeleteAttachment(docId,att._apiId);qc.invalidateQueries({queryKey:["attachments",docId]});}catch{}}
-                              setAttachments(at=>at.filter((_,j)=>j!==i));
-                            }}>Delete</button>
+                          ? <span style={{ fontSize:11.5,color:"#2563EB",fontWeight:500,flexShrink:0 }} onClick={e=>e.stopPropagation()}>
+                              <a href={a.downloadUrl} target="_blank" rel="noreferrer"
+                                style={{ color:"#2563EB",textDecoration:"none" }}>
+                                Download
+                              </a>
+                            </span>
+                          : <button className="dm-attach-del"
+                              onClick={async(e)=>{
+                                e.stopPropagation();
+                                const att=attachments[i];
+                                if(att?._apiId&&docId){try{await apiDeleteAttachment(docId,att._apiId);qc.invalidateQueries({queryKey:["attachments",docId]});}catch{}}
+                                setAttachments(at=>at.filter((_,j)=>j!==i));
+                              }}>Delete</button>
                         }
                       </div>
                     );
@@ -1651,8 +2020,50 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                   </>}
                 </div>}
 
-                {/* Subtasks */}
-                <div className="dm-section">
+                {/* Signing card — only in readOnly (Assigned Documents view) */}
+                {readOnly && (() => {
+                  const myTask = doc?._task;
+                  const isMyTurn = myTask?.status === "in_progress";
+                  const kind = myTask?.request_type === "signature" ? "Signing"
+                             : myTask?.request_type === "approval"  ? "Approval"
+                             : myTask?.request_type === "review"    ? "Review"
+                             : "Task";
+                  return (
+                    <div className="dm-section">
+                      <style>{`
+                        .adm-mytask{display:flex;align-items:flex-start;gap:14px;margin-top:6px}
+                        .adm-mytask-icon{width:36px;height:36px;border-radius:50%;background:#FEF3C7;border:1.5px solid #FCD34D;display:flex;align-items:center;justify-content:center;color:#D97706;flex-shrink:0}
+                        .adm-mytask-card{flex:1;display:flex;align-items:center;justify-content:space-between;border:1px solid #E5E7EB;border-radius:12px;padding:16px 18px;background:#fff;transition:all .15s}
+                        .adm-mytask-card.active{cursor:pointer}
+                        .adm-mytask-card.active:hover{border-color:#2563EB;box-shadow:0 2px 12px rgba(37,99,235,0.08)}
+                        .adm-mytask-title{font-size:14.5px;font-weight:600;color:#111827;margin-bottom:3px}
+                        .adm-mytask-title.muted{color:#9CA3AF;font-weight:500}
+                        .adm-mytask-sub{font-size:12.5px;color:#9CA3AF}
+                      `}</style>
+                      <div className="adm-mytask">
+                        <div className="adm-mytask-icon">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="17" height="17"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                        </div>
+                        <div className={`adm-mytask-card${isMyTurn ? " active" : ""}`}>
+                          <div>
+                            <div className={`adm-mytask-title${isMyTurn ? "" : " muted"}`}>{kind}</div>
+                            <div className="adm-mytask-sub">Waiting for completion of the examination</div>
+                          </div>
+                          {isMyTurn && (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="1.8" width="18" height="18">
+                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                              <polyline points="15 3 21 3 21 9"/>
+                              <line x1="10" y1="14" x2="21" y2="3"/>
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Subtasks — hidden in readOnly (signer doesn't manage subtasks) */}
+                {!readOnly && <div className="dm-section">
                   <div className="dm-section-title">
                     <svg viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
                     Subtasks
@@ -1723,7 +2134,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                           maxDate={dueDate}/>
                       ))
                   }
-                </div>
+                </div>}
               </>
             )}
 
@@ -1731,10 +2142,14 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
               <WorkflowTab
                 members={membersData}
                 signatures={signaturesData}
-                docStatus={apiDoc?.status || doc?.status}
+                docStatus={DISPLAY_TO_API_STATUS[status] || apiDoc?.status || doc?.status || "draft"}
                 uploaderName={apiDoc?.uploaded_by_name || ""}
+                uploadDate={apiDoc?.created_at || doc?.created_at || ""}
                 subtasks={subtasks}
+                attachmentsCount={attachments.length}
                 docId={docId}
+                userRole={userRole}
+                onStatusChange={(newStatus) => setStatus(newStatus)}
               />
             )}
           </div>
@@ -1763,11 +2178,11 @@ const prCss = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   html,body,#root{width:100%;height:100%;overflow:hidden;margin:0;padding:0}
-  button{font-family:'DM Sans','Segoe UI',sans-serif;cursor:pointer}
+  button{font-family:'Gilroy','Segoe UI',sans-serif;cursor:pointer}
   button:hover{opacity:unset}
-  input,textarea{font-family:'DM Sans','Segoe UI',sans-serif}
+  input,textarea{font-family:'Gilroy','Segoe UI',sans-serif}
 
-  .pr-page{display:flex;flex-direction:column;width:100vw;height:100vh;font-family:'DM Sans','Segoe UI',sans-serif;background:#EEEDF0;overflow:hidden}
+  .pr-page{display:flex;flex-direction:column;width:100vw;height:100vh;font-family:'Gilroy','Segoe UI',sans-serif;letter-spacing:0.02em;background:#EEEDF0;overflow:hidden}
 
   /* ── HEADER ── */
   .pr-topbar{display:flex;align-items:center;padding:0 20px;height:52px;gap:10px;flex-shrink:0;background:#fff;border-bottom:.5px solid #E5E7EB;z-index:30}
@@ -1992,7 +2407,7 @@ function NewProjectModal({ onClose, onCreate }) {
         const fileToUpload = file || new File([new Blob([" "],{type:"text/plain"})], fileName);
         await serverUploadDocument(ws.id, docTitle, fileToUpload);
         qc.invalidateQueries({ queryKey: ["documents", ws.id] });
-      } catch(docErr) {
+      } catch (err) {
         toast.error("Project created, but document upload failed.");
       }
 
@@ -2036,7 +2451,7 @@ function NewProjectModal({ onClose, onCreate }) {
               {formErr.docName&&<span style={{ fontSize:11,color:"#EF4444" }}>{formErr.docName}</span>}
             </div>
             <div className="pr-dropzone" onClick={()=>fileRef.current?.click()} onDragOver={e=>e.preventDefault()} onDrop={handleFile}>
-              <input ref={fileRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display:"none" }} onChange={handleFile}/>
+              <input ref={fileRef} type="file" accept=".docx,.xlsx" style={{ display:"none" }} onChange={handleFile}/>
               {file?(
                 <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:6 }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.5" width="32" height="32"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -2080,78 +2495,205 @@ function AssignedDocsEmpty() {
   const { t } = useTranslation();
   return (
     <div className="pr-empty">
-      <svg viewBox="0 0 140 120" fill="none" width="200" height="160" style={{ marginBottom:20 }}>
-        <ellipse cx="70" cy="110" rx="50" ry="8" fill="#EEF2FF"/>
-        <rect x="30" y="28" width="80" height="72" rx="8" fill="#F9FAFB" stroke="#D1D5DB" strokeWidth="2"/>
-        <rect x="42" y="42" width="40" height="4" rx="2" fill="#E5E7EB"/>
-        <rect x="42" y="52" width="55" height="4" rx="2" fill="#E5E7EB"/>
-        <rect x="42" y="62" width="48" height="4" rx="2" fill="#E5E7EB"/>
-        <rect x="42" y="72" width="34" height="4" rx="2" fill="#E5E7EB"/>
-        <circle cx="104" cy="84" r="18" fill="#EEF2FF" stroke="#C7D2FE" strokeWidth="1.5"/>
-        <path d="M98 84 l4 4 8-8" stroke="#6366F1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-        <circle cx="62" cy="24" r="6" fill="#F3F4F6" stroke="#E5E7EB" strokeWidth="1.5"/>
-        <line x1="62" y1="21" x2="62" y2="27" stroke="#D1D5DB" strokeWidth="1.5" strokeLinecap="round"/>
-        <line x1="59" y1="24" x2="65" y2="24" stroke="#D1D5DB" strokeWidth="1.5" strokeLinecap="round"/>
+      <svg viewBox="0 0 200 150" fill="none" width="220" height="170" style={{ marginBottom:24 }}>
+        {/* blob shadow */}
+        <ellipse cx="100" cy="120" rx="60" ry="10" fill="#EEF2FF"/>
+        {/* back paper (rotated left) */}
+        <rect x="62" y="32" width="64" height="84" rx="4" fill="#fff" stroke="#D1D5DB" strokeWidth="1.5" transform="rotate(-10 94 74)"/>
+        {/* middle paper (slight right) */}
+        <rect x="72" y="34" width="64" height="84" rx="4" fill="#fff" stroke="#D1D5DB" strokeWidth="1.5" transform="rotate(6 104 76)"/>
+        {/* front paper */}
+        <rect x="78" y="38" width="64" height="84" rx="4" fill="#fff" stroke="#D1D5DB" strokeWidth="1.5"/>
+        {/* decoration dots / plus signs */}
+        <circle cx="40" cy="50" r="1.5" fill="#9CA3AF"/>
+        <circle cx="52" cy="34" r="1.2" fill="#D1D5DB"/>
+        <circle cx="170" cy="48" r="1.5" fill="#9CA3AF"/>
+        <circle cx="160" cy="32" r="1.2" fill="#D1D5DB"/>
+        <circle cx="178" cy="86" r="1.2" fill="#D1D5DB"/>
+        <path d="M48 88 v6 M45 91 h6" stroke="#9CA3AF" strokeWidth="1.2" strokeLinecap="round"/>
+        <path d="M156 96 v5 M153.5 98.5 h5" stroke="#9CA3AF" strokeWidth="1.2" strokeLinecap="round"/>
+        <path d="M168 124 v4 M166 126 h4" stroke="#9CA3AF" strokeWidth="1" strokeLinecap="round"/>
       </svg>
-      <p style={{ fontSize:14,fontWeight:600,color:"#374151",marginBottom:6 }}>{t("projects.noAssignedYet")}</p>
+      <p style={{ fontSize:15,fontWeight:600,color:"#111827",marginBottom:8 }}>{t("projects.noAssignedYet")}</p>
       <p style={{ fontSize:13,color:"#9CA3AF" }}>{t("projects.assignedHint")}</p>
     </div>
   );
 }
 
 /* ══════════════════════════════════════════════════════════
+  WORKSPACE MEMBERS AVATARS (lazy, deduped via React Query)
+══════════════════════════════════════════════════════════ */
+function WsMembersAvs({ workspaceId }) {
+  const { data } = useQuery({
+    queryKey: ["members", workspaceId],
+    queryFn: () => getMembers(workspaceId),
+    enabled: !!workspaceId,
+    staleTime: 60_000,
+  });
+  const list = data?.results ?? (Array.isArray(data) ? data : []);
+  const initials = list.map(m => {
+    const src = m.user_name || m.user_email || "?";
+    return src.split(/\s+/).slice(0, 2).map(p => p[0]).join("").toUpperCase().slice(0, 2) || "?";
+  });
+  const extra = Math.max(0, initials.length - 3);
+  return <AvatarStack members={initials.slice(0, 3)} extra={extra}/>;
+}
+
+/* ══════════════════════════════════════════════════════════
+  ACTION LABEL (Sign / Approve / View based on task)
+══════════════════════════════════════════════════════════ */
+function actionForTask(task) {
+  if (!task) return "Open";
+  if (task.status === "done")    return "View";
+  if (task.status === "skipped") return "View";
+  if (task.request_type === "signature") return "Sign";
+  if (task.request_type === "approval" || task.request_type === "review") return "Approve";
+  // Fallback by title keywords
+  const title = (task.title || "").toLowerCase();
+  if (title.includes("подпис") || title.includes("sign"))  return "Sign";
+  if (title.includes("соглас") || title.includes("approve")) return "Approve";
+  return "Open";
+}
+
+/* ══════════════════════════════════════════════════════════
+  ORG FILTER BAR — horizontal chips for Assigned Documents
+══════════════════════════════════════════════════════════ */
+function OrgFilterBar({ options = [], value, onChange }) {
+  return (
+    <>
+      <style>{`
+        .org-fb{display:flex;align-items:center;gap:8px;padding:8px 4px 14px;overflow-x:auto;flex-wrap:wrap}
+        .org-fb-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:20px;border:1px solid #E5E7EB;background:#fff;font-family:inherit;font-size:12.5px;font-weight:500;color:#374151;cursor:pointer;transition:all .15s;white-space:nowrap}
+        .org-fb-chip:hover{border-color:#93C5FD;color:#1D4ED8}
+        .org-fb-chip.active{background:#2563EB;border-color:#2563EB;color:#fff}
+        .org-fb-chip.active:hover{background:#1D4ED8;color:#fff}
+        .org-fb-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#F3F4F6;color:#6B7280;font-size:11px;font-weight:600}
+        .org-fb-chip.active .org-fb-count{background:rgba(255,255,255,0.25);color:#fff}
+        .org-fb-icon{width:14px;height:14px;flex-shrink:0;color:currentColor}
+      `}</style>
+      <div className="org-fb">
+        {options.map(opt => (
+          <button
+            key={opt.id}
+            className={`org-fb-chip${value === opt.id ? " active" : ""}`}
+            onClick={() => onChange(opt.id)}
+          >
+            {opt.id === "all"
+              ? <svg className="org-fb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              : <svg className="org-fb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h.01M9 13h.01M9 17h.01M13 9h2M13 13h2M13 17h2"/></svg>
+            }
+            <span>{opt.name}</span>
+            <span className="org-fb-count">{opt.count}</span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
   ASSIGNED DOCS TABLE
+  Same visual style as ProjectTable (Managed Projects) — uses
+  .pr-table styles for consistency. Adds # column, polished pill
+  badges with status dot, progress bar, and contextual action.
 ══════════════════════════════════════════════════════════ */
 function AssignedDocsTable({ docs, onOpen }) {
-  const { t } = useTranslation();
   return (
-    <div style={{ padding:"0 4px 20px" }}>
-      <table className="pr-table">
-        <thead>
-          <tr>
-            <th>{t("projects.table.document")}</th>
-            <th>{t("projects.table.uploadedBy")}</th>
-            <th>{t("projects.table.deadline")}</th>
-            <th>{t("projects.table.status")}</th>
-            <th>{t("projects.table.action")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {docs.map((d) => {
-            const dt = fileTypeInfo(d.file_type);
-            const statusLabel = docStatusDisplay(d.status);
-            const isDone = statusLabel === "COMPLETED";
-            return (
-              <tr key={d.id} style={{ cursor:"pointer" }} onClick={() => onOpen && onOpen(d)}>
-                <td>
-                  <div style={{ display:"flex",alignItems:"center",gap:10 }}>
-                    <div className="ad-file-icon" style={{ background:dt.bg,color:dt.color }}>{dt.ext}</div>
-                    <div>
-                      <div style={{ fontWeight:500,fontSize:13,color:"#111827" }}>{d.title}</div>
-                      <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>
-                        {new Date(d.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+    <>
+      <style>{`
+        .adv2-doc{display:flex;align-items:center;gap:12px}
+        .adv2-doc-title{font-weight:500;font-size:14px;color:#111827}
+        .adv2-doc-meta{font-size:12px;color:#9CA3AF;margin-top:3px}
+        .adv2-progress{display:flex;align-items:center;gap:10px;min-width:140px}
+        .adv2-bar{flex:1;height:6px;background:#E5E7EB;border-radius:4px;overflow:hidden}
+        .adv2-bar-fill{height:100%;background:#2563EB;border-radius:4px;transition:width .25s}
+        .adv2-pct{font-size:12px;color:#6B7280;font-weight:500;min-width:34px;text-align:right}
+        .adv2-act{background:none;border:none;color:#2563EB;font-size:13.5px;font-weight:600;padding:0;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;font-family:inherit}
+        .adv2-act:hover{color:#1D4ED8}
+        .adv2-deadline{font-size:13px;color:#374151;white-space:nowrap}
+        /* outlined status pills per design */
+        .adv2-pill{display:inline-flex;align-items:center;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600;letter-spacing:.06em;background:#fff;border:1px solid;text-transform:uppercase}
+        .adv2-pill-ip{color:#2563EB;border-color:#93C5FD}
+        .adv2-pill-done{color:#16A34A;border-color:#86EFAC}
+        .adv2-pill-ret{color:#B91C1C;border-color:#FCA5A5}
+        .adv2-pill-pending{color:#6B7280;border-color:#D1D5DB}
+      `}</style>
+      <div style={{ padding:"0 4px 20px" }}>
+        <table className="pr-table">
+          <thead>
+            <tr>
+              <th>Documents</th>
+              <th>Team Members</th>
+              <th>Deadline</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {docs.map((d) => {
+              const dt = fileTypeInfo(d.file_type);
+              const task = d._task;
+              const TASK_INFO = {
+                pending:     { label:"In Progress", cls:"adv2-pill-ip" },
+                in_progress: { label:"In Progress", cls:"adv2-pill-ip" },
+                done:        { label:"Completed",   cls:"adv2-pill-done" },
+                skipped:     { label:"Returned",    cls:"adv2-pill-ret" },
+                returned:    { label:"Returned",    cls:"adv2-pill-ret" },
+                waiting:     { label:"In Progress", cls:"adv2-pill-ip" },
+                urgent:      { label:"Urgent",      cls:"adv2-pill-ret" },
+              };
+              const si = TASK_INFO[task?.status] || { label:"In Progress", cls:"adv2-pill-ip" };
+              const pct = task?.status === "done" ? 100
+                        : task?.status === "in_progress" ? 70
+                        : task?.status === "pending" ? 20
+                        : 0;
+              const dateSrc = d.created_at || task?.created_at;
+              const dateLbl = dateSrc
+                ? new Date(dateSrc).toLocaleDateString("en-US", { month:"long", day:"numeric" })
+                : null;
+              const sizeMb = d.file_size ? `${(d.file_size / 1024 / 1024).toFixed(1)} MB` : null;
+              const subLine = [sizeMb, dateLbl].filter(Boolean).join(" . ");
+              const deadlineSrc = d.due_date || task?.due_date;
+              return (
+                <tr key={d.id} style={{ cursor:"pointer" }} onClick={() => onOpen?.(d)}>
+                  <td>
+                    <div className="adv2-doc">
+                      <div className="ad-file-icon" style={{ background:dt.bg, color:dt.color }}>{dt.ext}</div>
+                      <div>
+                        <div className="adv2-doc-title">{d.title}</div>
+                        {subLine && <div className="adv2-doc-meta">{subLine}</div>}
                       </div>
                     </div>
-                  </div>
-                </td>
-                <td style={{ fontSize:12.5,color:"#6B7280" }}>{d.uploaded_by_name || "—"}</td>
-                <td style={{ fontSize:12.5,color:"#6B7280",whiteSpace:"nowrap" }}>
-                  {d.due_date ? fmtDeadline(d.due_date) : "—"}
-                </td>
-                <td>
-                  <span className={isDone ? "ad-badge-done" : "ad-badge-ip"}>{statusLabel}</span>
-                </td>
-                <td>
-                  <button style={{ background:"none",border:"none",color:"#2563EB",fontSize:13,fontWeight:600,padding:0,cursor:"pointer",whiteSpace:"nowrap" }}>
-                    {isDone ? `${t("common.view")} >` : `${t("common.open")} >`}
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+                  </td>
+                  <td><WsMembersAvs workspaceId={d.workspace}/></td>
+                  <td>
+                    <span className="adv2-deadline">
+                      {deadlineSrc ? fmtDeadline(deadlineSrc) : <span style={{ color:"#9CA3AF" }}>—</span>}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`adv2-pill ${si.cls}`}>{si.label}</span>
+                  </td>
+                  <td>
+                    <div className="adv2-progress">
+                      <div className="adv2-bar"><div className="adv2-bar-fill" style={{ width:`${pct}%` }}/></div>
+                      <div className="adv2-pct">{pct}%</div>
+                    </div>
+                  </td>
+                  <td>
+                    <button className="adv2-act" onClick={(e) => { e.stopPropagation(); onOpen?.(d); }}>
+                      {actionForTask(task)}
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -2433,7 +2975,7 @@ function NewDocModal({ project, onClose }) {
               style={{ border:"1.5px dashed #E5E7EB",borderRadius:10,padding:"16px 12px",textAlign:"center",cursor:"pointer",background:"#FAFAFA",transition:"border-color .15s" }}
               onMouseEnter={e=>e.currentTarget.style.borderColor="#2563EB"}
               onMouseLeave={e=>e.currentTarget.style.borderColor="#E5E7EB"}>
-              <input ref={fileInputRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display:"none" }}
+              <input ref={fileInputRef} type="file" accept=".docx,.xlsx" style={{ display:"none" }}
                 onChange={e=>{ const f=e.target.files?.[0]; if(f) setPickedFile(f); }}/>
               {pickedFile ? (
                 <div style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:"#374151",fontSize:13 }}>
@@ -2448,7 +2990,7 @@ function NewDocModal({ project, onClose }) {
                 <div style={{ color:"#9CA3AF",fontSize:13 }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" width="22" height="22" style={{ display:"block",margin:"0 auto 6px" }}><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
                   {t("documents.dropFileHere")} <span style={{ color:"#9CA3AF",fontSize:11 }}>(optional)</span>
-                  <div style={{ fontSize:11,marginTop:3 }}>pdf · docx · xlsx</div>
+                  <div style={{ fontSize:11,marginTop:3 }}>docx · xlsx</div>
                 </div>
               )}
             </div>
@@ -2917,13 +3459,24 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   const [sbOpen, toggleSb] = useSidebarOpen();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
-  const [tab,           setTab]           = useState("managed");
+  // Read query params for deep-linking from Inbox: ?tab=<managed|assigned|archived>&doc=<id>
+  const initialQs = (() => {
+    if (typeof window === "undefined") return { tab: null, doc: null };
+    const p = new URLSearchParams(window.location.search);
+    return { tab: p.get("tab"), doc: p.get("doc") };
+  })();
+  const [tab,           setTab]           = useState(
+    ["managed","assigned","archived"].includes(initialQs.tab) ? initialQs.tab : "managed"
+  );
   const [showModal,     setShowModal]     = useState(false);
+  const [showCreateWs,  setShowCreateWs]  = useState(false);
   const [selected,      setSelected]      = useState(null);
   const [selectedDoc,   setSelectedDoc]   = useState(null);
   const [wsDropOpen,    setWsDropOpen]    = useState(false);
   const [searchQuery,   setSearchQuery]   = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [assignedOrgFilter, setAssignedOrgFilter] = useState("all");
+  const [pendingDocId, setPendingDocId] = useState(initialQs.doc || null);
   const wsDropRef = useRef(null);
 
   useEffect(() => {
@@ -2950,14 +3503,31 @@ export default function Projects({ onGoToAuth, onNavigate }) {
     enabled: tab === "assigned",
   });
 
+  // Документы, ожидающие моей подписи как signer (все подзадачи закрыты).
+  // Должны попадать в Assigned, а не в Managed.
+  const { data: signerDocsData } = useQuery({
+    queryKey: ["documents", "awaiting-my-signature"],
+    queryFn: () => getDocuments({ awaiting_my_signature: "true" }),
+    enabled: tab === "assigned",
+  });
+
   const { data: archivedDocsData } = useQuery({
     queryKey: ["documents", "archived"],
     queryFn: () => getDocuments({ status: "archived" }),
     enabled: tab === "archived",
   });
 
+  // Unread notifications badge
+  const { data: unreadData } = useQuery({
+    queryKey: ["notifications", "unread"],
+    queryFn: () => getNotifications({ is_read: "false", page_size: 1 }),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const hasUnread = (unreadData?.count ?? 0) > 0;
+
   const allWs = wsData?.results ?? (Array.isArray(wsData) ? wsData : []);
-  const orgName = allWs[0]?.title || "Organization";
+  const _orgName = allWs[0]?.title || "Organization";
 
   const wsToRow = ws => {
     const statusMap = { active: "Active", archived: "Archived", closed: "Completed" };
@@ -3001,18 +3571,75 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   const assignedDocs = assignedTasks
     .filter(t => t.document && !seenDocIds.has(t.document) && seenDocIds.add(t.document))
     .map(t => ({
-      id:               t.document,
-      title:            t.document_title || t.title || "—",
-      file_type:        "docx",
-      status:           t.status,
-      due_date:         t.due_date || null,
-      uploaded_by_name: t.workspace_name || "—",
-      workspace:        t.workspace,
-      _task:            t,
+      id:                t.document,
+      title:             t.document_title || t.title || "—",
+      file_type:         "docx",
+      status:            t.status,
+      due_date:          t.due_date || null,
+      uploaded_by_name:  t.workspace_name || "—",
+      workspace:         t.workspace,
+      organization_id:   t.organization_id || null,
+      organization_name: t.organization_name || null,
+      _task:             t,
     }));
+
+  // Подмешиваем документы, где я signer и все подзадачи выполнены.
+  const signerDocs = signerDocsData?.results ?? (Array.isArray(signerDocsData) ? signerDocsData : []);
+  for (const d of signerDocs) {
+    if (seenDocIds.has(d.id)) continue;
+    seenDocIds.add(d.id);
+    assignedDocs.push({
+      id:                d.id,
+      title:             d.title,
+      file_type:         d.file_type || "docx",
+      status:            d.status,
+      due_date:          d.due_date || null,
+      uploaded_by_name:  d.uploaded_by_name || d.workspace_title || "—",
+      workspace:         d.workspace,
+      organization_id:   d.organization_id || null,
+      organization_name: d.organization_name || null,
+      _signerPending:    true,
+    });
+  }
+
+  // Deep-link: open a specific doc on Assigned tab if ?doc=<id> is set
+  useEffect(() => {
+    if (!pendingDocId || tab !== "assigned") return;
+    if (assignedLoading) return;
+    if (!assignedTasksData) return; // wait until tasks have loaded
+    const match = assignedDocs.find(d => d.id === pendingDocId);
+    if (match) {
+      setSelectedDoc({ ...match, workspace: match.workspace });
+    }
+    // Clear pending + query param regardless of match (so we don't loop)
+    setPendingDocId(null);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("doc");
+      url.searchParams.delete("tab");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, [assignedTasksData, assignedLoading, pendingDocId, tab, assignedDocs]);
+
+  // Filter by organization (used by Assigned tab)
+  const orgFilterOptions = [
+    { id: "all", name: t("projects.allOrgs", "All organizations"), count: assignedDocs.length },
+    ...Array.from(
+      assignedDocs.reduce((acc, d) => {
+        const key = d.organization_id || "_none";
+        const name = d.organization_name || t("projects.noOrg", "No organization");
+        if (!acc.has(key)) acc.set(key, { id: key, name, count: 0 });
+        acc.get(key).count += 1;
+        return acc;
+      }, new Map()).values()
+    ),
+  ];
+  const filteredAssignedDocs = assignedOrgFilter === "all"
+    ? assignedDocs
+    : assignedDocs.filter(d => (d.organization_id || "_none") === assignedOrgFilter);
   const archivedDocs = archivedDocsData?.results ?? (Array.isArray(archivedDocsData) ? archivedDocsData : []);
 
-  const handleCreate = (data) => {
+  const handleCreate = (_data) => {
     qc.invalidateQueries({ queryKey: ["workspaces"] });
   };
 
@@ -3024,7 +3651,25 @@ export default function Projects({ onGoToAuth, onNavigate }) {
     <div className="pr-page">
       <style>{prCss}</style>
       {showModal && <NewProjectModal onClose={() => setShowModal(false)} onCreate={handleCreate}/>}
-      {selectedDoc && <DocumentModal doc={selectedDoc} projectName="Assigned Documents" onClose={() => setSelectedDoc(null)} readOnly={true}/>}
+      {showCreateWs && (
+        <CreateWorkspaceModal
+          onClose={() => setShowCreateWs(false)}
+          onCreated={(id) => {
+            setShowCreateWs(false);
+            qc.invalidateQueries({ queryKey: ["workspaces"] });
+            if (id) onNavigate?.(`organization/${id}`);
+          }}
+        />
+      )}
+      {selectedDoc && (
+        <DocumentModal
+          doc={selectedDoc}
+          projectName={selectedDoc?.uploaded_by_name || "Assigned Documents"}
+          onClose={() => setSelectedDoc(null)}
+          readOnly={true}
+          userRole="signer"
+        />
+      )}
 
       {/* Mobile overlay */}
       <div className={`pr-sb-overlay${sbOpen ? " show" : ""}`} onClick={toggleSb}/>
@@ -3053,7 +3698,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
             <div onClick={()=>onNavigate&&onNavigate("notifications")} title="Notifications"
               style={{ position:"relative",width:30,height:30,borderRadius:8,border:"0.5px solid #E5E7EB",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",background:"#fff" }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-              <div style={{ position:"absolute",top:-2,right:-2,width:8,height:8,background:"#EF4444",borderRadius:"50%",border:"1.5px solid #fff" }}/>
+              {hasUnread && <div style={{ position:"absolute",top:-2,right:-2,width:8,height:8,background:"#EF4444",borderRadius:"50%",border:"1.5px solid #fff" }}/>}
             </div>
             <div style={{ position:"relative", display:"flex", alignItems:"center", gap:6 }}>
               <svg onClick={()=>setProfileMenuOpen(v=>!v)}
@@ -3085,79 +3730,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
       {/* ── BODY ── */}
       <div className="pr-body">
 
-        {/* ── SIDEBAR ── */}
-        <aside className={`pr-sb${!sbOpen ? " closed" : ""}`}>
-          <div className="pr-profile">
-            <button className="pr-toggle" onClick={toggleSb}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
-            </button>
-            <div className="pr-avatar">
-              {user?.avatar_url
-                ? <img src={user.avatar_url} alt="avatar" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
-                : <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
-              }
-            </div>
-          </div>
-          <div className="pr-profile-info">
-            <div style={{ fontSize:13,fontWeight:600,color:"#111827" }}>{user?.full_name || "—"}</div>
-            <div style={{ fontSize:10.5,color:"#9CA3AF",marginTop:2 }}>{user?.email || ""}</div>
-          </div>
-          <div ref={wsDropRef} style={{ position:"relative" }}>
-            <div className="pr-org" onClick={() => setWsDropOpen(v=>!v)}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-              <span style={{ fontSize:11.5,color:"#6B7280",flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{orgName}</span>
-              <div style={{ width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0 }}/>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"
-                style={{ transform:wsDropOpen?"rotate(180deg)":"none",transition:"transform .2s" }}>
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </div>
-            {wsDropOpen && (
-              <div style={{ position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:"#fff",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:200,overflow:"hidden",border:"1px solid #F3F4F6" }}>
-                <div style={{ padding:"6px 12px 4px",fontSize:10.5,color:"#9CA3AF",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>
-                  Switch Workplaces
-                </div>
-                {allWs.map((ws) => (
-                  <div key={ws.id}
-                    onClick={() => { setWsDropOpen(false); onNavigate?.(`organization/${ws.id}`); }}
-                    style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 14px",fontSize:13,cursor:"pointer",color:"#374151",borderTop:".5px solid #F9FAFB" }}
-                    onMouseEnter={e=>e.currentTarget.style.background="#F9FAFB"}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <div style={{ width:22,height:22,borderRadius:6,background:"#DBEAFE",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="12" height="12"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-                    </div>
-                    <span style={{ flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{ws.title}</span>
-                  </div>
-                ))}
-                <div style={{ borderTop:"1px solid #F3F4F6" }}>
-                  <div onClick={() => { setWsDropOpen(false); setShowModal(true); }}
-                    style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 14px",fontSize:13,cursor:"pointer",color:"#2563EB",fontWeight:500 }}
-                    onMouseEnter={e=>e.currentTarget.style.background="#EFF6FF"}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Create Workplace
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="pr-navlist">
-            {NAV.map((n,i) => (
-              <button key={i} className={`pr-navitem${n.active ? " active" : ""}`}
-                onClick={() => { if (!n.active && onNavigate) onNavigate(n.navKey); }}>
-                {n.icon}
-                <span className="pr-navlabel">{t(`nav.${n.key}`)}</span>
-                <svg className="pr-navchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
-              </button>
-            ))}
-          </div>
-          <div className="pr-sbbottom">
-            <button className="pr-addbtn" onClick={() => setShowModal(true)}>
-              <svg className="pr-addbtn-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              <span className="pr-addbtn-label">{t("inbox.newProject")}</span>
-            </button>
-          </div>
-        </aside>
+        <Sidebar active="projects" onNavigate={onNavigate}/>
 
         {/* ── MAIN ── */}
         <div className="pr-main">
@@ -3216,7 +3789,19 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                       ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>{t("common.loading")}</div>
                       : assignedDocs.length===0
                         ? <AssignedDocsEmpty/>
-                        : <AssignedDocsTable docs={assignedDocs} onOpen={d=>setSelectedDoc({ ...d, workspace: d.workspace })}/>
+                        : <>
+                            <OrgFilterBar
+                              options={orgFilterOptions}
+                              value={assignedOrgFilter}
+                              onChange={setAssignedOrgFilter}
+                            />
+                            {filteredAssignedDocs.length === 0
+                              ? <div style={{ padding:"24px 4px", fontSize:13, color:"#9CA3AF", textAlign:"center" }}>
+                                  No documents from this organization.
+                                </div>
+                              : <AssignedDocsTable docs={filteredAssignedDocs} onOpen={d=>setSelectedDoc({ ...d, workspace: d.workspace })}/>
+                            }
+                          </>
                   )}
                   {tab==="archived" && (archivedProjects.length===0 && archivedDocs.length===0 ? <ArchivedEmpty/> : <ArchivedSection projects={archivedProjects} docs={archivedDocs}/>)}
                 </div>

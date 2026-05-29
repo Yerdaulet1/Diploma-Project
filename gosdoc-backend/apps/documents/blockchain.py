@@ -116,11 +116,15 @@ def record_task_completion(task) -> "BlockchainBlock | None":
     now = timezone.now()
     # Use microsecond-truncated timestamp for reproducible hash
     timestamp_str = now.strftime("%Y-%m-%dT%H:%M:%S")
-    block_hash = _compute_block_hash(previous_hash, doc_hash, str(task.id), timestamp_str)
+    # Снимаем task.id в строку ДО создания блока, чтобы хеш был стабилен
+    # даже если FK task впоследствии обнулится через SET_NULL.
+    task_id_snapshot = str(task.id)
+    block_hash = _compute_block_hash(previous_hash, doc_hash, task_id_snapshot, timestamp_str)
 
     block = BlockchainBlock.objects.create(
         document=document,
         task=task,
+        task_id_str=task_id_snapshot,
         step_order=task.step_order or 0,
         document_hash=doc_hash,
         previous_hash=previous_hash,
@@ -152,11 +156,18 @@ def verify_chain(document_id: str) -> list:
 
     prev_hash = GENESIS_HASH
     for block in blocks:
+        # Используем task_id_str (снимок на момент создания) — он не обнуляется
+        # при удалении задачи через FK SET_NULL, в отличие от block.task_id.
+        # Для старых блоков без task_id_str — откат к task_id (или пустой строке).
+        task_id_for_hash = (
+            block.task_id_str
+            or (str(block.task_id) if block.task_id else "")
+        )
         # Пересчитываем хеш блока
         expected = _compute_block_hash(
             prev_hash,
             block.document_hash,
-            str(block.task_id) if block.task_id else "",
+            task_id_for_hash,
             block.timestamp.strftime("%Y-%m-%dT%H:%M:%S") if block.timestamp else "",
         )
         block.chain_valid = (block.block_hash == expected) and (block.previous_hash == prev_hash)

@@ -62,9 +62,11 @@ api.interceptors.response.use(
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         }).then((token) => {
+          // Mark as retried so a subsequent 401 won't trigger another refresh loop
+          original._retry = true;
           original.headers.Authorization = `Bearer ${token}`;
           return api(original);
-        });
+        }).catch((err) => Promise.reject(err));
       }
 
       original._retry = true;

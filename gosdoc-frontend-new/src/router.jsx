@@ -10,6 +10,7 @@ import HelpSupport from "./HelpSupport";
 import Documents from "./Documents";
 import Analytics from "./Analytics";
 import Organization from "./Organization";
+import Admin from "./Admin";
 
 function PageLoader() {
   return (
@@ -44,6 +45,7 @@ const SCREEN_TO_PATH = {
   notifications: "/notifications",
   help: "/help",
   analytics: "/analytics",
+  admin: "/admin",
 };
 
 function useNavAdapter() {
@@ -108,6 +110,11 @@ function WrapOrganization() {
   return <Organization onNavigate={onNavigate} onGoToAuth={onGoToAuth} />;
 }
 
+function WrapAdmin() {
+  const { onNavigate, onGoToAuth } = useNavAdapter();
+  return <Admin onNavigate={onNavigate} onGoToAuth={onGoToAuth} />;
+}
+
 export const routes = [
   {
     element: <PublicRoute />,
@@ -125,6 +132,7 @@ export const routes = [
       { path: "/help", element: <WrapHelp /> },
       { path: "/analytics", element: <WrapAnalytics /> },
       { path: "/organization/:id", element: <WrapOrganization /> },
+      { path: "/admin", element: <WrapAdmin /> },
     ],
   },
   { path: "*", element: <Navigate to="/inbox" replace /> },

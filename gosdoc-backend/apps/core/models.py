@@ -16,8 +16,12 @@ class FAQ(models.Model):
     ]
 
     topic = models.CharField(max_length=50, choices=TOPIC_CHOICES, verbose_name="Раздел")
-    question = models.TextField(verbose_name="Вопрос")
-    answer = models.TextField(verbose_name="Ответ")
+    question = models.TextField(verbose_name="Вопрос (EN, default)")
+    answer = models.TextField(verbose_name="Ответ (EN, default)")
+    question_ru = models.TextField(blank=True, default="", verbose_name="Вопрос (RU)")
+    answer_ru = models.TextField(blank=True, default="", verbose_name="Ответ (RU)")
+    question_kk = models.TextField(blank=True, default="", verbose_name="Вопрос (KK)")
+    answer_kk = models.TextField(blank=True, default="", verbose_name="Ответ (KK)")
     order = models.PositiveIntegerField(default=0, verbose_name="Порядок")
     is_active = models.BooleanField(default=True, verbose_name="Активен")
 

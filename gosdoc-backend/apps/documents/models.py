@@ -425,6 +425,16 @@ class BlockchainBlock(models.Model):
         related_name="blockchain_block",
         verbose_name="Задача",
     )
+    # Снимок task.id в момент создания блока — не обнуляется при удалении задачи.
+    # Используется в _compute_block_hash чтобы цепь оставалась верифицируемой
+    # даже если FK task был занулён через SET_NULL.
+    task_id_str = models.CharField(
+        max_length=36,
+        blank=True,
+        default="",
+        verbose_name="Task ID (снимок)",
+        help_text="Строковый UUID задачи на момент создания блока",
+    )
     step_order = models.IntegerField(default=0, verbose_name="Порядковый номер шага")
     document_hash = models.CharField(
         max_length=64,

@@ -249,7 +249,13 @@ DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="eDoc <noreply@gosdoc.
 # Claude AI (Anthropic)
 # ============================================================
 CLAUDE_API_KEY = config("CLAUDE_API_KEY", default="")
-CLAUDE_MODEL   = config("CLAUDE_MODEL",   default="claude-opus-4-7")
+CLAUDE_MODEL   = config("CLAUDE_MODEL",   default="claude-sonnet-4-6")
+
+# ============================================================
+# Social Auth
+# ============================================================
+# Google: получить в console.cloud.google.com → OAuth 2.0 Client ID (тип Web application)
+GOOGLE_CLIENT_ID = config("GOOGLE_CLIENT_ID", default="")
 
 # ============================================================
 # CORS (раздел 6 ТЗ: только доверенные домены)
@@ -350,5 +356,5 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 104_857_600   # 100 МБ
 FILE_UPLOAD_MAX_MEMORY_SIZE = 104_857_600   # 100 МБ
 
 # Поддерживаемые форматы документов (раздел 2.5 ТЗ)
-ALLOWED_DOCUMENT_EXTENSIONS = ["pdf", "docx", "xlsx", "odt", "ods"]
+ALLOWED_DOCUMENT_EXTENSIONS = ["docx", "xlsx"]
 MAX_DOCUMENT_SIZE_BYTES = 104_857_600  # 100 МБ

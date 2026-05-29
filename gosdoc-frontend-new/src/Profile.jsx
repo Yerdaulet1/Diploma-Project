@@ -718,6 +718,16 @@ export function ChangeEmailModal({ onClose }) {
 /* ══════════════════════════════════════════════════════════
    SETTINGS MODAL
 ══════════════════════════════════════════════════════════ */
+function PfToggle({ checked, onChange }) {
+  return (
+    <label className="pf-switch">
+      <input type="checkbox" checked={checked} onChange={e=>onChange(e.target.checked)}/>
+      <div className="pf-switch-track"/>
+      <div className="pf-switch-thumb"/>
+    </label>
+  );
+}
+
 export function SettingsModal({ onClose }) {
   const { t, i18n } = useTranslation();
   const [notifEmail, setNotifEmail] = useState(true);
@@ -755,14 +765,6 @@ export function SettingsModal({ onClose }) {
     }, 600);
   };
 
-  const Toggle = ({ checked, onChange }) => (
-    <label className="pf-switch">
-      <input type="checkbox" checked={checked} onChange={e=>onChange(e.target.checked)}/>
-      <div className="pf-switch-track"/>
-      <div className="pf-switch-thumb"/>
-    </label>
-  );
-
   if (!loaded) return (
     <div className="pf-overlay">
       <style>{css}</style>
@@ -787,11 +789,11 @@ export function SettingsModal({ onClose }) {
             <div style={{ fontSize:15,fontWeight:600,color:"#111827",marginBottom:4 }}>{t("settings.notifications")}</div>
             <div className="pf-toggle-row">
               <span className="pf-toggle-label">{t("settings.emailNotif")}</span>
-              <Toggle checked={notifEmail} onChange={v=>{ setNotifEmail(v); persist({ notification_email: v }); }}/>
+              <PfToggle checked={notifEmail} onChange={v=>{ setNotifEmail(v); persist({ notification_email: v }); }}/>
             </div>
             <div className="pf-toggle-row">
               <span className="pf-toggle-label">{t("settings.pushNotif")}</span>
-              <Toggle checked={notifPush} onChange={v=>{ setNotifPush(v); persist({ notification_push: v }); }}/>
+              <PfToggle checked={notifPush} onChange={v=>{ setNotifPush(v); persist({ notification_push: v }); }}/>
             </div>
           </div>
 
@@ -866,7 +868,7 @@ function EyeIcon({ open }) {
    COMBINED PROFILE CONTROLLER
    Use this to wire up all modals in one place
 ══════════════════════════════════════════════════════════ */
-export default function ProfileController({ show, view, setView, onLogOut }) {
+export default function ProfileController({ show, view, setView, onLogOut: _onLogOut }) {
   if (!show || !view) return null;
 
   const close = () => setView(null);

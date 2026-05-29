@@ -23,7 +23,21 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      'no-unused-vars': ['error', {
+        varsIgnorePattern:        '^[A-Z_]',
+        argsIgnorePattern:        '^_',
+        caughtErrorsIgnorePattern: '^(_|err$|e$)',
+        destructuredArrayIgnorePattern: '^_',
+      }],
+      // Idiomatic for "swallow error on purpose"
+      'no-empty': ['error', { allowEmptyCatch: true }],
+      // router.jsx and provider files legitimately export non-component helpers
+      'react-refresh/only-export-components': 'off',
+      // React Compiler's experimental rules trip on safe patterns
+      // (e.g. accessing refs through callbacks defined inline).
+      'react-hooks/refs': 'off',
+      'react-hooks/static-components': 'off',
+      'react-hooks/set-state-in-effect': 'off',
     },
   },
 ])

@@ -163,6 +163,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             "current_version_checksum", "status", "priority", "due_date",
             "uploaded_by", "uploaded_by_name",
             "progress", "subtasks_total", "subtasks_done",
+            "metadata",
             "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -171,28 +172,45 @@ class DocumentSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
 
+    def _subtask_stats(self, obj):
+        """
+        Возвращает (total, done) через prefetch-кэш (если в queryset есть
+        prefetch_related('subtasks')) — 0 SQL-запросов.
+        Без prefetch — 1 SQL вместо прежних 3.
+        """
+        subtasks = list(obj.subtasks.all())
+        total = len(subtasks)
+        done = sum(1 for s in subtasks if s.status == Subtask.Status.DONE)
+        return total, done
+
     def get_progress(self, obj) -> int | None:
-        total = obj.subtasks.count()
+        total, done = self._subtask_stats(obj)
         if total == 0:
             return None
-        done = obj.subtasks.filter(status=Subtask.Status.DONE).count()
         return round((done / total) * 100)
 
     def get_subtasks_total(self, obj) -> int:
-        return obj.subtasks.count()
+        total, _ = self._subtask_stats(obj)
+        return total
 
     def get_subtasks_done(self, obj) -> int:
-        return obj.subtasks.filter(status=Subtask.Status.DONE).count()
+        _, done = self._subtask_stats(obj)
+        return done
 
 
 class DocumentListSerializer(serializers.ModelSerializer):
     """Краткий вид документа для списков."""
     uploaded_by_name = serializers.CharField(source="uploaded_by.full_name", read_only=True)
+    workspace_title = serializers.CharField(source="workspace.title", read_only=True)
+    organization_id = serializers.UUIDField(source="workspace.organization_id", read_only=True)
+    organization_name = serializers.CharField(source="workspace.organization.name", read_only=True)
 
     class Meta:
         model = Document
         fields = [
-            "id", "workspace", "title", "file_type", "status", "priority", "due_date",
+            "id", "workspace", "workspace_title",
+            "organization_id", "organization_name",
+            "title", "file_type", "status", "priority", "due_date",
             "uploaded_by_name", "created_at", "updated_at",
         ]
         read_only_fields = fields
@@ -321,6 +339,9 @@ class CommentSerializer(serializers.ModelSerializer):
         return []
 
     def get_replies_count(self, obj) -> int:
+        # Use prefetch cache if available to avoid an extra COUNT query per comment.
+        if hasattr(obj, "_prefetched_objects_cache") and "replies" in obj._prefetched_objects_cache:
+            return len(obj._prefetched_objects_cache["replies"])
         return obj.replies.count()
 
     def create(self, validated_data):
@@ -330,8 +351,6 @@ class CommentSerializer(serializers.ModelSerializer):
     def validate_parent(self, value):
         """Комментарий-ответ должен относиться к тому же документу."""
         if value is not None:
-            # document передаётся через context или из URL
-            request = self.context.get("request")
             if value.document_id != self.context.get("document_id"):
                 raise serializers.ValidationError(
                     "Родительский комментарий принадлежит другому документу."

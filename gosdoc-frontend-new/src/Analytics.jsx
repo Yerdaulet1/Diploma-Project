@@ -1,12 +1,14 @@
-import { useState } from "react";
-import useSidebarOpen from "./hooks/useSidebarOpen";
+import { useState, useRef, useEffect } from "react";
+import Sidebar from "./components/Sidebar";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import ProfileController, { ProfileMenu } from "./Profile";
+import CreateWorkspaceModal from "./CreateWorkspaceModal";
 import useAuthStore from "./store/authStore";
 import { getReports, generateReport, exportReport, downloadBlob } from "./api/reports";
 import { getWorkspaces } from "./api/workspaces";
+import { getNotifications } from "./api/notifications";
 import logoImg from "./assets/Group 2.svg";
 
 /* ══════════════════════════════════════════════════════════
@@ -32,10 +34,10 @@ const css = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   html,body,#root{width:100%;height:100%;overflow:hidden}
-  button{font-family:'DM Sans','Segoe UI',sans-serif;cursor:pointer}
-  input,select{font-family:'DM Sans','Segoe UI',sans-serif}
+  button{font-family:'Gilroy','Segoe UI',sans-serif;cursor:pointer}
+  input,select{font-family:'Gilroy','Segoe UI',sans-serif}
 
-  .an-page{display:flex;flex-direction:column;width:100vw;height:100vh;font-family:'DM Sans','Segoe UI',sans-serif;background:#EEEDF0;overflow:hidden}
+  .an-page{display:flex;flex-direction:column;width:100vw;height:100vh;font-family:'Gilroy','Segoe UI',sans-serif;letter-spacing:0.02em;background:#EEEDF0;overflow:hidden}
 
   /* TOPBAR */
   .an-topbar{display:flex;align-items:center;padding:0 20px;height:52px;gap:10px;flex-shrink:0;background:#fff;border-bottom:.5px solid #E5E7EB;z-index:30}
@@ -53,7 +55,7 @@ const css = `
   .an-sb.open .an-avatar{display:block}
   .an-profile-info{display:none;text-align:center;padding:36px 12px 4px;flex-shrink:0}
   .an-sb.open .an-profile-info{display:block}
-  .an-org{display:none;align-items:center;gap:6px;margin:4px 10px 6px;border:.5px solid #E5E7EB;border-radius:10px;padding:5px 10px;cursor:pointer;flex-shrink:0}
+  .an-org{display:none;align-items:center;gap:6px;border:.5px solid #E5E7EB;border-radius:10px;padding:5px 10px;cursor:pointer;flex-shrink:0}
   .an-sb.open .an-org{display:flex}
   .an-navlist{display:flex;flex-direction:column;flex:1;width:100%;gap:1px;align-items:center;padding:4px 0}
   .an-sb.open .an-navlist{align-items:stretch;padding:4px 8px}
@@ -71,13 +73,13 @@ const css = `
   .an-sb.open .an-addbtn{width:100%;justify-content:flex-start;padding:0 14px}
   .an-addbtn:hover{background:#1D4ED8}
   .an-addbtn-plus{transition:transform .28s;flex-shrink:0}
-  .an-sb.open .an-addbtn-plus{transform:rotate(45deg)}
+  .an-sb.open .an-addbtn-plus{transform:rotate(180deg)}
   .an-addbtn-label{display:none;white-space:nowrap}
   .an-sb.open .an-addbtn-label{display:block}
 
   /* MAIN */
   .an-main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;background:#EEEDF0}
-  .an-container{flex:1;margin:12px;background:#fff;border-radius:16px;display:flex;flex-direction:column;box-shadow:0 1px 4px rgba(0,0,0,.06);overflow:hidden}
+  .an-container{flex:1;margin:0 12px 12px 6px;background:#fff;border-radius:16px;display:flex;flex-direction:column;box-shadow:0 1px 4px rgba(0,0,0,.06);overflow:hidden}
   .an-inner{flex:1;overflow-y:auto;padding:32px 36px;scrollbar-width:thin;scrollbar-color:#E5E7EB transparent}
   .an-inner::-webkit-scrollbar{width:4px}
   .an-inner::-webkit-scrollbar-thumb{background:#E5E7EB;border-radius:4px}
@@ -238,7 +240,6 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
   const { t } = useTranslation();
   const { user } = useAuthStore();
   const qc = useQueryClient();
-  const [sbOpen, toggleSb] = useSidebarOpen();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView, setProfileView] = useState(null);
   const [selectedReport, setSelectedReport] = useState(null);
@@ -249,6 +250,26 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
   const [genYear,  setGenYear]  = useState(now.getFullYear());
   const [genMonth, setGenMonth] = useState(now.getMonth() + 1);
   const [generating, setGenerating] = useState(false);
+
+  // Workspace switcher dropdown
+  const [wsDropOpen,  setWsDropOpen]  = useState(false);
+  const [showCreateWs, setShowCreateWs] = useState(false);
+  const wsDropRef = useRef(null);
+  useEffect(() => {
+    if (!wsDropOpen) return;
+    const h = (e) => { if (wsDropRef.current && !wsDropRef.current.contains(e.target)) setWsDropOpen(false); };
+    setTimeout(() => document.addEventListener("mousedown", h), 0);
+    return () => document.removeEventListener("mousedown", h);
+  }, [wsDropOpen]);
+
+  // Unread notifications count (for the red badge)
+  const { data: unreadData } = useQuery({
+    queryKey: ["notifications", "unread"],
+    queryFn: () => getNotifications({ is_read: "false", page_size: 1 }),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const hasUnread = (unreadData?.count ?? 0) > 0;
 
   // Data
   const { data: reportsData, isLoading: reportsLoading } = useQuery({
@@ -291,14 +312,27 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
     <div className="an-page">
       <style>{css}</style>
 
+      {showCreateWs && (
+        <CreateWorkspaceModal
+          onClose={() => setShowCreateWs(false)}
+          onCreated={(id) => { setShowCreateWs(false); qc.invalidateQueries({ queryKey: ["workspaces"] }); onNavigate?.(`organization/${id}`); }}
+        />
+      )}
+
       {/* ── TOPBAR ── */}
       <header className="an-topbar">
         <img src={logoImg} alt="Logo" style={{ height:30, flexShrink:0 }}/>
-        <span style={{ fontSize:13, fontWeight:500, color:"#2563EB", marginLeft:4 }}>Analytics</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" style={{ cursor:"pointer" }} onClick={() => onNavigate?.("inbox")}>
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        <div style={{ display:"flex", alignItems:"center", gap:5, fontSize:13 }}>
+          <span style={{ color:"#111827", fontWeight:500 }}>Analytics</span>
+        </div>
         <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:10 }}>
           <div onClick={() => onNavigate?.("notifications")} title="Notifications"
             style={{ position:"relative",width:30,height:30,borderRadius:8,border:".5px solid #E5E7EB",background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            {hasUnread && <div style={{ position:"absolute",top:-2,right:-2,width:8,height:8,background:"#EF4444",borderRadius:"50%",border:"1.5px solid #fff" }}/>}
           </div>
           <svg onClick={() => setProfileMenuOpen(v => !v)} style={{ cursor:"pointer" }}
             width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -322,46 +356,7 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
       {/* ── BODY ── */}
       <div className="an-body">
 
-        {/* SIDEBAR */}
-        <aside className={`an-sb${sbOpen ? " open" : ""}`}>
-          <div className="an-profile">
-            <button className="an-toggle" onClick={toggleSb}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="9 6 15 12 9 18"/></svg>
-            </button>
-            <div className="an-avatar">
-              {user?.avatar_url
-                ? <img src={user.avatar_url} alt="avatar" style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
-                : <svg viewBox="0 0 60 60" fill="none" width="60" height="60"><rect width="60" height="60" fill="#CBD5E1"/><circle cx="30" cy="22" r="10" fill="#94A3B8"/><ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/></svg>
-              }
-            </div>
-          </div>
-          <div className="an-profile-info">
-            <div style={{ fontSize:13, fontWeight:600, color:"#111827" }}>{user?.full_name || "—"}</div>
-            <div style={{ fontSize:10.5, color:"#9CA3AF", marginTop:2 }}>{user?.email || ""}</div>
-          </div>
-          <div className="an-org">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            <span style={{ fontSize:11.5, color:"#6B7280", flex:1, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-              {workspaces[0]?.title || "—"}
-            </span>
-          </div>
-          <div className="an-navlist">
-            {NAV.map((n, i) => (
-              <button key={i} className={`an-navitem${n.active ? " active" : ""}`}
-                onClick={() => { if (n.nav && n.nav !== "analytics" && onNavigate) onNavigate(n.nav); }}>
-                {n.icon}
-                <span className="an-navlabel">{t(`nav.${n.nav}`)}</span>
-                <svg className="an-navchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><polyline points="9 6 15 12 9 18"/></svg>
-              </button>
-            ))}
-          </div>
-          <div className="an-sbbottom">
-            <button className="an-addbtn" onClick={() => onNavigate?.("projects")}>
-              <svg className="an-addbtn-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              <span className="an-addbtn-label">New project</span>
-            </button>
-          </div>
-        </aside>
+        <Sidebar active="analytics" onNavigate={onNavigate}/>
 
         {/* MAIN */}
         <div className="an-main">

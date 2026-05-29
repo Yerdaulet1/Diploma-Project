@@ -23,3 +23,7 @@ export const resetPasswordConfirm = (email, code, new_password) =>
     .post("/auth/password/reset/confirm/", { email, code, new_password })
     .then((r) => r.data);
 
+// Social auth
+export const googleAuth = (id_token) =>
+  api.post("/auth/google/", { id_token }).then((r) => r.data);
+

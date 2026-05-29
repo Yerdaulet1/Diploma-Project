@@ -71,6 +71,21 @@ class SignDocumentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Раздел 2.3 ТЗ: подпись возможна только после завершения всех подзадач.
+        pending_subtasks = document.subtasks.exclude(status="done").order_by("created_at")
+        if pending_subtasks.exists():
+            pending_titles = list(pending_subtasks.values_list("title", flat=True)[:5])
+            return Response(
+                {
+                    "detail": (
+                        "Нельзя подписать документ: сначала должны быть выполнены "
+                        f"все подзадачи. Осталось незакрытых: {pending_subtasks.count()}."
+                    ),
+                    "pending_subtasks": pending_titles,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         # Проверяем, не подписал ли пользователь уже этот документ
         if Signature.objects.filter(document=document, user=request.user, is_valid=True).exists():
             return Response(

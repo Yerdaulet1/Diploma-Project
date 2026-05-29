@@ -9,7 +9,18 @@ import uuid
 
 from django.conf import settings
 from django.db import models
-from pgvector.django import VectorField
+
+# pgvector опционален: если PostgreSQL-расширение не установлено,
+# поле хранится как TEXT и RAG-функции деградируют gracefully.
+try:
+    from pgvector.django import VectorField as _VectorField
+    _EMBEDDING_FIELD = _VectorField(dimensions=384, verbose_name="Векторное представление")
+    _PGVECTOR_AVAILABLE = True
+except Exception:
+    _EMBEDDING_FIELD = models.TextField(
+        default="", verbose_name="Векторное представление (fallback)"
+    )
+    _PGVECTOR_AVAILABLE = False
 
 
 class DocumentEmbedding(models.Model):
@@ -18,6 +29,7 @@ class DocumentEmbedding(models.Model):
 
     Один документ может иметь несколько чанков — каждый чанк имеет
     отдельный вектор (384 измерения, модель all-MiniLM-L6-v2).
+    Если pgvector не установлен — embedding хранится как TEXT (RAG деградирует).
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document = models.ForeignKey(
@@ -28,8 +40,9 @@ class DocumentEmbedding(models.Model):
     )
     chunk_text = models.TextField(verbose_name="Текст фрагмента")
     chunk_index = models.IntegerField(verbose_name="Порядковый номер фрагмента")
-    # all-MiniLM-L6-v2 выдаёт векторы размерностью 384
-    embedding = VectorField(dimensions=384, verbose_name="Векторное представление")
+    # all-MiniLM-L6-v2 выдаёт векторы размерностью 384.
+    # Тип колонки в БД — vector(384); подменён через миграцию apps.ai.0005.
+    embedding = _EMBEDDING_FIELD
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Создан")
 
     class Meta:
