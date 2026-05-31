@@ -4,5 +4,8 @@
 # Production WSGI/ASGI
 uvicorn[standard]==0.30.*
 
+# Статика в проде без S3 (admin, Swagger UI)
+whitenoise[brotli]==6.*
+
 # Connection pooling
 psycogreen==1.0.*

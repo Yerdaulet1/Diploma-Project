@@ -20,9 +20,19 @@ class Migration(migrations.Migration):
             new_name='ai_chatmess_user_id_3f4eea_idx',
             old_name='ai_chatmsg_user_ws_idx',
         ),
-        migrations.RenameIndex(
-            model_name='documentembedding',
-            new_name='ai_document_documen_a703d6_idx',
-            old_name='ai_docembed_doc_chunk_idx',
+        # Индекс documentembedding создан в 0001 сырым SQL и НЕ зарегистрирован
+        # в состоянии Django, поэтому обычный RenameIndex по имени падает с
+        # "No index named ai_docembed_doc_chunk_idx". Переименовываем только в БД;
+        # в состоянии Django индекс будет добавлен позже (миграция 0004).
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunSQL(
+                    sql="ALTER INDEX IF EXISTS ai_docembed_doc_chunk_idx "
+                        "RENAME TO ai_document_documen_a703d6_idx;",
+                    reverse_sql="ALTER INDEX IF EXISTS ai_document_documen_a703d6_idx "
+                                "RENAME TO ai_docembed_doc_chunk_idx;",
+                ),
+            ],
+            state_operations=[],
         ),
     ]

@@ -1,5 +1,24 @@
-:3000
+# ============================================================
+# ГосДок — Caddy (prod): отдаёт React SPA + проксирует API на backend.
+#
+# SITE_ADDRESS задаётся через env:
+#   - домен (gosdoc.duckdns.org) → Caddy сам получит HTTPS-сертификат Let's Encrypt
+#   - :80                        → http-only (без домена, для теста по IP)
+# ============================================================
 
-root * /app/dist
-file_server
-try_files {path} /index.html
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	# API, админка Django, статика admin/Swagger (WhiteNoise), медиа → backend
+	@backend path /api/* /admin /admin/* /static/* /media/*
+	handle @backend {
+		reverse_proxy backend:8000
+	}
+
+	# Всё остальное — SPA (React Router), с fallback на index.html
+	handle {
+		root * /srv/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

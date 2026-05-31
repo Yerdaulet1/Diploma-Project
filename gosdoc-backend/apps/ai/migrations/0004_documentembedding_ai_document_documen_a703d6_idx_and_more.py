@@ -11,9 +11,18 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddIndex(
-            model_name='documentembedding',
-            index=models.Index(fields=['document', 'chunk_index'], name='ai_document_documen_a703d6_idx'),
+        # Индекс ai_document_documen_a703d6_idx уже создан физически в 0003
+        # (RenameIndex из ai_docembed_doc_chunk_idx). Поэтому в БД ничего не
+        # создаём — иначе CREATE INDEX падает с "relation already exists".
+        # Регистрируем индекс только в состоянии Django.
+        migrations.SeparateDatabaseAndState(
+            database_operations=[],
+            state_operations=[
+                migrations.AddIndex(
+                    model_name='documentembedding',
+                    index=models.Index(fields=['document', 'chunk_index'], name='ai_document_documen_a703d6_idx'),
+                ),
+            ],
         ),
         migrations.AlterModelTable(
             name='documentembedding',

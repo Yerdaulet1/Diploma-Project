@@ -21,8 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Копируем зависимости отдельно (кэш Docker)
+# production.txt включает base.txt + whitenoise/uvicorn/psycogreen — супермножество,
+# поэтому один образ годится и для dev (development settings), и для prod.
 COPY requirements/ requirements/
-RUN pip install --no-cache-dir --default-timeout=300 --retries 5 -r requirements/base.txt
+RUN pip install --no-cache-dir --default-timeout=300 --retries 5 -r requirements/production.txt
 
 # Копируем исходный код
 COPY . .

@@ -27,6 +27,9 @@ PyMuPDF==1.24.*
 python-docx==1.1.*
 mammoth==1.8.*
 
+# Google OAuth (верификация ID-token на бэкенде, apps/users/views.py GoogleAuthView)
+google-auth==2.*
+
 # AI
 anthropic>=0.40.0
 pgvector==0.3.*

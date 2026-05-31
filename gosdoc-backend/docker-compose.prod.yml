@@ -1,0 +1,144 @@
+# ============================================================
+# ГосДок — Production Docker Compose (для деплоя на GCP VM)
+#
+# Отличия от dev (docker-compose.yml):
+#   - DJANGO_SETTINGS_MODULE = config.settings.production
+#   - gunicorn без --reload, DEBUG=False
+#   - фронт собирается в production-бандл и отдаётся через Caddy (HTTPS)
+#   - наружу торчит только Caddy (80/443); backend/db/redis — внутренняя сеть
+#
+# Запуск:  docker compose -f docker-compose.prod.yml up -d --build
+# ============================================================
+
+services:
+
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gosdoc}
+      POSTGRES_USER: ${POSTGRES_USER:-gosdoc_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gosdoc_user} -d ${POSTGRES_DB:-gosdoc}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.10
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_KEY:?set MEILISEARCH_KEY in .env}
+      MEILI_ENV: production
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - meili_data:/meili_data
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DATABASE_URL: postgres://${POSTGRES_USER:-gosdoc_user}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-gosdoc}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MEILISEARCH_URL: http://meilisearch:7700
+    # Dockerfile CMD по умолчанию: migrate + collectstatic + gunicorn (без --reload)
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/api/schema/', timeout=3).status < 500 else sys.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_started
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DATABASE_URL: postgres://${POSTGRES_USER:-gosdoc_user}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-gosdoc}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MEILISEARCH_URL: http://meilisearch:7700
+    command: celery -A config worker -l info --concurrency=2
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DATABASE_URL: postgres://${POSTGRES_USER:-gosdoc_user}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-gosdoc}
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # ---- Caddy: единая точка входа (HTTPS), фронт + reverse proxy на backend ----
+  caddy:
+    build:
+      context: ../gosdoc-frontend-new
+      dockerfile: Dockerfile
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    restart: unless-stopped
+    environment:
+      # домен (gosdoc.duckdns.org) для авто-HTTPS, или :80 для http-only по IP
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  meili_data:
+  static_volume:
+  media_volume:
+  caddy_data:
+  caddy_config:
