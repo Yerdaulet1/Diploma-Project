@@ -50,6 +50,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Единый образ для backend/celery/celery-beat — собирается ОДИН раз,
+    # celery и celery-beat переиспользуют его (экономия места и времени сборки).
+    image: edoc-backend:latest
     restart: unless-stopped
     env_file:
       - .env
@@ -79,9 +82,7 @@ services:
         condition: service_started
 
   celery:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: edoc-backend:latest   # переиспользуем образ backend (не собираем заново)
     restart: unless-stopped
     env_file:
       - .env
@@ -98,9 +99,7 @@ services:
         condition: service_healthy
 
   celery-beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: edoc-backend:latest   # переиспользуем образ backend (не собираем заново)
     restart: unless-stopped
     env_file:
       - .env
