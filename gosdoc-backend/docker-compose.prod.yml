@@ -63,10 +63,10 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       MEILISEARCH_URL: http://meilisearch:7700
-    # Dockerfile CMD по умолчанию: migrate + collectstatic + gunicorn (без --reload)
-    volumes:
-      - static_volume:/app/staticfiles
-      - media_volume:/app/media
+    # Dockerfile CMD по умолчанию: migrate + collectstatic + gunicorn (без --reload).
+    # Статику отдаёт WhiteNoise прямо из образа (collectstatic гоняется при старте),
+    # медиа — в S3. Именованные тома НЕ монтируем: иначе они создаются root-овскими,
+    # а контейнер работает под gosdoc → PermissionError на collectstatic после down -v.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/api/schema/', timeout=3).status < 500 else sys.exit(1)"]
       interval: 10s
@@ -137,7 +137,5 @@ services:
 volumes:
   postgres_data:
   meili_data:
-  static_volume:
-  media_volume:
   caddy_data:
   caddy_config:
