@@ -58,12 +58,17 @@ docker compose logs -f backend
 
 ### Вариант 2 — Полностью локально, без Docker
 
-Требуется Python 3.12, Node.js 20+, PostgreSQL 16 **с расширением `pgvector`**, Redis 7.
+> ✅ **В dev-режиме нужны только Python, Node и PostgreSQL+pgvector.**
+> Redis и Celery запускать **не нужно**: настройки `config.settings.development` (включаются автоматически)
+> используют кэш в памяти, а Celery-задачи (уведомления, отчёты) выполняются синхронно.
+> Письма (коды подтверждения, сброс пароля) печатаются прямо в консоль `runserver` — реальный SMTP не требуется.
+
+Требуется: **Python 3.12**, **Node.js 20+**, **PostgreSQL 16 с расширением `pgvector`**.
 
 #### 1. Установить и подготовить PostgreSQL
 
-Установите PostgreSQL 16. Расширение `pgvector` нужно поставить отдельно:
-- **Windows:** скачайте установщик с [github.com/pgvector/pgvector-windows/releases](https://github.com/pgvector/pgvector-windows/releases) либо используйте Docker (см. вариант 3 — намного проще)
+Установите PostgreSQL 16. Расширение `pgvector` нужно поставить отдельно (оно обязательно — модели используют векторные поля):
+- **Windows:** скачайте установщик с [github.com/pgvector/pgvector-windows/releases](https://github.com/pgvector/pgvector-windows/releases)
 - **macOS:** `brew install pgvector`
 - **Linux:** `sudo apt install postgresql-16-pgvector`
 
@@ -78,8 +83,6 @@ CREATE EXTENSION vector;
 GRANT ALL ON SCHEMA public TO gosdoc_user;
 ```
 
-Установите и запустите Redis 7. На Windows проще всего использовать [Memurai](https://www.memurai.com/) или `redis` в WSL2.
-
 #### 2. Поднять Backend
 
 ```powershell
@@ -91,17 +94,16 @@ python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements/base.txt
 
-# Скопировать .env и подправить хосты на localhost
+# Скопировать .env
 copy .env.example .env
 ```
 
-Откройте `.env` и измените хосты с контейнерных имён на `localhost`:
+Откройте `.env` и укажите локальную БД (остальное можно оставить как есть — Redis/Celery в dev не используются):
 
 ```env
 DATABASE_URL=postgres://gosdoc_user:gosdoc_pass@localhost:5432/gosdoc
-REDIS_URL=redis://localhost:6379/0
-CELERY_BROKER_URL=redis://localhost:6379/1
-CELERY_RESULT_BACKEND=redis://localhost:6379/2
+DJANGO_DEBUG=True
+CLAUDE_API_KEY=ваш_ключ_anthropic      # нужен для AI-функций (diff, чат, классификация)
 ```
 
 Затем:
@@ -112,20 +114,23 @@ python manage.py createsuperuser
 python manage.py runserver
 ```
 
-В отдельных терминалах (с активированным venv):
+`runserver` по умолчанию использует `config.settings.development` (это зашито в `manage.py`) — API на http://localhost:8000.
 
-```powershell
-celery -A config worker -l info
-celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
-```
+> Celery/Redis запускать не нужно. Если когда-нибудь понадобится прогнать задачи через реальный брокер — это уже отдельный сценарий, для разработки он не требуется.
 
 #### 3. Поднять Frontend
 
 ```powershell
 cd gosdoc-frontend-new
+
+# (опционально) для кнопки «Войти через Google» создайте .env и впишите Client ID:
+copy .env.example .env        # затем в .env задайте VITE_GOOGLE_CLIENT_ID=...
+
 npm install
 npm run dev
 ```
+
+Vite поднимет дев-сервер на http://localhost:3000 и сам проксирует запросы `/api` на бэкенд (http://localhost:8000) — настраивать CORS не нужно.
 
 ---
 
@@ -174,13 +179,14 @@ npm run dev
 | `DJANGO_SECRET_KEY` | Случайная строка 50+ символов |
 | `DJANGO_DEBUG` | `True` для разработки, `False` в проде |
 | `DATABASE_URL` | `postgres://user:pass@host:5432/dbname` |
-| `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Redis (БД 0, 1, 2) |
+| `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Redis (БД 0, 1, 2). **В dev не используются** — нужны только в Docker/проде |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Ключи S3 |
 | `AWS_STORAGE_BUCKET_NAME`, `AWS_S3_REGION_NAME` | Имя и регион бакета |
 | `AWS_S3_ENDPOINT_URL` | Для Yandex Object Storage |
 | `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` | SMTP (Gmail — App Password) |
-| `CLAUDE_API_KEY` | Anthropic API ключ |
-| `CLAUDE_MODEL` | По умолчанию `claude-opus-4-7` (или `claude-sonnet-4-6` в `.env.example` — приведите в соответствие) |
+| `CLAUDE_API_KEY` | Anthropic API ключ (нужен для AI-функций) |
+| `CLAUDE_MODEL` | Модель Claude, по умолчанию `claude-sonnet-4-6` |
+| `GOOGLE_CLIENT_ID` | OAuth Client ID для входа через Google (на фронте — `VITE_GOOGLE_CLIENT_ID`, то же значение) |
 | `SENTRY_DSN` | Опционально, мониторинг |
 | `MEILISEARCH_URL`, `MEILISEARCH_KEY` | Опционально, ускоренный полнотекстовый поиск |
 | `JWT_ACCESS_TOKEN_LIFETIME_MINUTES`, `JWT_REFRESH_TOKEN_LIFETIME_DAYS` | Жизнь токенов (по умолчанию 15 мин / 7 дней) |
@@ -302,7 +308,7 @@ User ──┬─< WorkspaceMember >── Workspace ─── Organization
 
 ### Технические ограничения
 - Максимальный размер файла: **100 МБ**
-- Разрешённые форматы: `pdf`, `docx`, `xlsx`, `odt`, `ods`
+- Разрешённые форматы: `docx`, `xlsx` (см. `ALLOWED_DOCUMENT_EXTENSIONS` в [settings/base.py](gosdoc-backend/config/settings/base.py))
 - Локаль: `ru-ru`, часовой пояс: `Asia/Almaty`
 - JWT: access — 15 мин, refresh — 7 дней (с rotation и blacklist)
 - Rate limiting: 100 запросов/мин (стандартный пользователь), 10/мин (анонимные на `/auth/`), 20/мин (загрузка)
@@ -310,6 +316,10 @@ User ──┬─< WorkspaceMember >── Workspace ─── Organization
 ---
 
 ## Полезные команды
+
+> **Без Docker** (Вариант 2): команды те же, но без префикса `docker compose exec backend` —
+> просто `python manage.py ...` в активированном venv из папки `gosdoc-backend`.
+> Например, после изменения моделей: `python manage.py makemigrations <app>` → `python manage.py migrate`.
 
 ```powershell
 # Применить миграции внутри контейнера
