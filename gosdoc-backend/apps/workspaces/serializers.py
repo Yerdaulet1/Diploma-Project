@@ -140,6 +140,7 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
     organization_name = serializers.CharField(source="organization.name", read_only=True, allow_null=True)
     user_role         = serializers.SerializerMethodField()
     members_count     = serializers.SerializerMethodField()
+    member_limit      = serializers.SerializerMethodField()
     documents_count   = serializers.SerializerMethodField()
     created_by_name   = serializers.CharField(source="created_by.full_name", read_only=True, allow_null=True)
 
@@ -148,7 +149,8 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
         fields = [
             "id", "title", "type", "organization_name",
             "status", "deadline", "created_at",
-            "user_role", "members_count", "documents_count", "created_by_name",
+            "user_role", "members_count", "member_limit",
+            "documents_count", "created_by_name",
         ]
         read_only_fields = fields
 
@@ -163,6 +165,11 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
 
     def get_members_count(self, obj) -> int:
         return obj.members.count()
+
+    def get_member_limit(self, obj) -> int | None:
+        """Максимально допустимое число участников. None — без ограничения."""
+        from apps.workspaces.views import WORKSPACE_MEMBER_LIMITS
+        return WORKSPACE_MEMBER_LIMITS.get(obj.type)
 
     def get_documents_count(self, obj) -> int:
         return obj.documents.exclude(status="archived").count()

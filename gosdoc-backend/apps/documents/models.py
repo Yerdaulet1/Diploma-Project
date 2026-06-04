@@ -336,6 +336,7 @@ class Subtask(models.Model):
         related_name="assigned_subtasks",
         verbose_name="Исполнитель",
     )
+    start_date = models.DateField(null=True, blank=True, verbose_name="Начало")
     deadline = models.DateField(null=True, blank=True, verbose_name="Срок")
     status = models.CharField(
         max_length=20,

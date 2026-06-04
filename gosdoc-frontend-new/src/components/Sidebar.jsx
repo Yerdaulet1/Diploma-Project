@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import useSidebarOpen from "../hooks/useSidebarOpen";
 import useAuthStore from "../store/authStore";
-import { getWorkspaces } from "../api/workspaces";
+import { getOrganizations } from "../api/organizations";
 import CreateWorkspaceModal from "../CreateWorkspaceModal";
 import NewProjectModal from "./NewProjectModal";
 
@@ -141,13 +141,13 @@ export default function Sidebar({ active, onNavigate }) {
   const wsDropRef = useRef(null);
   const user = useAuthStore(s => s.user);
 
-  const { data: wsData } = useQuery({
-    queryKey: ["workspaces"],
-    queryFn: getWorkspaces,
+  const { data: orgData } = useQuery({
+    queryKey: ["organizations"],
+    queryFn: getOrganizations,
     staleTime: 30_000,
   });
-  const allWs = wsData?.results ?? (Array.isArray(wsData) ? wsData : []);
-  const orgName = allWs[0]?.title || "Organization";
+  const allOrgs = orgData?.results ?? (Array.isArray(orgData) ? orgData : []);
+  const orgName = allOrgs[0]?.name || "Organization";
 
   useEffect(() => {
     if (!wsDropOpen) return;
@@ -208,17 +208,22 @@ export default function Sidebar({ active, onNavigate }) {
           </div>
           {wsDropOpen && (
             <div className="gs-org-dd">
-              <div className="gs-org-dd-title">Switch Workplaces</div>
-              {allWs.map((ws) => (
-                <div key={ws.id} className="gs-org-dd-item"
-                     onClick={() => { setWsDropOpen(false); onNavigate?.(`organization/${ws.id}`); }}>
+              <div className="gs-org-dd-title">Switch Organizations</div>
+              {allOrgs.length === 0 && (
+                <div style={{ padding:"10px 14px", fontSize:12, color:"#9CA3AF" }}>
+                  You are not in any organization yet.
+                </div>
+              )}
+              {allOrgs.map((org) => (
+                <div key={org.id} className="gs-org-dd-item"
+                     onClick={() => { setWsDropOpen(false); onNavigate?.(`organization/${org.id}`); }}>
                   <div style={{ width:22, height:22, borderRadius:6, background:"#DBEAFE", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="12" height="12">
                       <rect x="3" y="3" width="18" height="18" rx="2"/>
                       <path d="M3 9h18M9 21V9"/>
                     </svg>
                   </div>
-                  <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{ws.title}</span>
+                  <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{org.name}</span>
                 </div>
               ))}
               <div className="gs-org-dd-add" onClick={() => { setWsDropOpen(false); setShowCreateWs(true); }}>

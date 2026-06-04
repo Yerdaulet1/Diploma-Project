@@ -110,9 +110,21 @@ const css = `
   .pf-input {
     width:100%; border:1.5px solid #E5E7EB; border-radius:8px;
     padding:9px 12px; font-size:13px; color:#374151;
+    background:#fff; color-scheme:light;
     outline:none; font-family:inherit; transition:border-color .2s;
   }
   .pf-input:focus { border-color:#2563EB; }
+  /* Suppress Chrome/WebKit autofill yellow/dark overlay on text inputs */
+  .pf-input:-webkit-autofill,
+  .pf-input:-webkit-autofill:hover,
+  .pf-input:-webkit-autofill:focus,
+  .pf-input:-webkit-autofill:active{
+    -webkit-box-shadow:0 0 0 1000px #fff inset !important;
+    box-shadow:0 0 0 1000px #fff inset !important;
+    -webkit-text-fill-color:#374151 !important;
+    caret-color:#374151;
+    transition:background-color 99999s ease-in-out 0s;
+  }
   .pf-input-icon-wrap {
     position:relative;
     display:flex; align-items:center;
@@ -217,6 +229,19 @@ const css = `
   .pf-success-text {
     font-size:15px; color:#374151; font-weight:500;
     margin-top:18px;
+  }
+
+  @media(max-width:768px){
+    .pf-overlay{ padding:0; align-items:flex-end }
+    .pf-modal{ max-width:100%; border-radius:16px 16px 0 0; max-height:92vh }
+    .pf-modal-sm{ max-width:100% }
+    .pf-header{ height:88px }
+    .pf-body{ padding:54px 20px 24px }
+    .pf-field-row{ grid-template-columns:1fr; gap:0; margin-bottom:0 }
+    .pf-input{ font-size:16px; padding:10px 12px }
+    .pf-section-title{ font-size:15px }
+    .pf-menu{ right:8px; min-width:180px }
+    .pf-success{ padding:28px 20px; border-radius:12px }
   }
 `;
 

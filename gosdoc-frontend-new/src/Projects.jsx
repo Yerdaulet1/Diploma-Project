@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import useSidebarOpen from "./hooks/useSidebarOpen";
 import Sidebar from "./components/Sidebar";
+import MobileBottomNav from "./components/MobileBottomNav";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -234,12 +235,12 @@ function MiniAv({ member, size=22 }) {
 /* ══════════════════════════════════════════════════════════
    ASSIGNEE PICKER POPUP
 ══════════════════════════════════════════════════════════ */
-function AssigneePicker({ selected, onToggle, onClose, members = [] }) {
+function AssigneePicker({ selected, onToggle, onClose, members = [], style }) {
   const ref = useRef(null);
   return (
-    <div className="dm-assignee-popup" ref={ref} onMouseDown={e=>e.stopPropagation()}>
-      <div style={{ padding:"6px 12px 6px", fontSize:11, color:"#9CA3AF", fontWeight:500 }}>Assign member</div>
-      {members.length === 0 && <div style={{ padding:"8px 12px", fontSize:12, color:"#9CA3AF" }}>No members</div>}
+    <div className="dm-assignee-popup" ref={ref} style={style} onMouseDown={e=>e.stopPropagation()}>
+      <div style={{ padding:"6px 12px 6px", fontSize:11, color:"#9CA3AF", fontWeight:500 }}>Assign to one of assignees</div>
+      {members.length === 0 && <div style={{ padding:"8px 12px", fontSize:12, color:"#9CA3AF", lineHeight:1.4 }}>Add document assignees first</div>}
       {members.map(m => (
         <div key={m.id} className={`dm-assignee-item${selected?.id===m.id?" selected":""}`}
           onClick={()=>{ onToggle(m); onClose(); }}>
@@ -546,7 +547,7 @@ function DeadlinePicker({ value, onChange, onClose, pos, maxDate }) {
 /* ══════════════════════════════════════════════════════════
    RANGE DEADLINE PICKER (start–end date)
 ══════════════════════════════════════════════════════════ */
-function RangeDeadlinePicker({ startValue, endValue, onChange, onClose, pos }) {
+function RangeDeadlinePicker({ startValue, endValue, onChange, onClose, pos, minDate, maxDate }) {
   const today    = new Date();
   const initBase = isoToDate(endValue) || isoToDate(startValue) || today;
   const [vm, setVm]           = useState(initBase.getMonth());
@@ -554,6 +555,8 @@ function RangeDeadlinePicker({ startValue, endValue, onChange, onClose, pos }) {
   const [rangeStart, setRS]   = useState(isoToDate(startValue));
   const [rangeEnd,   setRE]   = useState(isoToDate(endValue));
   const [phase, setPhase]     = useState(startValue ? "end" : "start");
+  const minD = isoToDate(minDate);
+  const maxD = isoToDate(maxDate);
   const ref = useRef(null);
 
   const PICKER_H = 350;
@@ -575,7 +578,15 @@ function RangeDeadlinePicker({ startValue, endValue, onChange, onClose, pos }) {
   const firstDay  = calFirst(vy, vm);
   const cells = [...Array(firstDay).fill(null), ...Array.from({ length: totalDays }, (_, i) => i + 1)];
 
+  const isDisabled = (day) => {
+    const d = new Date(vy, vm, day);
+    if (minD && d < minD) return true;
+    if (maxD && d > maxD) return true;
+    return false;
+  };
+
   const clickDay = (day) => {
+    if (isDisabled(day)) return;
     const d = new Date(vy, vm, day);
     if (phase === "start" || !rangeStart) {
       setRS(d); setRE(null); setPhase("end");
@@ -651,17 +662,17 @@ function RangeDeadlinePicker({ startValue, endValue, onChange, onClose, pos }) {
       <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2 }}>
         {cells.map((day, i) => {
           if (day === null) return <div key={`e${i}`}/>;
-          const s = isS(day), e = isE(day), r = inR(day), t = isTod(day);
+          const s = isS(day), e = isE(day), r = inR(day), t = isTod(day), dis = isDisabled(day);
           return (
             <div key={day} onClick={() => clickDay(day)}
               style={{
                 width:36, height:36, margin:"1px auto",
                 display:"flex", alignItems:"center", justifyContent:"center",
-                fontSize:12.5, userSelect:"none", cursor:"pointer", borderRadius:"50%",
-                background: (s || e) ? "#2563EB" : r ? "#EFF6FF" : "transparent",
-                color:      (s || e) ? "#fff"    : r ? "#2563EB" : t ? "#2563EB" : "#374151",
+                fontSize:12.5, userSelect:"none", cursor: dis ? "not-allowed" : "pointer", borderRadius:"50%",
+                background: dis ? "transparent" : (s || e) ? "#2563EB" : r ? "#EFF6FF" : "transparent",
+                color:      dis ? "#D1D5DB"     : (s || e) ? "#fff"    : r ? "#2563EB" : t ? "#2563EB" : "#374151",
                 fontWeight: (s || e) ? 700 : t ? 600 : 400,
-                boxShadow:  t && !s && !e ? "0 0 0 1.5px #2563EB" : "none",
+                boxShadow:  t && !s && !e && !dis ? "0 0 0 1.5px #2563EB" : "none",
               }}>
               {day}
             </div>
@@ -681,11 +692,13 @@ function RangeDeadlinePicker({ startValue, endValue, onChange, onClose, pos }) {
 /* ══════════════════════════════════════════════════════════
    SUBTASK ROW
 ══════════════════════════════════════════════════════════ */
-function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndClose, isFirst, members = [], maxDate, onComplete }) {
+function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndClose, isFirst, members = [], defaultStart, minDate, maxDate, onComplete }) {
   const [showAssignee, setShowAssignee] = useState(false);
+  const [asnPos,       setAsnPos]       = useState({ top:0, right:0, placeAbove:false });
   const [showDl,       setShowDl]       = useState(false);
   const [dlPos,        setDlPos]        = useState({ top:0, left:0 });
   const assigneeRef = useRef(null);
+  const asnBtnRef   = useRef(null);
   const dlBtnRef    = useRef(null);
 
   const openDl = () => {
@@ -694,6 +707,20 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
       setDlPos({ top: r.bottom + 6, left: r.left, buttonHeight: r.height });
     }
     setShowDl(v => !v);
+  };
+
+  const openAsn = () => {
+    if (asnBtnRef.current) {
+      const r = asnBtnRef.current.getBoundingClientRect();
+      const popupH = 40 + Math.max(1, members.length) * 36;
+      const placeAbove = r.bottom + popupH + 12 > window.innerHeight;
+      setAsnPos({
+        top: placeAbove ? r.top - popupH - 4 : r.bottom + 4,
+        right: Math.max(8, window.innerWidth - r.right),
+        placeAbove,
+      });
+    }
+    setShowAssignee(v => !v);
   };
 
   return (
@@ -740,10 +767,10 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
         }
       </div>
 
-      {/* Calendar / Deadline */}
+      {/* Calendar / Deadline (range) */}
       <div style={{ position:"relative" }}>
         <button ref={dlBtnRef}
-          className={`dm-deadline-btn${subtask.deadline ? "" : " empty"}`}
+          className={`dm-deadline-btn${subtask.deadline || subtask.start_date ? "" : " empty"}`}
           title="Set deadline"
           onClick={openDl}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12">
@@ -752,15 +779,17 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
             <line x1="8" y1="2" x2="8" y2="6"/>
             <line x1="3" y1="10" x2="21" y2="10"/>
           </svg>
-          {subtask.deadline ? fmtDeadline(subtask.deadline) : "Deadline"}
+          {fmtDateRange(subtask.start_date, subtask.deadline) || "Deadline"}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="10" height="10"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         {showDl && (
-          <DeadlinePicker
-            value={subtask.deadline}
+          <RangeDeadlinePicker
+            startValue={subtask.start_date || defaultStart || null}
+            endValue={subtask.deadline}
             pos={dlPos}
+            minDate={minDate}
             maxDate={maxDate}
-            onChange={iso => onChange({ ...subtask, deadline: iso })}
+            onChange={({ start, end }) => onChange({ ...subtask, start_date: start, deadline: end })}
             onClose={() => setShowDl(false)}
           />
         )}
@@ -773,7 +802,7 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
 
       {/* Assignee */}
       <div style={{ position:"relative" }} ref={assigneeRef}>
-        <button className="dm-icon-btn" title="Assign member" onClick={() => setShowAssignee(v=>!v)}>
+        <button ref={asnBtnRef} className="dm-icon-btn" title="Assign member" onClick={openAsn}>
           {subtask.assignee
             ? <MiniAv member={subtask.assignee} size={20}/>
             : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="14" height="14"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -782,13 +811,12 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
         {showAssignee && (
           <>
             <div style={{ position:"fixed",inset:0,zIndex:9400 }} onClick={()=>setShowAssignee(false)}/>
-            <div style={{ position:"absolute",right:0,top:"calc(100% + 4px)",zIndex:9500 }}>
-              <AssigneePicker
-                selected={subtask.assignee}
-                onToggle={m => onChange({ ...subtask, assignee: subtask.assignee?.id===m.id ? null : m })}
-                onClose={() => setShowAssignee(false)}
-                members={members}/>
-            </div>
+            <AssigneePicker
+              selected={subtask.assignee}
+              onToggle={m => onChange({ ...subtask, assignee: subtask.assignee?.id===m.id ? null : m })}
+              onClose={() => setShowAssignee(false)}
+              members={members}
+              style={{ position:"fixed", top:asnPos.top, right:asnPos.right, zIndex:9500 }}/>
           </>
         )}
       </div>
@@ -817,7 +845,11 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
    WORKFLOW TAB
 ══════════════════════════════════════════════════════════ */
 function BlockchainBadge({ status, blocks = [] }) {
-  const tampered = blocks.some(b => b.tampered);
+  // A block is considered compromised only if the chain itself is broken
+  // (someone tampered with a stored block) — NOT when the document content
+  // legitimately evolves between workflow steps.
+  const blockBroken = (b) => b.tampered || b.chain_valid === false;
+  const tampered    = blocks.some(blockBroken);
   const color    = tampered ? "#EF4444" : status === "VERIFIED" ? "#10B981" : "#9CA3AF";
   const bg       = tampered ? "#FEF2F2" : status === "VERIFIED" ? "#F0FDF4" : "#F9FAFB";
   const border   = tampered ? "#FECACA" : status === "VERIFIED" ? "#A7F3D0" : "#E5E7EB";
@@ -837,13 +869,13 @@ function BlockchainBadge({ status, blocks = [] }) {
       {blocks.length > 0 && (
         <div style={{ display:"flex",flexDirection:"column",gap:4 }}>
           {blocks.map((b, i) => {
-            const _ok = !b.tampered && b.chain_valid;
+            const broken = blockBroken(b);
             return (
               <div key={b.id || i} style={{ display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#6B7280" }}>
-                <div style={{ width:6,height:6,borderRadius:"50%",background: b.tampered ? "#EF4444" : "#10B981",flexShrink:0 }}/>
+                <div style={{ width:6,height:6,borderRadius:"50%",background: broken ? "#EF4444" : "#10B981",flexShrink:0 }}/>
                 <span style={{ flex:1 }}>Step {b.step_order}: {b.task_title}</span>
                 <span style={{ fontFamily:"monospace",fontSize:10 }}>{b.document_hash?.slice(0,10)}…</span>
-                {b.tampered
+                {broken
                   ? <span style={{ color:"#EF4444",fontWeight:600,fontSize:10 }}>CHANGED</span>
                   : <span style={{ color:"#10B981",fontWeight:600,fontSize:10 }}>OK</span>}
               </div>
@@ -913,6 +945,11 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
   const totalCnt = stList.length;
   const reviewPct = totalCnt > 0 ? Math.round((doneCnt / totalCnt) * 100) : (stageIdx > 1 ? 100 : 0);
 
+  // Show the currently-active subtask name as the review stage title.
+  // Falls back to "Legal Review" when there are no subtasks or all are done.
+  const currentSubtask = stList.find(st => st.status !== "done");
+  const reviewLabel    = currentSubtask?.name?.trim() || "Legal Review";
+
   const stages = [
     {
       key: "upload",
@@ -931,7 +968,7 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
     },
     {
       key: "review",
-      label: "Legal Review",
+      label: reviewLabel,
       doneSubtitle: totalCnt > 0 ? `All ${totalCnt} subtask${totalCnt !== 1 ? "s" : ""} completed` : "Review completed",
       pendingSubtitle: "Awaiting document upload",
       personPrefix: "This task was assigned to",
@@ -1458,7 +1495,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
 
   const [status,       setStatus]       = useState("TO DO");
   const [priority,     setPriority]     = useState("Empty");
-  const [assignee,     setAssignee]     = useState(null);
+  const [assignees,    setAssignees]    = useState([]);
   const [dueDate,      setDueDate]      = useState(null);
   const [dueStartDate, setDueStartDate] = useState(null);
   const [showDueDl,    setShowDueDl]    = useState(false);
@@ -1472,7 +1509,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   const [desc,       setDesc]       = useState("");
   const [attachments,setAttachments]= useState([]);
   const [previewAtt, setPreviewAtt] = useState(null);
-  const [subtasks,   setSubtasks]   = useState([{ id:1, name:"", mode:"action", assignee:null, deadline:null, status:"pending" }]);
+  const [subtasks,   setSubtasks]   = useState([{ id:1, name:"", mode:"action", assignee:null, start_date:null, deadline:null, status:"pending" }]);
   const [activeTab,  setActiveTab]  = useState("task");
   const [comments,   setComments]   = useState([]);
   const [title,      setTitle]      = useState(doc?.title || doc?.name || "");
@@ -1494,35 +1531,45 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
     setDesc(apiDoc.metadata?.description || "");
   }, [apiDoc]);
 
-  // Restore assignee — runs when either apiDoc or membersData arrives (handles any load order)
+  // Restore assignees — supports new multi-select (assignee_ids) and legacy single (assignee_id)
   useEffect(() => {
     if (!apiDoc || !membersData) return;
-    const savedId = apiDoc.metadata?.assignee_id;
-    if (!savedId) return;
+    const meta = apiDoc.metadata || {};
+    const savedIds = Array.isArray(meta.assignee_ids)
+      ? meta.assignee_ids
+      : (meta.assignee_id ? [meta.assignee_id] : []);
+    if (savedIds.length === 0) { setAssignees([]); return; }
     const rawList = membersData?.results ?? (Array.isArray(membersData) ? membersData : []);
-    const found = rawList.find(m => String(m.user || m.id) === String(savedId));
-    if (!found) return;
-    setAssignee({
-      id:       found.user || found.id,
-      name:     found.user_name || found.user_email || "Member",
-      initials: (found.user_name || found.user_email || "M").split(" ").map(p => p[0]).join("").toUpperCase().slice(0, 2),
-      color:    AV_COLORS_MEMBERS[0],
-    });
-  }, [apiDoc, membersData]);  
+    const restored = savedIds
+      .map(id => rawList.find(m => String(m.user || m.id) === String(id)))
+      .filter(Boolean)
+      .map((m, i) => ({
+        id:       m.user || m.id,
+        name:     m.user_name || m.user_email || "Member",
+        initials: (m.user_name || m.user_email || "M").split(/\s+/).filter(Boolean).slice(0,2).map(p => p[0]).join("").toUpperCase().slice(0,2) || "M",
+        color:    AV_COLORS_MEMBERS[i % AV_COLORS_MEMBERS.length],
+      }));
+    setAssignees(restored);
+  }, [apiDoc, membersData]);
 
   // Sync subtasks from API (only on first load)
   useEffect(() => {
     if (apiSubtasks) {
       setSubtasks(
         apiSubtasks.length > 0
-          ? apiSubtasks.map(st => ({
-              id: st.id, _apiId: st.id,
-              name: st.title, mode: "action",
-              status: st.status || "pending",
-              assignee: st.assignee ? { id: st.assignee, name: st.assignee_name } : null,
-              deadline: st.deadline,
-            }))
-          : [{ id: 1, _apiId: null, name: "", mode: "action", assignee: null, deadline: null, status: "pending" }]
+          ? apiSubtasks.map(st => {
+              const aname = st.assignee_name || "";
+              const initials = aname.split(/\s+/).filter(Boolean).slice(0,2).map(p=>p[0]).join("").toUpperCase().slice(0,2) || "?";
+              return {
+                id: st.id, _apiId: st.id,
+                name: st.title, mode: "action",
+                status: st.status || "pending",
+                assignee: st.assignee ? { id: st.assignee, name: aname, initials } : null,
+                start_date: st.start_date || null,
+                deadline:   st.deadline   || null,
+              };
+            })
+          : [{ id: 1, _apiId: null, name: "", mode: "action", assignee: null, start_date: null, deadline: null, status: "pending" }]
       );
     }
   }, [apiSubtasks]);
@@ -1541,21 +1588,23 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   }, [apiAttachments]);
 
   // Snapshot for cancel
-  const snapshot = useRef({ status:"TO DO", priority:"Empty", assignee:null, dueDate:null, desc:"", title:doc?.title||doc?.name||"", subtasks:[{id:1,name:"",mode:"action",assignee:null,deadline:null,status:"pending"}], attachments:[] });
+  const snapshot = useRef({ status:"TO DO", priority:"Empty", assignees:[], dueDate:null, desc:"", title:doc?.title||doc?.name||"", subtasks:[{id:1,name:"",mode:"action",assignee:null,deadline:null,status:"pending"}], attachments:[] });
 
   const handleSave = async () => {
     if (saving || isEditor) return;
     setSaving(true);
     try {
       if (!readOnly && docId) {
+        // Drop the legacy single-assignee key so it doesn't override the new list
+        const { assignee_id: _legacy, ...restMeta } = apiDocRef.current?.metadata || {};
         await updateDocument(docId, {
           title,
           status: DISPLAY_TO_API_STATUS[status] || "draft",
           ...(priority !== "Empty" && { priority: priToApi(priority) }),
           due_date: dueDate || null,
           metadata: {
-            ...(apiDocRef.current?.metadata || {}),
-            assignee_id: assignee?.id || null,
+            ...restMeta,
+            assignee_ids: assignees.map(a => a.id),
             start_date:  dueStartDate || null,
             description: desc || null,
           },
@@ -1567,16 +1616,17 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
         setDeletedSubtaskIds([]);
         // Create new / update existing subtasks
         for (const st of subtasks) {
+          const payload = {
+            title:      st.name || "Untitled",
+            assignee:   st.assignee?.id || null,
+            start_date: st.start_date || null,
+            deadline:   st.deadline || null,
+          };
           if (st._apiId) {
-            try {
-              await apiUpdateSubtask(docId, st._apiId, {
-                title: st.name || "Untitled",
-                deadline: st.deadline || null,
-              });
-            } catch {}
+            try { await apiUpdateSubtask(docId, st._apiId, payload); } catch {}
           } else if (st.name?.trim()) {
             try {
-              const newSt = await createSubtask(docId, { title: st.name, deadline: st.deadline || null });
+              const newSt = await createSubtask(docId, payload);
               st._apiId = newSt.id;
               st.id = newSt.id;
             } catch {}
@@ -1587,7 +1637,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
         qc.invalidateQueries({ queryKey: ["documents"] });
         toast.success("Saved");
       }
-      snapshot.current = { status, priority, assignee, dueDate, desc, title, subtasks, attachments };
+      snapshot.current = { status, priority, assignees, dueDate, desc, title, subtasks, attachments };
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -1601,7 +1651,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
     const s = snapshot.current;
     setStatus(s.status);
     setPriority(s.priority);
-    setAssignee(s.assignee);
+    setAssignees(s.assignees || []);
     setDueDate(s.dueDate);
     setDesc(s.desc);
     setTitle(s.title);
@@ -1610,7 +1660,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   };
 
   const addSubtask = () => {
-    setSubtasks(s => [...s, { id: Date.now(), _apiId: null, name:"", mode:"action", assignee:null, deadline:null, status:"pending" }]);
+    setSubtasks(s => [...s, { id: Date.now(), _apiId: null, name:"", mode:"action", assignee:null, start_date:null, deadline:null, status:"pending" }]);
   };
   const updateSubtask = (id, data) => setSubtasks(s => s.map(x => x.id===id ? {...x,...data} : x));
   const deleteSubtask = (id) => {
@@ -1875,37 +1925,74 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                 <span className="dm-meta-label">Assignees</span>
                 {(readOnly || isEditor)
                   ? <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                      {assignee
-                        ? <><MiniAv member={assignee} size={22}/><span style={{ fontSize:12.5, color:"#374151" }}>{assignee.name}</span></>
-                        : <span style={{ fontSize:12.5, color:"#9CA3AF" }}>—</span>
-                      }
+                      {assignees.length === 0 ? (
+                        <span style={{ fontSize:12.5, color:"#9CA3AF" }}>—</span>
+                      ) : (
+                        <>
+                          <div style={{ display:"flex", alignItems:"center" }}>
+                            {assignees.slice(0,4).map((a, i) => (
+                              <div key={a.id} style={{ marginLeft: i===0 ? 0 : -6, border:"2px solid #fff", borderRadius:"50%" }}>
+                                <MiniAv member={a} size={22}/>
+                              </div>
+                            ))}
+                            {assignees.length > 4 && (
+                              <div style={{ marginLeft:-6, width:22, height:22, borderRadius:"50%", background:"#E5E7EB", color:"#6B7280", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:600, border:"2px solid #fff" }}>
+                                +{assignees.length - 4}
+                              </div>
+                            )}
+                          </div>
+                          <span style={{ fontSize:12.5, color:"#374151" }}>
+                            {assignees.length === 1 ? assignees[0].name : `${assignees.length} people`}
+                          </span>
+                        </>
+                      )}
                     </div>
                   : <div style={{ position:"relative" }}>
                       <button className="dm-meta-btn" onClick={()=>setShowAsnDd(v=>!v)} style={{ display:"flex",alignItems:"center",gap:5 }}>
-                        {assignee
-                          ? <><MiniAv member={assignee} size={18}/>{assignee.name.split(" ")[0]}</>
-                          : "Empty"
-                        }
+                        {assignees.length === 0 ? (
+                          "Empty"
+                        ) : (
+                          <>
+                            <div style={{ display:"flex", alignItems:"center" }}>
+                              {assignees.slice(0,3).map((a, i) => (
+                                <div key={a.id} style={{ marginLeft: i===0 ? 0 : -5, border:"1.5px solid #fff", borderRadius:"50%" }}>
+                                  <MiniAv member={a} size={18}/>
+                                </div>
+                              ))}
+                            </div>
+                            <span>{assignees.length === 1 ? assignees[0].name.split(" ")[0] : `${assignees.length} selected`}</span>
+                          </>
+                        )}
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="10" height="10"><polyline points="9 6 15 12 9 18"/></svg>
                       </button>
                       {showAsnDd && (
                         <>
                           <div style={{ position:"fixed",inset:0,zIndex:9500 }} onClick={()=>setShowAsnDd(false)}/>
                           <div className="dm-assignee-popup" style={{ position:"absolute",top:"calc(100% + 4px)",left:0,zIndex:9600 }}>
-                            <div style={{ padding:"6px 12px 4px",fontSize:11,color:"#9CA3AF",fontWeight:500 }}>Select assignee</div>
-                            <div className="dm-assignee-item" onClick={()=>{ setAssignee(null); setShowAsnDd(false); }}
-                              style={{ color:!assignee?"#2563EB":"#374151",fontWeight:!assignee?600:400 }}>
-                              <div style={{ width:22,height:22,borderRadius:"50%",background:"#E5E7EB",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>×</div>
-                              Empty
+                            <div style={{ padding:"6px 12px 4px",fontSize:11,color:"#9CA3AF",fontWeight:500,display:"flex",alignItems:"center",justifyContent:"space-between" }}>
+                              <span>Select assignees</span>
+                              {assignees.length > 0 && (
+                                <button onClick={()=>setAssignees([])} style={{ background:"none",border:"none",color:"#6B7280",fontSize:11,cursor:"pointer",fontFamily:"inherit",padding:0 }}>Clear</button>
+                              )}
                             </div>
                             {membersList.length === 0 && <div style={{ padding:"6px 12px",fontSize:12,color:"#9CA3AF" }}>No members</div>}
-                            {membersList.map(m=>(
-                              <div key={m.id} className={`dm-assignee-item${assignee?.id===m.id?" selected":""}`}
-                                onClick={()=>{ setAssignee(m); setShowAsnDd(false); }}>
-                                <MiniAv member={m}/>
-                                {m.name}
-                              </div>
-                            ))}
+                            {membersList.map(m => {
+                              const isSel = assignees.some(a => String(a.id) === String(m.id));
+                              return (
+                                <div key={m.id} className={`dm-assignee-item${isSel?" selected":""}`}
+                                  onClick={() => {
+                                    setAssignees(prev => isSel
+                                      ? prev.filter(a => String(a.id) !== String(m.id))
+                                      : [...prev, m]
+                                    );
+                                  }}>
+                                  <input type="checkbox" readOnly checked={isSel}
+                                    style={{ width:14, height:14, accentColor:"#2563EB", cursor:"pointer", flexShrink:0 }}/>
+                                  <MiniAv member={m}/>
+                                  <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{m.name}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         </>
                       )}
@@ -2083,10 +2170,10 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                                 {st.name}
                               </span>
                           }
-                          {st.deadline && (
+                          {(st.start_date || st.deadline) && (
                             <span style={{ fontSize:11,color:"#6B7280",display:"flex",alignItems:"center",gap:4,flexShrink:0 }}>
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                              {fmtDeadline(st.deadline)}
+                              {fmtDateRange(st.start_date, st.deadline)}
                             </span>
                           )}
                           {st.assignee && <MiniAv member={st.assignee} size={22}/>}
@@ -2122,17 +2209,22 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                           }
                         </div>
                       ))
-                    : subtasks.map((st, i) => (
-                        <SubtaskRow key={st.id} subtask={st} index={i}
-                          isFirst={i === 0}
-                          onChange={data => updateSubtask(st.id, data)}
-                          onDelete={() => deleteSubtask(st.id)}
-                          onAddNext={addSubtask}
-                          onSaveAndClose={() => { handleSave(); setTimeout(onClose, 300); }}
-                          onComplete={handleCompleteSubtask}
-                          members={membersList}
-                          maxDate={dueDate}/>
-                      ))
+                    : subtasks.map((st, i) => {
+                        const prevDeadline = i > 0 ? subtasks[i-1].deadline : null;
+                        return (
+                          <SubtaskRow key={st.id} subtask={st} index={i}
+                            isFirst={i === 0}
+                            onChange={data => updateSubtask(st.id, data)}
+                            onDelete={() => deleteSubtask(st.id)}
+                            onAddNext={addSubtask}
+                            onSaveAndClose={() => { handleSave(); setTimeout(onClose, 300); }}
+                            onComplete={handleCompleteSubtask}
+                            members={assignees}
+                            defaultStart={prevDeadline || dueStartDate || null}
+                            minDate={prevDeadline || dueStartDate || null}
+                            maxDate={dueDate}/>
+                        );
+                      })
                   }
                 </div>}
               </>
@@ -2312,11 +2404,29 @@ const prCss = `
   .pr-sb-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:15}
 
   @media(max-width:768px){
+    .pr-page{ width:100%; height:100svh }
     .pr-sb{display:none}
     .pr-sb:not(.closed){display:flex;position:fixed;top:0;left:0;bottom:0;height:100%;width:242px!important;box-shadow:4px 0 24px rgba(0,0,0,.13)}
     .pr-sb-overlay.show{display:block}
-    .pr-container{margin:0 8px 12px 8px;border-radius:12px}
-    .pr-topbar{padding:0 14px}
+    .pr-container{margin:0 6px 78px 6px;border-radius:12px}
+    .pr-topbar{padding:0 12px;gap:6px;font-size:12.5px;height:48px}
+    .pr-topbar img{height:22px}
+    .pr-topbar button{ padding:4px 8px!important; font-size:11.5px!important }
+    /* tables → horizontal scroll wrapper */
+    .ad-list-scroll, .pr-list-scroll{ overflow-x:auto }
+    table{ min-width:560px }
+    /* calendar cells smaller */
+    .cal-cell{ min-height:64px; padding:4px }
+    .cal-event{ font-size:9.5px; padding:2px 4px }
+    /* member-invite rows wrap */
+    .pr-m-row{ flex-wrap:wrap; gap:6px }
+    .pr-m-row > div, .pr-m-row > select{ flex:1 1 100%!important }
+    .pr-m-row > .pr-m-rm{ flex:0 0 auto }
+    .ar-section-title{ font-size:13px; margin:14px 4px 8px }
+  }
+  @media(max-width:480px){
+    .pr-container{ margin:0 4px 78px 4px }
+    .pr-topbar{ padding:0 10px }
   }
 `;
 
@@ -2398,17 +2508,17 @@ function NewProjectModal({ onClose, onCreate }) {
     try {
       const ws = await createWorkspace({ title: form.name, description: form.desc, type: "corporate" });
 
-      // Upload initial document (attached file or blank docx)
-      try {
-        const docTitle = form.docName.trim();
-        const fileName = file
-          ? file.name
-          : `${docTitle.replace(/\s+/g,"_")}.docx`;
-        const fileToUpload = file || new File([new Blob([" "],{type:"text/plain"})], fileName);
-        await serverUploadDocument(ws.id, docTitle, fileToUpload);
-        qc.invalidateQueries({ queryKey: ["documents", ws.id] });
-      } catch (err) {
-        toast.error("Project created, but document upload failed.");
+      // Upload initial document only if the user actually attached a file.
+      // A synthesized text/plain blob with a .docx extension is not a valid
+      // DOCX (zip) archive and breaks mammoth / python-docx on the backend.
+      if (file) {
+        try {
+          const docTitle = form.docName.trim() || file.name.replace(/\.[^.]+$/, "");
+          await serverUploadDocument(ws.id, docTitle, file);
+          qc.invalidateQueries({ queryKey: ["documents", ws.id] });
+        } catch (err) {
+          toast.error("Project created, but document upload failed.");
+        }
       }
 
       await Promise.allSettled(
@@ -2553,6 +2663,39 @@ function actionForTask(task) {
   if (title.includes("подпис") || title.includes("sign"))  return "Sign";
   if (title.includes("соглас") || title.includes("approve")) return "Approve";
   return "Open";
+}
+
+/* ══════════════════════════════════════════════════════════
+  ROLE FILTER BAR — chips by my role on the task (Editor / Signer)
+══════════════════════════════════════════════════════════ */
+function RoleFilterBar({ options = [], value, onChange }) {
+  const iconFor = (id) => {
+    if (id === "editor") {
+      // pencil
+      return <svg className="org-fb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>;
+    }
+    if (id === "signer") {
+      // signature/check
+      return <svg className="org-fb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 17c4-6 8-6 12 0"/><path d="M9 21l3-2 3 2"/><path d="M14 5l5 5-9 9H5v-5l9-9z"/></svg>;
+    }
+    // all
+    return <svg className="org-fb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="9" cy="7" r="4"/><path d="M17 11l2 2 4-4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>;
+  };
+  return (
+    <div className="org-fb" style={{ paddingBottom: 6 }}>
+      {options.map(opt => (
+        <button
+          key={opt.id}
+          className={`org-fb-chip${value === opt.id ? " active" : ""}`}
+          onClick={() => onChange(opt.id)}
+        >
+          {iconFor(opt.id)}
+          <span>{opt.name}</span>
+          <span className="org-fb-count">{opt.count}</span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -2900,12 +3043,14 @@ function NewDocModal({ project, onClose }) {
   /* ── Handlers ── */
   const handleUpload = async () => {
     if (!title.trim()) return;
+    if (!pickedFile) {
+      // Don't synthesize a fake .docx — the backend parsers reject non-ZIP files.
+      toast.error("Please attach a .docx or .xlsx file.");
+      return;
+    }
     setSaving(true);
     try {
-      const safeName = title.trim().replace(/\s+/g, "_");
-      const fileName = pickedFile ? pickedFile.name : `${safeName}.${fileType}`;
-      const fileToSend = pickedFile || new File([new Blob([" "], {type:"text/plain"})], fileName);
-      await serverUploadDocument(project.id, title.trim(), fileToSend);
+      await serverUploadDocument(project.id, title.trim(), pickedFile);
       qc.invalidateQueries({ queryKey: ["documents", project.id] });
       toast.success("Document created");
       onClose();
@@ -3189,6 +3334,14 @@ function ProjectDetail({ project }) {
   const rawProjectMembers = projectMembers?.results ?? (Array.isArray(projectMembers) ? projectMembers : []);
   const currentUserRole = rawProjectMembers.find(m => String(m.user || m.id) === String(user?.id))?.role || null;
 
+  // id -> { initials } lookup, used to render per-document assignee avatars in the table
+  const memberById = new Map(rawProjectMembers.map(m => {
+    const uid = String(m.user || m.id);
+    const src = m.user_name || m.user_email || "?";
+    const initials = src.split(/\s+/).filter(Boolean).slice(0,2).map(p => p[0]).join("").toUpperCase().slice(0,2) || "?";
+    return [uid, { id: uid, initials, name: src }];
+  }));
+
   const dsc=(s)=>docStatusClass(s);
   return (
     <div style={{ padding:"20px",flex:1,overflow:"auto" }}>
@@ -3223,7 +3376,6 @@ function ProjectDetail({ project }) {
       </div>
       <div style={{ display:"flex",gap:0,borderBottom:".5px solid #E5E7EB",margin:"16px 0" }}>
         {[
-          { v:"cards",    label:t("projects.view.cards"),    icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="2" y="3" width="9" height="9" rx="1"/><rect x="13" y="3" width="9" height="9" rx="1"/><rect x="2" y="14" width="9" height="7" rx="1"/><rect x="13" y="14" width="9" height="7" rx="1"/></svg> },
           { v:"table",    label:t("projects.view.table"),    icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg> },
           { v:"timeline", label:t("projects.view.timeline"), icon:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
         ].map(({v,label,icon})=>(
@@ -3234,57 +3386,15 @@ function ProjectDetail({ project }) {
           </button>
         ))}
       </div>
-      {view==="cards"&&(
-        docsLoading ? (
-          <div style={{ textAlign:"center",color:"#9CA3AF",padding:40 }}>{t("common.loading")}</div>
-        ) : docs.length===0 ? (
-          <div style={{ textAlign:"center",color:"#9CA3AF",padding:40 }}>{t("projects.noDocumentsYet")}</div>
-        ) : (
-          <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:14 }}>
-            {docs.map(doc=>{
-              const dt=fileTypeInfo(doc.file_type);
-              const statusLabel=docStatusDisplay(doc.status);
-              const dscCls=dsc(doc.status);
-              return(
-                <div key={doc.id} onClick={()=>setOpenDoc({ ...doc, workspace: doc.workspace || project.id })}
-                  style={{ border:"1.5px solid #F3F4F6",borderRadius:12,padding:16,cursor:"pointer",background:"#fff",transition:"box-shadow .15s,border-color .15s",display:"flex",flexDirection:"column",gap:10 }}
-                  onMouseEnter={e=>{e.currentTarget.style.borderColor="#DBEAFE";e.currentTarget.style.boxShadow="0 4px 16px rgba(37,99,235,.1)";}}
-                  onMouseLeave={e=>{e.currentTarget.style.borderColor="#F3F4F6";e.currentTarget.style.boxShadow="none";}}>
-                  <div style={{ display:"flex",alignItems:"center",gap:10 }}>
-                    <div style={{ width:36,height:40,borderRadius:7,background:dt.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
-                      <span style={{ fontSize:9,fontWeight:700,color:dt.color }}>{dt.ext}</span>
-                    </div>
-                    <div style={{ minWidth:0 }}>
-                      <div style={{ fontWeight:600,fontSize:13,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{doc.title}</div>
-                      <div style={{ fontSize:11,color:"#9CA3AF",marginTop:1 }}>
-                        {new Date(doc.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
-                    <span className={dscCls}>{statusLabel}</span>
-                    <span style={{ fontSize:11,color:"#9CA3AF" }}>{doc.uploaded_by_name||"—"}</span>
-                  </div>
-                  {doc.due_date && (
-                    <div style={{ fontSize:11,color:"#6B7280",borderTop:".5px solid #F3F4F6",paddingTop:8 }}>
-                      Due: {fmtDeadline(doc.due_date)}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )
-      )}
       {view==="table"&&(
         <table className="pr-table" style={{ width:"100%" }}>
-          <thead><tr><th>{t("projects.table.documents")}</th><th>{t("projects.table.uploadedBy")}</th><th>{t("projects.table.deadline")}</th><th>{t("projects.table.status")}</th><th>{t("projects.table.priority")}</th><th>{t("projects.table.action")}</th></tr></thead>
+          <thead><tr><th>{t("projects.table.documents")}</th><th>{t("projects.table.assigned")}</th><th>{t("projects.table.uploadedBy")}</th><th>{t("projects.table.deadline")}</th><th>{t("projects.table.status")}</th><th>{t("projects.table.priority")}</th><th>{t("projects.table.action")}</th></tr></thead>
           <tbody>
             {docsLoading && (
-              <tr><td colSpan={6} style={{ textAlign:"center",color:"#9CA3AF",padding:24 }}>{t("common.loading")}</td></tr>
+              <tr><td colSpan={7} style={{ textAlign:"center",color:"#9CA3AF",padding:24 }}>{t("common.loading")}</td></tr>
             )}
             {!docsLoading && docs.length===0 && (
-              <tr><td colSpan={6} style={{ textAlign:"center",color:"#9CA3AF",padding:24 }}>{t("projects.noDocumentsYet")}</td></tr>
+              <tr><td colSpan={7} style={{ textAlign:"center",color:"#9CA3AF",padding:24 }}>{t("projects.noDocumentsYet")}</td></tr>
             )}
             {docs.map((doc)=>{
               const dt=fileTypeInfo(doc.file_type);
@@ -3304,6 +3414,24 @@ function ProjectDetail({ project }) {
                         </div>
                       </div>
                     </div>
+                  </td>
+                  <td>
+                    {(() => {
+                      const meta = doc.metadata || {};
+                      const ids = Array.isArray(meta.assignee_ids)
+                        ? meta.assignee_ids
+                        : (meta.assignee_id ? [meta.assignee_id] : []);
+                      const docAssignees = ids.map(id => memberById.get(String(id))).filter(Boolean);
+                      if (docAssignees.length === 0) {
+                        return <span style={{ fontSize:12,color:"#9CA3AF" }}>—</span>;
+                      }
+                      return (
+                        <AvatarStack
+                          members={docAssignees.slice(0,3).map(m => m.initials)}
+                          extra={Math.max(0, docAssignees.length - 3)}
+                        />
+                      );
+                    })()}
                   </td>
                   <td style={{ fontSize:12.5,color:"#374151" }}>{doc.uploaded_by_name || "—"}</td>
                   <td style={{ fontSize:12,color:"#6B7280" }}>{doc.due_date ? fmtDeadline(doc.due_date) : "—"}</td>
@@ -3476,6 +3604,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   const [searchQuery,   setSearchQuery]   = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [assignedOrgFilter, setAssignedOrgFilter] = useState("all");
+  const [assignedRoleFilter, setAssignedRoleFilter] = useState("all"); // all | editor | signer
   const [pendingDocId, setPendingDocId] = useState(initialQs.doc || null);
   const wsDropRef = useRef(null);
 
@@ -3553,9 +3682,11 @@ export default function Projects({ onGoToAuth, onNavigate }) {
 
   const searchLower = debouncedSearch.toLowerCase();
 
-  // Managed: все активные workspace где пользователь участник (owner ИЛИ editor)
+  // Managed: только активные кабинеты, где текущий пользователь — owner.
+  // Кабинеты, где роль editor/signer/viewer, не считаются "своими" — относящиеся
+  // к ним задачи попадают в Assigned Documents.
   const managedProjects = allWs
-    .filter(ws => ws.status === "active")
+    .filter(ws => ws.status === "active" && ws.user_role === "owner")
     .filter(ws => !searchLower || ws.title.toLowerCase().includes(searchLower))
     .map(wsToRow);
 
@@ -3565,7 +3696,9 @@ export default function Projects({ onGoToAuth, onNavigate }) {
     .filter(ws => !searchLower || ws.title.toLowerCase().includes(searchLower))
     .map(wsToRow);
 
-  // Из задач формируем список уникальных документов для Assigned tab
+  // Из задач формируем список уникальных документов для Assigned tab.
+  // Роль задачи: signature → signer, review/approval → editor.
+  const taskRoleFromRequest = (rt) => (rt === "signature" ? "signer" : "editor");
   const assignedTasks = assignedTasksData?.results ?? [];
   const seenDocIds = new Set();
   const assignedDocs = assignedTasks
@@ -3580,6 +3713,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
       workspace:         t.workspace,
       organization_id:   t.organization_id || null,
       organization_name: t.organization_name || null,
+      role:              taskRoleFromRequest(t.request_type),
       _task:             t,
     }));
 
@@ -3598,6 +3732,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
       workspace:         d.workspace,
       organization_id:   d.organization_id || null,
       organization_name: d.organization_name || null,
+      role:              "signer",
       _signerPending:    true,
     });
   }
@@ -3621,11 +3756,23 @@ export default function Projects({ onGoToAuth, onNavigate }) {
     }
   }, [assignedTasksData, assignedLoading, pendingDocId, tab, assignedDocs]);
 
+  // Role filter chips (Editor/Signer) применяется первым,
+  // org-фильтр считается уже от отфильтрованного набора.
+  const roleFilteredAssignedDocs = assignedRoleFilter === "all"
+    ? assignedDocs
+    : assignedDocs.filter(d => d.role === assignedRoleFilter);
+
+  const roleFilterOptions = [
+    { id: "all",    name: t("projects.allRoles",  "All roles"), count: assignedDocs.length },
+    { id: "editor", name: t("projects.roleEditor","Editor"),   count: assignedDocs.filter(d => d.role === "editor").length },
+    { id: "signer", name: t("projects.roleSigner","Signer"),   count: assignedDocs.filter(d => d.role === "signer").length },
+  ];
+
   // Filter by organization (used by Assigned tab)
   const orgFilterOptions = [
-    { id: "all", name: t("projects.allOrgs", "All organizations"), count: assignedDocs.length },
+    { id: "all", name: t("projects.allOrgs", "All organizations"), count: roleFilteredAssignedDocs.length },
     ...Array.from(
-      assignedDocs.reduce((acc, d) => {
+      roleFilteredAssignedDocs.reduce((acc, d) => {
         const key = d.organization_id || "_none";
         const name = d.organization_name || t("projects.noOrg", "No organization");
         if (!acc.has(key)) acc.set(key, { id: key, name, count: 0 });
@@ -3635,8 +3782,8 @@ export default function Projects({ onGoToAuth, onNavigate }) {
     ),
   ];
   const filteredAssignedDocs = assignedOrgFilter === "all"
-    ? assignedDocs
-    : assignedDocs.filter(d => (d.organization_id || "_none") === assignedOrgFilter);
+    ? roleFilteredAssignedDocs
+    : roleFilteredAssignedDocs.filter(d => (d.organization_id || "_none") === assignedOrgFilter);
   const archivedDocs = archivedDocsData?.results ?? (Array.isArray(archivedDocsData) ? archivedDocsData : []);
 
   const handleCreate = (_data) => {
@@ -3731,6 +3878,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
       <div className="pr-body">
 
         <Sidebar active="projects" onNavigate={onNavigate}/>
+        <MobileBottomNav />
 
         {/* ── MAIN ── */}
         <div className="pr-main">
@@ -3746,7 +3894,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
               <>
                 <div style={{ padding:"20px 20px 0",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:16,flexWrap:"wrap",flexShrink:0 }}>
                   <div>
-                    <h1 style={{ fontSize:22,fontWeight:700,color:"#111827",marginBottom:4 }}>{t("projects.workspaceTitle")}</h1>
+                    <h1 style={{ fontSize:22,fontWeight:700,color:"#111827",marginBottom:4,letterSpacing:"0.04em" }}>{t("projects.workspaceTitle")}</h1>
                     <p style={{ fontSize:13,color:"#9CA3AF" }}>{t("projects.workspaceDesc")}</p>
                   </div>
                   <div style={{ display:"flex",alignItems:"center",gap:10 }}>
@@ -3790,6 +3938,11 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                       : assignedDocs.length===0
                         ? <AssignedDocsEmpty/>
                         : <>
+                            <RoleFilterBar
+                              options={roleFilterOptions}
+                              value={assignedRoleFilter}
+                              onChange={setAssignedRoleFilter}
+                            />
                             <OrgFilterBar
                               options={orgFilterOptions}
                               value={assignedOrgFilter}
@@ -3797,7 +3950,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                             />
                             {filteredAssignedDocs.length === 0
                               ? <div style={{ padding:"24px 4px", fontSize:13, color:"#9CA3AF", textAlign:"center" }}>
-                                  No documents from this organization.
+                                  {t("projects.noDocsForFilter", "No documents matching this filter.")}
                                 </div>
                               : <AssignedDocsTable docs={filteredAssignedDocs} onOpen={d=>setSelectedDoc({ ...d, workspace: d.workspace })}/>
                             }

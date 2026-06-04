@@ -11,7 +11,7 @@ import { getNotifications } from "./api/notifications";
 import useAuthStore from "./store/authStore";
 import CreateWorkspaceModal from "./CreateWorkspaceModal";
 import Sidebar from "./components/Sidebar";
-import useSidebarOpen from "./hooks/useSidebarOpen";
+import MobileBottomNav from "./components/MobileBottomNav";
 
 /* ══════════════════════════════════════════════════════════
    DATA
@@ -701,20 +701,23 @@ const css = `
   .ib-content{padding:0 20px 20px;overflow:visible}
   .ib-sec{font-size:13px;font-weight:500;color:#6B7280;margin-bottom:8px;padding:0 4px}
 
-  /* mobile */
-  .ib-mob-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:.5px solid #E5E7EB;padding:8px 0 calc(8px + env(safe-area-inset-bottom));z-index:50;justify-content:space-around;align-items:center}
-  .ib-mob-btn{display:flex;flex-direction:column;align-items:center;gap:3px;border:none;background:none;color:#9CA3AF;font-size:10px;font-family:inherit;padding:4px 12px;border-radius:8px}
-  .ib-mob-btn.active{color:#4F46E5}
-  .ib-mob-add{width:48px;height:48px;border-radius:14px;background:#2563EB;display:flex;align-items:center;justify-content:center;border:none;margin-bottom:4px}
-
   @media(max-width:768px){
     .ib-sb{display:none}
     .ib-sb.open{display:flex;position:fixed;top:52px;left:0;bottom:0;height:calc(100% - 52px);width:268px!important;background:#fff;border-right:.5px solid #E5E7EB;box-shadow:4px 0 24px rgba(0,0,0,.13)}
-    .ib-mob-nav{display:flex}
     .ib-container{margin:0 8px 80px 8px;border-radius:12px}
-    .ib-topbar{padding:0 14px}
-    .ib-hamburger{display:flex!important}
+    .ib-topbar{padding:0 14px;gap:6px}
     .ib-back-arrow{display:none!important}
+    /* Filters: allow horizontal scroll on tight screens */
+    .ib-filters{ overflow-x:auto; flex-wrap:nowrap; -webkit-overflow-scrolling:touch; padding:10px 12px 8px; gap:6px }
+    .ib-filters::-webkit-scrollbar{ height:4px }
+    .ib-filters button{ padding:4px 10px!important; font-size:11.5px!important }
+    .ib-tab{ padding:9px 14px; font-size:12px }
+    .ib-content{ padding:0 12px 16px }
+  }
+  @media(max-width:480px){
+    .ib-topbar img{ height:24px }
+    .ib-container{ margin:0 6px 80px 6px }
+    .ib-content{ padding:0 8px 14px }
   }
 `;
 
@@ -723,7 +726,6 @@ const css = `
 ══════════════════════════════════════════════════════════ */
 export default function Inbox({ onGoToAuth, onNavigate }) {
   const { t } = useTranslation();
-  const [sbOpen, toggleSb] = useSidebarOpen();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileView,   setProfileView]   = useState(null);
   const [tab,           setTab]           = useState("incoming");
@@ -921,10 +923,6 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
 
       {/* ── HEADER ── */}
       <header className="ib-topbar">
-        <button className="ib-hamburger" onClick={()=>toggleSb()}
-          style={{ display:"none",width:36,height:36,border:"none",background:"none",color:"#6B7280",alignItems:"center",justifyContent:"center",borderRadius:8,flexShrink:0 }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        </button>
         <img src={logoImg} alt="Logo" style={{ height:30,flexShrink:0 }}/>
         <svg className="ib-back-arrow" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
         <div style={{ display:"flex",alignItems:"center",gap:5,fontSize:13 }}>
@@ -962,8 +960,7 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
           </div>
       </header>
 
-      {/* sidebar overlay mobile */}
-      {sbOpen && <div onClick={toggleSb} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:15 }}/>}
+      {/* sidebar overlay handled globally by <Sidebar/> on mobile */}
 
       {/* ── BODY ── */}
       <div className="ib-body">
@@ -1058,26 +1055,7 @@ export default function Inbox({ onGoToAuth, onNavigate }) {
         </div>
       </div>
 
-      {/* Mobile bottom nav */}
-      <nav className="ib-mob-nav">
-        <button className="ib-mob-btn active">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg>
-          {t("nav.inbox")}
-        </button>
-        <button className="ib-mob-btn">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-          {t("nav.projects")}
-        </button>
-        <button className="ib-mob-add"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
-        <button className="ib-mob-btn">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          {t("nav.documents")}
-        </button>
-        <button className="ib-mob-btn" onClick={onGoToAuth}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="20" height="20"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          {t("profile.title")}
-        </button>
-      </nav>
+      <MobileBottomNav />
     </div>
   );
 }

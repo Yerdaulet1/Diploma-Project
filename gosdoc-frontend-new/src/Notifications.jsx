@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import Sidebar from "./components/Sidebar";
+import MobileBottomNav from "./components/MobileBottomNav";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -132,9 +133,28 @@ const css = `
   .nt-ctx-item:hover{background:#F3F4F6}
 
   @media(max-width:768px){
+    .nt-page{ width:100%; height:100svh }
     .nt-sb{display:none}
     .nt-sb.open{display:flex;position:fixed;top:0;left:0;bottom:0;height:100%;width:242px!important;box-shadow:4px 0 24px rgba(0,0,0,.13)}
-    .nt-container{margin:8px;border-radius:12px}
+    .nt-container{margin:8px 8px 78px 8px;border-radius:12px}
+    .nt-topbar{ padding:0 12px; gap:6px; font-size:12.5px; height:48px }
+    .nt-topbar button{ padding:4px 8px!important; font-size:11.5px!important }
+    .nt-item{ padding:8px 10px; gap:8px }
+    .nt-item-title{ font-size:12.5px }
+    .nt-item-text{ font-size:11.5px }
+    .nt-toolbar{ padding:0 12px 8px; flex-wrap:wrap; gap:6px; justify-content:flex-start }
+    .nt-tools{ gap:6px; flex-wrap:wrap }
+    .nt-pager{ gap:6px; font-size:11px; margin-left:auto }
+    .nt-pager-btn{ width:24px; height:24px }
+    .nt-tool-btn{ width:28px; height:28px }
+    .nt-check-dropdown-btn{ padding:3px 6px }
+    /* "Mark all as read" — shorten on mobile */
+    .nt-tools button{ padding:3px 8px; font-size:11px; white-space:nowrap }
+    .nt-ctx{ right:4px }
+  }
+  @media(max-width:480px){
+    .nt-container{ margin:6px 6px 78px 6px; border-radius:10px }
+    .nt-topbar{ padding:0 10px }
   }
 `;
 
@@ -387,6 +407,7 @@ export default function Notifications({ onGoBack, onGoToAuth, onNavigate }) {
       {/* ── BODY ── */}
       <div className="nt-body">
         <Sidebar active="notifications" onNavigate={onNavigate}/>
+        <MobileBottomNav />
 
         <div className="nt-main">
           <ProfileController show={!!profileView} view={profileView} setView={setProfileView} onLogOut={onGoToAuth}/>

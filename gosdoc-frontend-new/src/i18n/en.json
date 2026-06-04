@@ -109,13 +109,13 @@
     "confirmBtn": "Confirm",
     "continueBtn": "✓ Continue",
 
-    "feat1Title": "Structured Team Workflows",
-    "feat1Desc": "Assign roles, define approval steps, and track progress in real time.",
-    "feat2Title": "AI Change Verification",
-    "feat2Desc": "Automatically detects meaningful document changes before approval.",
+    "feat1Title": "Structured Document Workflows",
+    "feat1Desc": "Create and manage documents with clear roles, approval stages, and real-time progress tracking.",
+    "feat2Title": "AI Assistant",
+    "feat2Desc": "Get smart help to generate content, fill fields, and simplify document tasks.",
     "feat3Title": "Secure Digital Signatures",
     "feat3Desc": "Sign documents directly within the platform with verified electronic signatures.",
-    "tagline": "Collaborate in real time, automate approvals, and manage document workflows in one secure workspace."
+    "tagline": "Collaborate in real time, automate approvals, and manage workflows in one secure workspace."
   },
   "common": {
     "save": "Save",
@@ -161,12 +161,17 @@
     "noItems": "No items",
     "newProject": "New project",
     "createOrganization": "Create organization",
+    "noOrganization": "No organization",
     "openTask": "Open task",
     "clear": "Clear",
     "sentTo": "Sent to",
     "confirmDeleteTitle": "Are you sure?",
     "confirmDeleteMsg": "This action will permanently delete all notifications. You cannot restore them later.",
     "yes": "Yes"
+  },
+  "sidebar": {
+    "switchOrganizations": "Switch Organizations",
+    "noOrganizations": "You are not in any organization yet."
   },
   "projects": {
     "title": "Projects",
@@ -178,6 +183,10 @@
     "creating": "Creating…",
     "allOrgs": "All organizations",
     "noOrg": "No organization",
+    "allRoles": "All roles",
+    "roleEditor": "Editor",
+    "roleSigner": "Signer",
+    "noDocsForFilter": "No documents matching this filter.",
     "createWorkspace": "Create Workspace",
     "workspaceName": "Workspace name",
     "workspaceType": "Type",
@@ -252,7 +261,8 @@
       "deadline": "Deadline",
       "action": "Action",
       "priority": "Priority",
-      "documents": "Documents"
+      "documents": "Documents",
+      "assigned": "Assigned"
     },
     "view": {
       "cards": "Cards",

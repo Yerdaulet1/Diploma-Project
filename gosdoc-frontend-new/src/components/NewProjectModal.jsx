@@ -27,6 +27,14 @@ const CSS = `
   .npm-m-rm:hover:not(:disabled){border-color:#EF4444;color:#EF4444}
   .npm-m-rm:disabled{opacity:.4;cursor:not-allowed}
   .npm-m-add{display:flex;align-items:center;gap:6px;background:none;border:none;color:#2563EB;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;padding:6px 0;margin-top:4px}
+
+  @media(max-width:768px){
+    .npm-overlay{ padding:0; align-items:flex-end }
+    .npm-modal{ width:100%; max-width:100%; max-height:92svh; border-radius:16px 16px 0 0; padding:22px 18px 26px }
+    .npm-m-row{ flex-wrap:wrap }
+    .npm-m-row > div:first-child, .npm-m-row > select{ flex:1 1 100% }
+    .npm-m-row > .npm-m-rm{ flex:0 0 auto }
+  }
 `;
 
 function MemberInvite({ members, setMembers, errors, setErrors }) {
@@ -106,7 +114,8 @@ export default function NewProjectModal({ onClose, onCreate }) {
   const next = () => {
     const errs = {};
     if (!form.name.trim()) errs.name = "Required.";
-    if (!form.docName.trim()) errs.docName = "Required.";
+    // docName is required only if a file is attached
+    if (file && !form.docName.trim()) errs.docName = "Required when a file is attached.";
     if (Object.keys(errs).length) { setFormErr(errs); return; }
     setStep(2);
   };
@@ -118,14 +127,18 @@ export default function NewProjectModal({ onClose, onCreate }) {
     try {
       const ws = await createWorkspace({ title: form.name, description: form.desc, type: "corporate" });
 
-      try {
-        const docTitle = form.docName.trim();
-        const fileName = file ? file.name : `${docTitle.replace(/\s+/g, "_")}.docx`;
-        const fileToUpload = file || new File([new Blob([" "], { type: "text/plain" })], fileName);
-        await serverUploadDocument(ws.id, docTitle, fileToUpload);
-        qc.invalidateQueries({ queryKey: ["documents", ws.id] });
-      } catch {
-        toast.error("Project created, but document upload failed.");
+      // Only upload a document when the user actually picked a file.
+      // Previously we synthesized a placeholder text/plain blob with a .docx
+      // extension, which the backend (mammoth / python-docx) rejected as
+      // "File is not a zip file".
+      if (file) {
+        try {
+          const docTitle = form.docName.trim() || file.name.replace(/\.[^.]+$/, "");
+          await serverUploadDocument(ws.id, docTitle, file);
+          qc.invalidateQueries({ queryKey: ["documents", ws.id] });
+        } catch {
+          toast.error("Project created, but document upload failed.");
+        }
       }
 
       await Promise.allSettled(

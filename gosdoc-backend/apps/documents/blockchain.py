@@ -104,12 +104,16 @@ def record_task_completion(task) -> "BlockchainBlock | None":
     )
     previous_hash = prev_block.block_hash if prev_block else GENESIS_HASH
 
-    # Проверяем изменение
+    # Документ ЛЕГИТИМНО меняется между шагами workflow (участники
+    # заполняют/правят). Каждый блок — это снимок документа на момент
+    # завершения задачи, а не повод считать что кто-то подделал данные.
+    # Подделкой считается только нарушение целостности цепочки самих
+    # блоков (см. verify_chain), которое детектируется через chain_valid.
     tampered = False
     if prev_block and prev_block.document_hash != doc_hash:
-        tampered = True
-        logger.warning(
-            "blockchain: TAMPERED document %s between step %s and step %s!",
+        logger.info(
+            "blockchain: document %s content changed between step %s and step %s "
+            "(expected during workflow)",
             document.id, prev_block.step_order, task.step_order,
         )
 

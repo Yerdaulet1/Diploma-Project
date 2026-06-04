@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import Sidebar from "./components/Sidebar";
+import MobileBottomNav from "./components/MobileBottomNav";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -127,9 +128,19 @@ const css = `
   .an-empty svg{margin-bottom:16px;opacity:0.4}
 
   @media(max-width:768px){
+    .an-page{ width:100%; height:100svh }
     .an-sb{display:none}
-    .an-cards-grid{grid-template-columns:1fr}
-    .an-gen-row{flex-direction:column}
+    .an-topbar{ padding:0 12px; gap:6px; font-size:12.5px; height:48px }
+    .an-topbar button{ padding:4px 8px!important; font-size:11.5px!important }
+    .an-container{ margin:8px 8px 78px 8px; border-radius:12px; padding:12px }
+    .an-cards-grid{grid-template-columns:1fr; gap:10px}
+    .an-gen-row{flex-direction:column; gap:8px; align-items:stretch}
+    .an-gen-row > *{ width:100% }
+    .an-chart{ height:200px }
+  }
+  @media(max-width:480px){
+    .an-topbar{ padding:0 10px }
+    .an-container{ margin:6px 6px 78px 6px; padding:12px }
   }
 `;
 
@@ -357,6 +368,7 @@ export default function Analytics({ onGoToAuth, onNavigate }) {
       <div className="an-body">
 
         <Sidebar active="analytics" onNavigate={onNavigate}/>
+        <MobileBottomNav />
 
         {/* MAIN */}
         <div className="an-main">

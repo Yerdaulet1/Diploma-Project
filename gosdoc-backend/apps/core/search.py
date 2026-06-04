@@ -19,14 +19,39 @@ IDX_DOCUMENTS = "documents"
 IDX_WORKSPACES = "workspaces"
 
 
+_client_cache = {"checked": False, "client": None}
+
+
 def get_client():
-    """Возвращает клиент MeiliSearch или None, если пакет не установлен."""
+    """Возвращает клиент MeiliSearch или None, если пакет не установлен / сервер недоступен.
+
+    Делает однократную TCP-проверку доступности при первом вызове, чтобы
+    не вешать write-запросы на повторных HTTP-ретраях, когда MeiliSearch выключен.
+    """
+    if _client_cache["checked"]:
+        return _client_cache["client"]
     try:
         import meilisearch  # ленивый импорт — пакет опциональный
     except ImportError:
         logger.warning("MeiliSearch package not installed — search features disabled")
+        _client_cache.update(checked=True, client=None)
         return None
-    return meilisearch.Client(MEILI_URL, MEILI_KEY)
+    # Quick TCP check — avoid hanging on a dead MeiliSearch instance
+    import socket
+    from urllib.parse import urlparse
+    u = urlparse(MEILI_URL)
+    host = u.hostname or "127.0.0.1"
+    port = u.port or (443 if u.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=0.3):
+            pass
+    except OSError:
+        logger.info("MeiliSearch unreachable at %s:%s — search indexing disabled", host, port)
+        _client_cache.update(checked=True, client=None)
+        return None
+    client = meilisearch.Client(MEILI_URL, MEILI_KEY)
+    _client_cache.update(checked=True, client=client)
+    return client
 
 
 def _ensure_indexes():

@@ -924,7 +924,9 @@ class SubtaskListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         document = self._get_document()
         assert_workspace_role(self.request.user, document.workspace, ["owner", "editor"])
-        serializer.save(document=document)
+        subtask = serializer.save(document=document)
+        if subtask.assignee_id and subtask.assignee_id != self.request.user.id:
+            _notify_subtask_assigned(subtask, self.request.user)
 
 
 class SubtaskDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -957,11 +959,63 @@ class SubtaskDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_update(self, serializer):
         prev_status = serializer.instance.status
+        prev_assignee_id = serializer.instance.assignee_id
         subtask = serializer.save()
         new_status = subtask.status
 
         if prev_status != Subtask.Status.DONE and new_status == Subtask.Status.DONE:
             _notify_after_subtask_done(subtask)
+
+        if (
+            subtask.assignee_id
+            and subtask.assignee_id != prev_assignee_id
+            and subtask.assignee_id != self.request.user.id
+        ):
+            _notify_subtask_assigned(subtask, self.request.user)
+
+
+def _notify_subtask_assigned(subtask, assigned_by):
+    """
+    Когда пользователю назначают подзадачу (создана с assignee
+    или у существующей сменился assignee) — отправляем платформенное
+    уведомление и ставим email в очередь Celery.
+    """
+    from apps.notifications.models import Notification
+
+    document = subtask.document
+    deadline_text = ""
+    if subtask.start_date and subtask.deadline:
+        deadline_text = f" Срок: {subtask.start_date} – {subtask.deadline}."
+    elif subtask.deadline:
+        deadline_text = f" Срок: {subtask.deadline}."
+
+    Notification.objects.create(
+        user_id=subtask.assignee_id,
+        type=Notification.NotificationType.TASK_ASSIGNED,
+        title=f"Вам назначена подзадача: «{subtask.title}»",
+        message=(
+            f"{assigned_by.full_name} назначил(а) вам подзадачу "
+            f"«{subtask.title}» по документу «{document.title}»."
+            + deadline_text
+        ),
+        entity_type="document",
+        entity_id=document.id,
+    )
+
+    try:
+        from apps.notifications.tasks import send_email_notification
+        send_email_notification.delay(
+            recipient_email=subtask.assignee.email,
+            subject=f"ГосДок: вам назначена подзадача «{subtask.title}»",
+            message=(
+                f"Здравствуйте, {subtask.assignee.full_name}!\n\n"
+                f"{assigned_by.full_name} назначил(а) вам подзадачу "
+                f"«{subtask.title}» по документу «{document.title}».{deadline_text}\n\n"
+                f"Откройте систему, чтобы перейти к работе."
+            ),
+        )
+    except Exception as exc:
+        logger.warning("Не удалось поставить email о назначении подзадачи в очередь: %s", exc)
 
 
 def _notify_after_subtask_done(completed_subtask):
@@ -990,18 +1044,40 @@ def _notify_after_subtask_done(completed_subtask):
             next_pending.status = Subtask.Status.IN_PROGRESS
             next_pending.save(update_fields=["status", "updated_at"])
 
+        if next_pending.start_date and next_pending.deadline:
+            deadline_text = f" Срок: {next_pending.start_date} – {next_pending.deadline}."
+        elif next_pending.deadline:
+            deadline_text = f" Срок: {next_pending.deadline}."
+        else:
+            deadline_text = ""
+
+        msg = (
+            f"Предыдущий шаг по документу «{document.title}» завершён "
+            f"(«{completed_subtask.title}»). Теперь ваш черёд: «{next_pending.title}»."
+            + deadline_text
+        )
         Notification.objects.create(
             user_id=next_pending.assignee_id,
             type=Notification.NotificationType.TASK_ASSIGNED,
             title=f"Ваш ход: «{next_pending.title}»",
-            message=(
-                f"Предыдущий шаг по документу «{document.title}» завершён. "
-                f"Теперь ваш черёд: «{next_pending.title}»."
-                + (f" Срок: {next_pending.deadline}." if next_pending.deadline else "")
-            ),
+            message=msg,
             entity_type="document",
             entity_id=document.id,
         )
+        # Email — асинхронно, чтобы не блокировать PATCH
+        try:
+            from apps.notifications.tasks import send_email_notification
+            assignee = next_pending.assignee
+            send_email_notification.delay(
+                recipient_email=assignee.email,
+                subject=f"ГосДок: ваш ход по документу «{document.title}»",
+                message=(
+                    f"Здравствуйте, {assignee.full_name}!\n\n{msg}\n\n"
+                    f"Откройте систему, чтобы перейти к работе."
+                ),
+            )
+        except Exception as exc:
+            logger.warning("Не удалось поставить email о передаче подзадачи в очередь: %s", exc)
         return
 
     # Все подзадачи выполнены → зовём signer'ов
@@ -1446,6 +1522,11 @@ class BlockchainView(APIView):
         any_tampered  = any(b["tampered"] for b in data)
         chain_intact  = all(b["chain_valid"] for b in data)
 
+        # Tampering = нарушена целостность ЦЕПОЧКИ (кто-то подделал
+        # блок в БД). Само изменение содержимого документа между
+        # шагами — норма для workflow и не понижает статус.
+        is_compromised = (not chain_intact) or any_tampered
+
         return Response({
             "document_id":    str(document.id),
             "document_title": document.title,
@@ -1453,5 +1534,5 @@ class BlockchainView(APIView):
             "total_blocks":   len(data),
             "any_tampered":   any_tampered,
             "chain_intact":   chain_intact,
-            "status":         "TAMPERED" if any_tampered else ("VERIFIED" if data else "PENDING"),
+            "status":         "TAMPERED" if is_compromised else ("VERIFIED" if data else "PENDING"),
         })

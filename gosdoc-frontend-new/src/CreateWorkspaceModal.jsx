@@ -124,8 +124,21 @@ export default function CreateWorkspaceModal({ onClose, onCreated }) {
   const stepLabel = `STEP ${step} OF ${TOTAL}`;
 
   return (
-    <div onClick={onClose} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center" }}>
-      <div onClick={e=>e.stopPropagation()} style={{ background:"#fff",borderRadius:16,width:520,maxWidth:"94vw",maxHeight:"90vh",overflowY:"auto",position:"relative",boxShadow:"0 8px 40px rgba(0,0,0,0.18)",display:"flex",flexDirection:"column" }}>
+    <div className="cws-overlay" onClick={onClose} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center" }}>
+      <style>{`
+        @media(max-width:768px){
+          .cws-overlay{ padding:0!important; align-items:flex-end!important }
+          .cws-modal{ width:100%!important; max-width:100%!important; max-height:92svh!important; border-radius:16px 16px 0 0!important }
+          .cws-modal > div:first-child{ padding:18px 16px 0!important }
+          .cws-modal h2{ font-size:18px!important; margin-bottom:20px!important }
+          .cws-types{ flex-wrap:wrap!important; gap:10px!important }
+          .cws-types button{ flex:1 1 calc(50% - 5px)!important; min-width:0!important; padding:14px 10px!important }
+        }
+        @media(max-width:480px){
+          .cws-types button{ flex:1 1 100%!important }
+        }
+      `}</style>
+      <div className="cws-modal" onClick={e=>e.stopPropagation()} style={{ background:"#fff",borderRadius:16,width:520,maxWidth:"94vw",maxHeight:"90vh",overflowY:"auto",position:"relative",boxShadow:"0 8px 40px rgba(0,0,0,0.18)",display:"flex",flexDirection:"column" }}>
 
         {/* Header */}
         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"22px 24px 0" }}>
@@ -150,7 +163,7 @@ export default function CreateWorkspaceModal({ onClose, onCreated }) {
               <h2 style={{ fontSize:20,fontWeight:700,color:"#111827",textAlign:"center",marginBottom:32 }}>
                 What will you use this Workspace for?
               </h2>
-              <div style={{ display:"flex",gap:12,justifyContent:"center",marginBottom:32 }}>
+              <div className="cws-types" style={{ display:"flex",gap:12,justifyContent:"center",marginBottom:32 }}>
                 {WORKSPACE_TYPES.map(t => (
                   <button key={t.value} onClick={() => setWsType(t.value)}
                     style={{

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 
 import Sidebar from "./components/Sidebar";
+import MobileBottomNav from "./components/MobileBottomNav";
 import ProfileController, { ProfileMenu } from "./Profile";
 import useAuthStore from "./store/authStore";
 import logoImg from "./assets/Group 2.svg";
@@ -63,6 +64,38 @@ const css = `
 
   .ad-empty{text-align:center;padding:60px 20px;color:#9CA3AF;font-size:14px}
   .ad-deny{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:14px;color:#9CA3AF;text-align:center;padding:40px}
+
+  @media(max-width:768px){
+    .ad-page{ width:100%; height:100svh }
+    .ad-topbar{ padding:0 12px; gap:6px; font-size:12.5px; height:48px }
+    .ad-topbar button{ padding:4px 8px!important; font-size:11.5px!important }
+    .ad-container{ margin:0 6px 78px 6px; border-radius:12px }
+    .ad-inner{ padding:12px 12px; overflow-x:auto }
+    .ad-tabs{ padding:0 12px; overflow-x:auto; flex-wrap:nowrap }
+    .ad-tab{ padding:9px 12px; font-size:12px; white-space:nowrap }
+    .ad-stats{ grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:14px }
+    .ad-stat{ padding:12px 10px }
+    .ad-stat-val{ font-size:20px }
+    .ad-stat-lbl{ font-size:11px }
+    .ad-search-row{ flex-wrap:wrap; gap:6px }
+    .ad-search{ max-width:100%; flex:1 1 100%; padding:6px 10px }
+    .ad-search input{ font-size:13px }
+    /* tables → horizontal scroll */
+    .ad-table-wrap, .ad-inner table{ overflow-x:auto; -webkit-overflow-scrolling:touch }
+    .ad-table{ min-width:600px }
+    .ad-table th,.ad-table td{ padding:7px 8px; font-size:11.5px }
+    .ad-del{ padding:4px 10px; font-size:11px }
+  }
+  @media(max-width:480px){
+    .ad-stats{ grid-template-columns:repeat(2,1fr); gap:6px }
+    .ad-stat{ padding:10px 8px }
+    .ad-stat-val{ font-size:18px }
+    .ad-stat-lbl{ font-size:10.5px }
+    .ad-topbar{ padding:0 10px }
+  }
+  @media(max-width:340px){
+    .ad-stats{ grid-template-columns:1fr }
+  }
 `;
 
 function Stat({ value, label }) {
@@ -295,6 +328,7 @@ export default function Admin({ onNavigate, onGoToAuth }) {
 
       <div className="ad-body">
         <Sidebar active="admin" onNavigate={onNavigate} />
+        <MobileBottomNav />
         <div className="ad-main">
           <ProfileController show={!!profileView} view={profileView} setView={setProfileView} onLogOut={onGoToAuth} />
           <div className="ad-container">

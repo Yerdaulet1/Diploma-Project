@@ -17,7 +17,12 @@
 
   font: 18px/145% var(--sans);
   letter-spacing: 0.02em;
-  color-scheme: light dark;
+  /* Force light-themed native controls (input, select, checkbox, textarea).
+     The app's dark mode is implemented via a CSS invert() filter on <body>,
+     which expects native widgets to start light and be inverted along with
+     everything else. Allowing the browser to auto-dark them would double-
+     invert and produce the black input backgrounds reported in the UI. */
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
@@ -81,16 +86,28 @@ html[data-theme="dark"] svg image {
   }
 }
 
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
 #root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: start;
-  border-inline: 1px solid var(--border);
+  width: 100%;
   min-height: 100svh;
+  margin: 0;
+  text-align: start;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+@media (max-width: 640px) {
+  :root { font-size: 15px; }
 }
 
 h1,
@@ -135,4 +152,28 @@ code {
   line-height: 135%;
   padding: 4px 8px;
   background: var(--code-bg);
+}
+
+/* ──────────────────────────────────────────────────────────
+   Mobile defaults — touch + zoom + scroll
+   ────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* iOS Safari: input font-size <16px causes auto-zoom on focus */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Utility classes — opt-in adaptivity for pages */
+.gs-stack-mobile { display: flex; }
+.gs-hide-mobile { display: initial; }
+.gs-show-mobile { display: none !important; }
+.gs-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+@media (max-width: 768px) {
+  .gs-stack-mobile { flex-direction: column !important; align-items: stretch !important; }
+  .gs-hide-mobile { display: none !important; }
+  .gs-show-mobile { display: initial !important; }
 }

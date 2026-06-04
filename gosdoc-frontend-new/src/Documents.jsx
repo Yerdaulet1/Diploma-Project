@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import Sidebar from "./components/Sidebar";
+import MobileBottomNav from "./components/MobileBottomNav";
 import ProfileController, { ProfileMenu } from "./Profile";
 import useAuthStore from "./store/authStore";
 import {
@@ -146,6 +147,49 @@ const css = `
   .dc-xls-table td.cell{border:.5px solid #E5E7EB;min-width:80px;width:80px;height:22px;padding:0 3px;font-size:12px;color:#111827;font-family:'Gilroy','Segoe UI',sans-serif;white-space:nowrap;overflow:hidden;cursor:cell;position:relative}
   .dc-xls-table td.cell.sel{outline:2px solid #217346;outline-offset:-1px;z-index:1}
   .dc-xls-table td.cell input{width:100%;height:100%;border:none;outline:none;background:transparent;font-family:inherit;font-size:inherit;color:inherit;padding:0 2px}
+
+  /* ── Responsive ── */
+  @media(max-width:768px){
+    .dc-page{ width:100%; height:100svh }
+    .dc-topbar{ padding:0 12px; gap:8px; font-size:13px }
+    .dc-container{ margin:0 6px 78px 6px; border-radius:12px }
+    .dc-action-cards{ padding:12px 10px 0; gap:8px; overflow-x:auto; -webkit-overflow-scrolling:touch; flex-wrap:nowrap }
+    .dc-action-cards::-webkit-scrollbar{ height:4px }
+    .dc-action-card{ flex:0 0 130px; padding:12px 10px; gap:6px }
+    .dc-action-card svg{ width:20px; height:20px }
+    /* table → horizontal scroll wrapper */
+    .dc-list-scroll{ overflow-x:auto }
+    .dc-table{ min-width:640px }
+    .dc-table th,.dc-table td{ padding:7px 8px; font-size:11.5px }
+    .dc-pagination{ padding:6px 8px; gap:4px }
+    .dc-pgbtn{ width:26px; height:26px; font-size:11px }
+    .dc-sort-btn{ padding:2px 6px; font-size:10.5px }
+    .dc-icon-action{ width:24px; height:24px }
+    .dc-tb-btn{ width:26px; height:26px }
+    .dc-tb-sel{ height:24px; font-size:11px }
+    /* modal full-width */
+    .dc-overlay{ padding:0; align-items:flex-end }
+    .dc-modal{ max-width:100%; border-radius:16px 16px 0 0; padding:22px 18px 28px }
+    .dc-type-cards{ flex-direction:column; gap:10px }
+    .dc-type-card{ padding:18px 16px }
+    /* editor: full width sheet */
+    .dc-editor-pages{ padding:12px }
+    .dc-page-sheet{ width:100%; min-height:auto; padding:24px 18px }
+    .dc-page-content{ min-height:600px }
+    .dc-editor-toolbar{ overflow-x:auto; flex-wrap:nowrap; padding:4px 8px }
+    .dc-editor-toolbar::-webkit-scrollbar{ height:3px }
+    .dc-save-fab{ bottom:84px; right:14px; padding:8px 14px; font-size:11.5px }
+    /* xls toolbar scroll */
+    .dc-xls-bar{ overflow-x:auto; flex-wrap:nowrap }
+    .dc-xls-bar::-webkit-scrollbar{ height:3px }
+    .dc-xls-tabs{ overflow-x:auto; flex-wrap:nowrap }
+    .dc-xls-tabs::-webkit-scrollbar{ height:3px }
+  }
+  @media(max-width:480px){
+    .dc-topbar{ padding:0 10px }
+    .dc-action-card{ flex:0 0 120px; padding:10px 8px; font-size:11.5px }
+    .dc-page-sheet{ padding:18px 12px }
+  }
 `;
 
 /* ══════════════════════════════════════════════════════════
@@ -1422,6 +1466,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
         </div>
       </header>
 
+      <MobileBottomNav />
       <div className="dc-body">
         <Sidebar active="documents" onNavigate={onNavigate}/>
 
@@ -1433,7 +1478,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
                 <div style={{ padding: "22px 24px 0", flexShrink: 0 }}>
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
                     <div>
-                      <h1 style={{ fontSize: 21, fontWeight: 700, color: "#111827", marginBottom: 3 }}>{t("documents.myDocuments")}</h1>
+                      <h1 style={{ fontSize: 21, fontWeight: 700, color: "#111827", marginBottom: 3, letterSpacing: "0.04em" }}>{t("documents.myDocuments")}</h1>
                       <p style={{ fontSize: 13, color: "#9CA3AF" }}>{t("documents.manageFilesDesc")}</p>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, border: ".5px solid #E5E7EB", borderRadius: 8, padding: "7px 14px", background: "#F9FAFB", minWidth: 240 }}>

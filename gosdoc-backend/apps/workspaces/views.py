@@ -61,6 +61,38 @@ def require_workspace_member(user, workspace):
         raise PermissionDenied("Вы не являетесь участником этого кабинета.")
 
 
+# Лимиты участников по типу кабинета
+# Персональный — до 3 человек (включая владельца)
+# Командный    — до 7 человек
+# Организация  — без ограничения
+WORKSPACE_MEMBER_LIMITS = {
+    Workspace.WorkspaceType.PERSONAL:   3,
+    Workspace.WorkspaceType.INDIVIDUAL: 3,   # обратная совместимость
+    Workspace.WorkspaceType.TEAM:       7,
+    # ORGANIZATION / CORPORATE — без ограничения (отсутствие ключа)
+}
+
+
+def workspace_member_capacity(workspace):
+    """Возвращает (limit, current_count). limit=None — без ограничения."""
+    limit = WORKSPACE_MEMBER_LIMITS.get(workspace.type)
+    current = workspace.members.count()
+    return limit, current
+
+
+def assert_workspace_has_room(workspace):
+    """Бросает ValidationError, если в кабинете уже достигнут лимит участников."""
+    limit, current = workspace_member_capacity(workspace)
+    if limit is not None and current >= limit:
+        type_label = workspace.get_type_display()
+        raise ValidationError({
+            "detail": (
+                f"{type_label} кабинет вмещает не более {limit} участников. "
+                f"Сейчас в кабинете {current}. Чтобы добавить больше — переведите его в тип «Организация»."
+            )
+        })
+
+
 # ============================================================
 # 4.4 CRUD кабинетов
 # ============================================================
@@ -169,16 +201,11 @@ class WorkspaceMemberListCreateView(APIView):
 
         user = serializer.validated_data["resolved_user"]
 
-        # Проверяем лимит для индивидуального кабинета (раздел 2.1 ТЗ: до 20 пользователей)
-        if workspace.type == Workspace.WorkspaceType.INDIVIDUAL:
-            current_count = workspace.members.count()
-            if current_count >= 20:
-                return Response(
-                    {"detail": "Индивидуальный кабинет не может иметь более 20 участников (раздел 2.1 ТЗ)."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
         existing = WorkspaceMember.objects.filter(workspace=workspace, user=user).first()
+        # Проверка лимита — только если добавляется новый человек,
+        # повторное PATCH-обновление роли существующего не считается
+        if not existing:
+            assert_workspace_has_room(workspace)
         if existing:
             # Пользователь уже участник — обновляем role и step_order
             existing.role = serializer.validated_data["role"]
@@ -308,6 +335,9 @@ class WorkspaceInviteView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
+        # Не отправляем приглашение, если в кабинете уже нет места
+        assert_workspace_has_room(workspace)
+
         pending = WorkspaceInvitation.objects.filter(
             workspace=workspace, invitee=invitee,
             status=WorkspaceInvitation.Status.PENDING,
@@ -363,6 +393,13 @@ class WorkspaceInvitationAcceptView(APIView):
             invitee=request.user,
             status=WorkspaceInvitation.Status.PENDING,
         )
+
+        # Если пока приглашение висело, владелец добил кабинет
+        # до лимита — accept должен корректно сломаться
+        already_member = invitation.workspace.members.filter(user=request.user).exists()
+        if not already_member:
+            assert_workspace_has_room(invitation.workspace)
+
         invitation.status = WorkspaceInvitation.Status.ACCEPTED
         invitation.save(update_fields=["status"])
 

@@ -211,17 +211,17 @@ class DocumentListSerializer(serializers.ModelSerializer):
             "id", "workspace", "workspace_title",
             "organization_id", "organization_name",
             "title", "file_type", "status", "priority", "due_date",
-            "uploaded_by_name", "created_at", "updated_at",
+            "uploaded_by_name", "metadata", "created_at", "updated_at",
         ]
         read_only_fields = fields
 
 
 class DocumentUpdateSerializer(serializers.ModelSerializer):
-    """Сериализатор для PATCH /api/v1/documents/{id}/ (title, priority, due_date, status)."""
+    """Сериализатор для PATCH /api/v1/documents/{id}/ (title, priority, due_date, status, metadata)."""
 
     class Meta:
         model = Document
-        fields = ["title", "priority", "due_date", "status"]
+        fields = ["title", "priority", "due_date", "status", "metadata"]
 
 
 class DocumentContentSerializer(serializers.ModelSerializer):
@@ -248,7 +248,7 @@ class SubtaskSerializer(serializers.ModelSerializer):
         model = Subtask
         fields = [
             "id", "document", "title", "assignee", "assignee_name",
-            "deadline", "status", "created_at", "updated_at",
+            "start_date", "deadline", "status", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "document", "created_at", "updated_at"]
 

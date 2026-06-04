@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import Sidebar from "./components/Sidebar";
+import MobileBottomNav from "./components/MobileBottomNav";
 import ProfileController, { ProfileMenu } from "./Profile";
 import useAuthStore from "./store/authStore";
 import { getFaqs, sendHelpChat } from "./api/help";
@@ -101,10 +102,19 @@ const css = `
   .hs-ai-mic{width:28px;height:28px;border-radius:50%;border:none;background:#F3F4F6;cursor:pointer;color:#6B7280;display:flex;align-items:center;justify-content:center}
 
   @media(max-width:768px){
-    .hs-cards{grid-template-columns:1fr}
+    .hs-page{ width:100%; height:100svh }
+    .hs-topbar{ padding:0 12px; gap:6px; font-size:12.5px; height:48px }
+    .hs-topbar button{ padding:4px 8px!important; font-size:11.5px!important }
+    .hs-container{ margin:8px 8px 78px 8px; border-radius:12px; padding:12px 12px 16px }
+    .hs-cards{grid-template-columns:1fr; gap:10px}
     .hs-ai-pill{left:12px;right:12px;width:auto}
     .hs-ai-modal{left:12px;right:12px;width:auto;height:70vh}
     .hs-ai-modal.expanded{left:12px;right:12px;width:auto;height:90vh;bottom:5vh}
+    .hs-hero h1{ font-size:24px!important }
+    .hs-hero p{ font-size:13px }
+  }
+  @media(max-width:480px){
+    .hs-topbar{ padding:0 10px }
   }
 `;
 
@@ -508,6 +518,7 @@ export default function HelpSupport({ onGoToAuth, onNavigate }) {
 
       <div className="hs-body">
         <Sidebar active="help" onNavigate={onNavigate}/>
+        <MobileBottomNav />
         <div className="hs-main">
           <ProfileController show={!!profileView} view={profileView} setView={setProfileView} onLogOut={onGoToAuth}/>
           <div className="hs-container">

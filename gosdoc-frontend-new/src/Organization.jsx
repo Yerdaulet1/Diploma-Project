@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import Sidebar from "./components/Sidebar";
+import MobileBottomNav from "./components/MobileBottomNav";
 import EmailAutocomplete from "./components/EmailAutocomplete";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -86,6 +87,24 @@ const orgCss = `
   .org-tbl th{text-align:left;font-size:12px;color:#9CA3AF;font-weight:500;padding:8px 12px;border-bottom:1px solid #F3F4F6}
   .org-tbl td{padding:12px 12px;font-size:13px;border-bottom:.5px solid #F9FAFB}
   .org-tbl tr:last-child td{border-bottom:none}
+
+  @media(max-width:768px){
+    .org-page{ width:100%; height:100svh }
+    .org-sb{ display:none }
+    .org-topbar{ padding:0 12px; gap:6px; font-size:12.5px; height:48px }
+    .org-topbar button{ padding:4px 8px!important; font-size:11.5px!important }
+    .org-container{ margin-bottom:78px }
+    .org-tbl th,.org-tbl td{ padding:8px 8px; font-size:12px }
+    .org-info-grid{ grid-template-columns:1fr 1fr; gap:12px 16px; margin-bottom:18px; padding-bottom:16px }
+    /* Table → horizontal scroll */
+    .org-tbl-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch }
+    .org-tbl{ min-width:560px }
+    .org-tbl th,.org-tbl td{ padding:9px 10px; font-size:12.5px }
+  }
+  @media(max-width:480px){
+    .org-info-grid{ grid-template-columns:1fr }
+    .org-topbar{ padding:0 10px }
+  }
 `;
 
 /* ── CONSTANTS ─────────────────────────────────────────────── */
@@ -384,6 +403,7 @@ export default function Organization({ onNavigate, onGoToAuth }) {
       <div className="org-body">
 
         <Sidebar active="projects" onNavigate={onNavigate}/>
+        <MobileBottomNav />
 
         {/* ── MAIN ── */}
         <div className="org-main">
