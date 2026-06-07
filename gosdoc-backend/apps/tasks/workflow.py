@@ -46,6 +46,15 @@ def create_workflow_tasks(document, workspace) -> list:
         )
         return []
 
+    # Тип задачи по роли участника: редактор согласовывает, подписант подписывает.
+    # Нужно фронту, чтобы открыть правильный экран (редактор видит подзадачи и
+    # «Согласовать», подписант — подпись).
+    ROLE_TO_REQUEST = {
+        "editor": Task.RequestType.REVIEW,
+        "signer": Task.RequestType.SIGNATURE,
+        "owner":  Task.RequestType.APPROVAL,
+    }
+
     # Создаём все задачи разом (bulk_create)
     task_objects = [
         Task(
@@ -55,6 +64,7 @@ def create_workflow_tasks(document, workspace) -> list:
             step_order=member.step_order,
             title=f"Шаг {member.step_order}: {member.get_role_display()} — {document.title}",
             status=Task.TaskStatus.PENDING,
+            request_type=ROLE_TO_REQUEST.get(member.role, Task.RequestType.REVIEW),
         )
         for member in members
     ]

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import useSidebarOpen from "./hooks/useSidebarOpen";
 import Sidebar from "./components/Sidebar";
 import MobileBottomNav from "./components/MobileBottomNav";
@@ -9,6 +10,9 @@ import { getNotifications } from "./api/notifications";
 import {
   getDocuments, getDocument, updateDocument,
   getComments, addComment as apiAddComment,
+  updateComment as apiUpdateComment,
+  deleteComment as apiDeleteComment,
+  resolveComment as apiResolveComment,
   getSubtasks, createSubtask,
   updateSubtask as apiUpdateSubtask,
   deleteSubtask as apiDeleteSubtask,
@@ -16,13 +20,22 @@ import {
   deleteAttachment as apiDeleteAttachment,
   serverUploadDocument, copyDocument, getSignatures,
   getBlockchain, startWorkflow,
+  getVersions, getVersionDiff, verifySignature, approveDocument,
+  serverUploadVersion, signDocx,
 } from "./api/documents";
-import { getWorkspaces, createWorkspace, getMembers, inviteToWorkspace, addMember } from "./api/workspaces";
+import { getWorkspaces, createWorkspace, getMembers, addMember } from "./api/workspaces";
+import { getOrgMembers } from "./api/organizations";
 import { getTasks } from "./api/tasks";
-import { generalChat, chatWithDocument, getChatHistory } from "./api/ai";
+import { globalSearch } from "./api/search";
+import {
+  generalChat, chatWithDocument, getChatHistory,
+  summarizeDocument, classifyDocument, embedDocument,
+} from "./api/ai";
 import useAuthStore from "./store/authStore";
+import useOrgStore from "./store/orgStore";
 import ProfileController, { ProfileMenu } from "./Profile";
 import CreateWorkspaceModal from "./CreateWorkspaceModal";
+import PdfSignModal from "./components/PdfSignModal";
 import logoImg from "./assets/Group 2.svg";
 
 /* ══════════════════════════════════════════════════════════
@@ -187,6 +200,45 @@ const css = `
   .dm-status-item{padding:8px 14px;font-size:12.5px;cursor:pointer;color:#374151}
   .dm-status-item:hover{background:#EEF2FF;color:#2563EB}
 
+  /* ── AI Tools tab ── */
+  .ai-card{border:1px solid #E5E7EB;border-radius:12px;padding:16px;margin-bottom:16px;background:#fff}
+  .ai-card-head{display:flex;align-items:center;gap:9px;margin-bottom:4px}
+  .ai-card-ic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .ai-card-title{font-size:13.5px;font-weight:600;color:#111827}
+  .ai-card-sub{font-size:11.5px;color:#9CA3AF;margin-top:1px}
+  .ai-btn{display:inline-flex;align-items:center;gap:6px;border:none;border-radius:8px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;transition:opacity .15s,background .15s}
+  .ai-btn:disabled{opacity:.6;cursor:default}
+  .ai-btn-violet{background:#7C3AED;color:#fff}
+  .ai-btn-violet:hover:not(:disabled){background:#6D28D9}
+  .ai-btn-blue{background:#2563EB;color:#fff}
+  .ai-btn-blue:hover:not(:disabled){background:#1D4ED8}
+  .ai-btn-ghost{background:#F5F3FF;color:#7C3AED;border:1px solid #DDD6FE}
+  .ai-btn-ghost:hover:not(:disabled){background:#EDE9FE}
+  .ai-summary-box{margin-top:12px;background:#F5F3FF;border:1px solid #E9D5FF;border-radius:10px;padding:13px 15px;font-size:12.5px;color:#374151;line-height:1.65}
+  .ai-keypoint{display:flex;align-items:flex-start;gap:8px;margin-top:7px;font-size:12.5px;color:#374151;line-height:1.5}
+  .ai-keypoint svg{flex-shrink:0;margin-top:3px}
+  .ai-type-badge{display:inline-flex;align-items:center;gap:6px;background:#EFF6FF;border:1px solid #BFDBFE;color:#1D4ED8;border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:600}
+  .ai-conf-bar{height:5px;background:#E5E7EB;border-radius:3px;overflow:hidden;flex:1;min-width:60px}
+  .ai-conf-fill{height:100%;background:linear-gradient(90deg,#3B82F6,#8B5CF6);border-radius:3px;transition:width .4s}
+  .ai-ver-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid #E5E7EB;border-radius:9px;margin-bottom:7px;background:#fff;transition:border-color .15s}
+  .ai-ver-row:hover{border-color:#C4B5FD}
+  .ai-ver-num{width:26px;height:26px;border-radius:7px;background:#EEF2FF;color:#4F46E5;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .ai-diff-stat{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;padding:2px 7px;border-radius:6px}
+  .ai-diff-add{background:#DCFCE7;color:#15803D}
+  .ai-diff-del{background:#FEE2E2;color:#B91C1C}
+  .ai-spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:aiSpin .7s linear infinite;flex-shrink:0}
+  .ai-spin.violet{border:2px solid #DDD6FE;border-top-color:#7C3AED}
+  @keyframes aiSpin{to{transform:rotate(360deg)}}
+
+  /* ── Signature verification (Workflow tab) ── */
+  .sig-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid #E5E7EB;border-radius:9px;margin-bottom:7px;background:#fff}
+  .sig-av{width:28px;height:28px;border-radius:50%;background:#DBEAFE;color:#2563EB;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .sig-verify-btn{display:inline-flex;align-items:center;gap:5px;border:1px solid #E5E7EB;background:#F9FAFB;color:#374151;border-radius:7px;padding:4px 10px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0}
+  .sig-verify-btn:hover{background:#EEF2FF;color:#2563EB;border-color:#DBEAFE}
+  .sig-verified{display:flex;flex-direction:column;gap:3px;margin-top:6px;background:#F0FDF4;border:1px solid #A7F3D0;border-radius:8px;padding:9px 12px;font-size:11px;color:#166534}
+  .sig-verified-row{display:flex;gap:6px}
+  .sig-verified-row b{color:#15803D;font-weight:600;min-width:70px}
+
   button:hover{opacity:unset}
 `;
 
@@ -237,10 +289,19 @@ function MiniAv({ member, size=22 }) {
 ══════════════════════════════════════════════════════════ */
 function AssigneePicker({ selected, onToggle, onClose, members = [], style }) {
   const ref = useRef(null);
-  return (
+  // Закрытие по клику вне поповера
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const id = setTimeout(() => document.addEventListener("mousedown", h), 0);
+    return () => { clearTimeout(id); document.removeEventListener("mousedown", h); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Рендерим в body через портал — чтобы position:fixed считался от окна,
+  // а не от трансформируемого контейнера модалки.
+  return createPortal(
     <div className="dm-assignee-popup" ref={ref} style={style} onMouseDown={e=>e.stopPropagation()}>
-      <div style={{ padding:"6px 12px 6px", fontSize:11, color:"#9CA3AF", fontWeight:500 }}>Assign to one of assignees</div>
-      {members.length === 0 && <div style={{ padding:"8px 12px", fontSize:12, color:"#9CA3AF", lineHeight:1.4 }}>Add document assignees first</div>}
+      <div style={{ padding:"6px 12px 6px", fontSize:11, color:"#9CA3AF", fontWeight:500 }}>Назначить участника проекта</div>
+      {members.length === 0 && <div style={{ padding:"8px 12px", fontSize:12, color:"#9CA3AF", lineHeight:1.4 }}>Сначала добавьте участников в проект</div>}
       {members.map(m => (
         <div key={m.id} className={`dm-assignee-item${selected?.id===m.id?" selected":""}`}
           onClick={()=>{ onToggle(m); onClose(); }}>
@@ -249,7 +310,8 @@ function AssigneePicker({ selected, onToggle, onClose, members = [], style }) {
           {selected?.id===m.id && <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.5" width="13" height="13" style={{ marginLeft:"auto" }}><polyline points="20 6 9 17 4 12"/></svg>}
         </div>
       ))}
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -563,7 +625,7 @@ function RangeDeadlinePicker({ startValue, endValue, onChange, onClose, pos, min
   const top  = pos.top + PICKER_H > window.innerHeight
     ? pos.top - PICKER_H - (pos.buttonHeight || 32) - 6
     : pos.top;
-  const left = Math.min(pos.left, window.innerWidth - 310);
+  const left = Math.max(8, Math.min(pos.left, window.innerWidth - 310));
 
   useEffect(() => {
     const h = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
@@ -611,7 +673,7 @@ function RangeDeadlinePicker({ startValue, endValue, onChange, onClose, pos, min
 
   const doClear = () => { setRS(null); setRE(null); setPhase("start"); onChange({ start: null, end: null }); onClose(); };
 
-  return (
+  return createPortal(
     <div ref={ref} style={{ position:"fixed", top, left, zIndex:99999,
       background:"#fff", borderRadius:14, padding:16, width:300,
       boxShadow:"0 8px 40px rgba(0,0,0,0.22)", fontFamily:"'Gilroy','Segoe UI',sans-serif" }}>
@@ -685,7 +747,8 @@ function RangeDeadlinePicker({ startValue, endValue, onChange, onClose, pos, min
         <button onClick={doClear} style={DL_CANCEL}>Clear</button>
         <button onClick={doSelect} style={DL_SELECT}>Select</button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -712,12 +775,14 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
   const openAsn = () => {
     if (asnBtnRef.current) {
       const r = asnBtnRef.current.getBoundingClientRect();
-      const popupH = 40 + Math.max(1, members.length) * 36;
+      const W = 200; // ширина поповера (dm-assignee-popup)
+      const popupH = 44 + Math.max(1, members.length) * 36;
       const placeAbove = r.bottom + popupH + 12 > window.innerHeight;
+      // Выравниваем правый край поповера по кнопке, но держим в пределах экрана
+      const left = Math.min(Math.max(8, r.right - W), window.innerWidth - W - 8);
       setAsnPos({
-        top: placeAbove ? r.top - popupH - 4 : r.bottom + 4,
-        right: Math.max(8, window.innerWidth - r.right),
-        placeAbove,
+        top: placeAbove ? Math.max(8, r.top - popupH - 4) : r.bottom + 4,
+        left,
       });
     }
     setShowAssignee(v => !v);
@@ -816,7 +881,7 @@ function SubtaskRow({ subtask, index, onChange, onDelete, onAddNext, onSaveAndCl
               onToggle={m => onChange({ ...subtask, assignee: subtask.assignee?.id===m.id ? null : m })}
               onClose={() => setShowAssignee(false)}
               members={members}
-              style={{ position:"fixed", top:asnPos.top, right:asnPos.right, zIndex:9500 }}/>
+              style={{ position:"fixed", top:asnPos.top, left:asnPos.left, right:"auto", zIndex:9500 }}/>
           </>
         )}
       </div>
@@ -1011,9 +1076,9 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
       await qc.invalidateQueries({ queryKey: ["document", docId] });
       await qc.invalidateQueries({ queryKey: ["signatures", docId] });
       onStatusChange?.("IN PROGRESS");
-      toast.success("Workflow started — document sent for review");
+      toast.success("Документ отправлен на согласование");
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Could not start workflow");
+      toast.error(err?.response?.data?.detail || "Не удалось отправить на согласование");
     } finally {
       setStarting(false);
     }
@@ -1029,8 +1094,8 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
           display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
         }}>
           <div>
-            <div style={{ fontSize:13,fontWeight:600,color:"#1D4ED8",marginBottom:2 }}>Ready to send for review?</div>
-            <div style={{ fontSize:11.5,color:"#3B82F6" }}>Starting the workflow creates tasks for each workspace member in step order.</div>
+            <div style={{ fontSize:13,fontWeight:600,color:"#1D4ED8",marginBottom:2 }}>Готово к согласованию?</div>
+            <div style={{ fontSize:11.5,color:"#3B82F6" }}>Документ по очереди уйдёт сначала редакторам, затем подписантам.</div>
           </div>
           <button
             onClick={handleStartWorkflow}
@@ -1042,7 +1107,7 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
               opacity: starting ? 0.7 : 1,
             }}
           >
-            {starting ? "Starting…" : "Start Workflow"}
+            {starting ? "Отправка…" : "Отправить на согласование"}
           </button>
         </div>
       )}
@@ -1161,6 +1226,20 @@ function WorkflowTab({ members = [], signatures = [], docStatus = "draft", uploa
           </div>
         );
       })}
+
+      {/* Signatures + verification */}
+      {rawSigs.length > 0 && (
+        <div style={{ marginTop:16 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:10 }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+            <span style={{ fontSize:13, fontWeight:600, color:"#374151" }}>Электронные подписи</span>
+            <span style={{ fontSize:11, color:"#9CA3AF" }}>{rawSigs.length}</span>
+          </div>
+          {rawSigs.map(sig => (
+            <SignatureVerifyRow key={sig.id} signature={sig} initials={initials}/>
+          ))}
+        </div>
+      )}
 
       {/* Blockchain verification section */}
       <BlockchainBadge status={bcStatus} blocks={bcBlocks}/>
@@ -1311,7 +1390,83 @@ function AiChatPanel({ docId, workspaceId }) {
   );
 }
 
+function ApiCommentItem({ comment, docId, currentUserId }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState(comment.content || "");
+  const [busy, setBusy]       = useState(false);
+  const [hover, setHover]     = useState(false);
+  const isAuthor = currentUserId && String(comment.author) === String(currentUserId);
+
+  const refresh = () => qc.invalidateQueries({ queryKey: ["comments", docId] });
+
+  const saveEdit = async () => {
+    if (!draft.trim() || busy) return;
+    setBusy(true);
+    try { await apiUpdateComment(comment.id, { content: draft.trim() }); setEditing(false); refresh(); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Не удалось изменить"); }
+    finally { setBusy(false); }
+  };
+  const remove = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await apiDeleteComment(comment.id); refresh(); toast.success("Комментарий удалён"); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Не удалось удалить"); }
+    finally { setBusy(false); }
+  };
+  const resolve = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await apiResolveComment(comment.id); refresh(); toast.success("Отмечено как решённое"); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Только владелец может закрыть комментарий"); }
+    finally { setBusy(false); }
+  };
+
+  const time = comment.created_at
+    ? new Date(comment.created_at).toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit" })
+    : "";
+
+  return (
+    <div style={{ marginBottom:8, opacity: comment.is_resolved ? 0.6 : 1 }}
+      onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}>
+      <div className="dm-activity-item" style={{ alignItems:"flex-start" }}>
+        <div className="dm-activity-dot" style={{ background: comment.is_resolved ? "#22C55E" : "#A78BFA" }}/>
+        <span style={{ fontSize:12, flex:1 }}>
+          <strong style={{ color:"#374151" }}>{comment.author_name || "User"}</strong>
+          {comment.is_resolved && <span style={{ marginLeft:6,fontSize:9.5,fontWeight:700,color:"#16A34A",background:"#DCFCE7",borderRadius:5,padding:"1px 6px" }}>РЕШЕНО</span>}
+          {!editing && <>: {comment.content}</>}
+        </span>
+        <span className="dm-activity-time">{time}</span>
+      </div>
+
+      {editing ? (
+        <div style={{ marginLeft:14, marginTop:4 }}>
+          <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={2}
+            className="dm-comment-input" style={{ minHeight:34 }}/>
+          <div style={{ display:"flex", gap:6, marginTop:4 }}>
+            <button onClick={saveEdit} disabled={busy} className="ai-btn ai-btn-blue" style={{ padding:"4px 10px",fontSize:11 }}>Сохранить</button>
+            <button onClick={()=>{ setEditing(false); setDraft(comment.content||""); }} style={{ padding:"4px 10px",fontSize:11,border:"1px solid #E5E7EB",borderRadius:7,background:"#fff",color:"#6B7280",fontFamily:"inherit",cursor:"pointer" }}>Отмена</button>
+          </div>
+        </div>
+      ) : (
+        hover && (
+          <div style={{ display:"flex", gap:10, marginLeft:14, marginTop:2 }}>
+            {!comment.is_resolved && (
+              <button onClick={resolve} disabled={busy} style={{ background:"none",border:"none",cursor:"pointer",color:"#16A34A",fontSize:10.5,fontWeight:600,fontFamily:"inherit",padding:0 }}>Решить</button>
+            )}
+            {isAuthor && !comment.is_resolved && (
+              <button onClick={()=>setEditing(true)} disabled={busy} style={{ background:"none",border:"none",cursor:"pointer",color:"#2563EB",fontSize:10.5,fontWeight:600,fontFamily:"inherit",padding:0 }}>Изменить</button>
+            )}
+            <button onClick={remove} disabled={busy} style={{ background:"none",border:"none",cursor:"pointer",color:"#EF4444",fontSize:10.5,fontWeight:600,fontFamily:"inherit",padding:0 }}>Удалить</button>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 function ActivityPanel({ comments, onComment, apiComments, workspaceId, docId }) {
+  const currentUserId = useAuthStore(s => s.user?.id);
   const [chatMode, setChatMode] = useState("team"); // "team" | "ai"
   const [text, setText] = useState("");
   const [images, setImages] = useState([]);
@@ -1372,15 +1527,7 @@ function ActivityPanel({ comments, onComment, apiComments, workspaceId, docId })
         <>
           <div className="dm-activity-body">
             {apiComments?.map((c, i) => (
-              <div key={`api-${c.id||i}`} className="dm-activity-item" style={{ marginBottom:8 }}>
-                <div className="dm-activity-dot" style={{ background:"#A78BFA" }}/>
-                <span style={{ fontSize:12 }}>
-                  <strong style={{ color:"#374151" }}>{c.author_name || "User"}</strong>: {c.content}
-                </span>
-                <span className="dm-activity-time">
-                  {new Date(c.created_at).toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}
-                </span>
-              </div>
+              <ApiCommentItem key={`api-${c.id||i}`} comment={c} docId={docId} currentUserId={currentUserId}/>
             ))}
             {comments.map((c, i) => (
               <div key={i} style={{ marginBottom:10 }}>
@@ -1442,6 +1589,312 @@ function ActivityPanel({ comments, onComment, apiComments, workspaceId, docId })
         </>
       )}
     </>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+   AI TOOLS TAB — резюме, классификация, версии+AI-diff, индексация
+══════════════════════════════════════════════════════════ */
+function VersionDiffRow({ docId, version, isFirst }) {
+  const [open, setOpen]       = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [diff, setDiff]       = useState(null);
+  const [error, setError]     = useState(false);
+
+  const loadDiff = async () => {
+    if (open) { setOpen(false); return; }
+    setOpen(true);
+    if (diff || isFirst) return;
+    setLoading(true);
+    setError(false);
+    try {
+      setDiff(await getVersionDiff(docId, version.id));
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const created = version.created_at
+    ? new Date(version.created_at).toLocaleDateString("ru-RU", { day:"2-digit", month:"short", year:"numeric" })
+    : "";
+  const summary = diff?.ai_diff_summary;
+
+  return (
+    <div style={{ marginBottom:7 }}>
+      <div className="ai-ver-row" onClick={loadDiff} style={{ cursor:"pointer", marginBottom:0 }}>
+        <div className="ai-ver-num">v{version.version_number}</div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:12.5, fontWeight:500, color:"#374151" }}>
+            Версия {version.version_number}
+            {isFirst && <span style={{ color:"#9CA3AF", fontWeight:400 }}> · исходная</span>}
+          </div>
+          <div style={{ fontSize:11, color:"#9CA3AF", marginTop:1 }}>
+            {version.created_by_name || "—"}{created ? ` · ${created}` : ""}
+          </div>
+        </div>
+        {!isFirst && (
+          version.ai_changes_detected
+            ? <span className="ai-diff-stat ai-diff-add">изменения</span>
+            : <span style={{ fontSize:11, color:"#9CA3AF" }}>—</span>
+        )}
+        {!isFirst && (
+          <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="13" height="13"
+            style={{ transform: open ? "rotate(180deg)" : "none", transition:"transform .2s", flexShrink:0 }}>
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        )}
+      </div>
+
+      {open && !isFirst && (
+        <div className="ai-summary-box" style={{ marginTop:6 }}>
+          {loading && (
+            <div style={{ display:"flex", alignItems:"center", gap:8, color:"#7C3AED" }}>
+              <span className="ai-spin violet"/> AI анализирует изменения…
+            </div>
+          )}
+          {error && <span style={{ color:"#9CA3AF" }}>Не удалось загрузить анализ изменений.</span>}
+          {!loading && !error && summary && (
+            <>
+              <div style={{ display:"flex", gap:8, marginBottom:8, flexWrap:"wrap" }}>
+                <span className="ai-diff-stat ai-diff-add">+{summary.additions_count ?? 0} добавлено</span>
+                <span className="ai-diff-stat ai-diff-del">−{summary.deletions_count ?? 0} удалено</span>
+              </div>
+              <div style={{ fontWeight:600, color:"#5B21B6", marginBottom:4, fontSize:12 }}>Резюме изменений (AI):</div>
+              <div>{summary.summary || "Значимых смысловых изменений не обнаружено."}</div>
+            </>
+          )}
+          {!loading && !error && !summary && (
+            <span style={{ color:"#9CA3AF" }}>{diff?.detail || "Анализ для этой версии недоступен."}</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SignatureVerifyRow({ signature, initials }) {
+  const [verifying, setVerifying] = useState(false);
+  const [result, setResult]       = useState(null);
+
+  const verify = async () => {
+    if (result) { setResult(null); return; }
+    setVerifying(true);
+    try {
+      setResult(await verifySignature(signature.id));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось проверить подпись");
+    } finally { setVerifying(false); }
+  };
+
+  const signedAt = signature.signed_at
+    ? new Date(signature.signed_at).toLocaleString("ru-RU", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" })
+    : "—";
+
+  return (
+    <div style={{ marginBottom:7 }}>
+      <div className="sig-row" style={{ marginBottom:0 }}>
+        <div className="sig-av">{initials(signature.user_name)}</div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:12.5, fontWeight:500, color:"#374151" }}>{signature.user_name || "Подписант"}</div>
+          <div style={{ fontSize:11, color:"#9CA3AF", marginTop:1 }}>Подписано: {signedAt}</div>
+        </div>
+        <button className="sig-verify-btn" onClick={verify} disabled={verifying}>
+          {verifying ? <span className="ai-spin violet"/> : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
+          )}
+          {result ? "Скрыть" : "Проверить"}
+        </button>
+      </div>
+      {result && (
+        <div className="sig-verified">
+          <div style={{ display:"flex", alignItems:"center", gap:6, fontWeight:700, marginBottom:2 }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" width="13" height="13"><polyline points="20 6 9 17 4 12"/></svg>
+            {result.is_valid ? "Подпись действительна" : "Подпись недействительна"}
+          </div>
+          <div className="sig-verified-row"><b>Подписант:</b><span>{result.signer?.full_name || result.signer?.email || "—"}</span></div>
+          <div className="sig-verified-row"><b>Дата:</b><span>{signedAt}</span></div>
+          {result.ip_address && <div className="sig-verified-row"><b>IP-адрес:</b><span>{result.ip_address}</span></div>}
+          {result.certificate_id && <div className="sig-verified-row"><b>Сертификат:</b><span>{result.certificate_id}</span></div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AIToolsTab({ docId, apiDoc }) {
+  const qc = useQueryClient();
+  const [sumLoading, setSumLoading] = useState(false);
+  const [summary,    setSummary]    = useState(null);
+  const [clsLoading, setClsLoading] = useState(false);
+  const [cls,        setCls]        = useState(apiDoc?.metadata?.classification || null);
+  const [reindexing, setReindexing] = useState(false);
+  const [verUploading, setVerUploading] = useState(false);
+  const verFileRef = useRef(null);
+
+  const { data: versionsData } = useQuery({
+    queryKey: ["versions", docId],
+    queryFn:  () => getVersions(docId),
+    enabled:  !!docId,
+  });
+
+  const handleVersionUpload = async (e) => {
+    const f = e.target.files?.[0];
+    if (verFileRef.current) verFileRef.current.value = "";
+    if (!f) return;
+    setVerUploading(true);
+    try {
+      await serverUploadVersion(docId, f);
+      qc.invalidateQueries({ queryKey: ["versions", docId] });
+      qc.invalidateQueries({ queryKey: ["document", docId] });
+      qc.invalidateQueries({ queryKey: ["blockchain", docId] });
+      toast.success("Новая версия загружена — AI анализирует изменения");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || err?.response?.data?.file || "Не удалось загрузить версию");
+    } finally { setVerUploading(false); }
+  };
+  const versions = (Array.isArray(versionsData) ? versionsData : (versionsData?.results ?? []))
+    .slice().sort((a, b) => b.version_number - a.version_number);
+
+  const runSummary = async () => {
+    setSumLoading(true);
+    try {
+      setSummary(await summarizeDocument(docId));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось создать резюме");
+    } finally { setSumLoading(false); }
+  };
+
+  const runClassify = async () => {
+    setClsLoading(true);
+    try {
+      setCls(await classifyDocument(docId));
+      toast.success("Тип документа определён");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось классифицировать");
+    } finally { setClsLoading(false); }
+  };
+
+  const runReindex = async () => {
+    setReindexing(true);
+    try {
+      await embedDocument(docId);
+      toast.success("Индексация для AI-поиска запущена");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось запустить индексацию");
+    } finally { setReindexing(false); }
+  };
+
+  return (
+    <div style={{ padding:"4px 4px 8px" }}>
+      {/* Classification */}
+      <div className="ai-card">
+        <div className="ai-card-head">
+          <div className="ai-card-ic" style={{ background:"#EFF6FF" }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="16" height="16"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+          </div>
+          <div style={{ flex:1 }}>
+            <div className="ai-card-title">Тип документа</div>
+            <div className="ai-card-sub">ML-классификация: договор / приказ / акт / счёт-фактура</div>
+          </div>
+          <button className="ai-btn ai-btn-ghost" onClick={runClassify} disabled={clsLoading}>
+            {clsLoading ? <span className="ai-spin violet"/> : null}
+            {cls ? "Определить заново" : "Определить тип"}
+          </button>
+        </div>
+        {cls && (
+          <div style={{ display:"flex", alignItems:"center", gap:12, marginTop:12 }}>
+            <span className="ai-type-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              {cls.label || cls.type}
+            </span>
+            <div className="ai-conf-bar"><div className="ai-conf-fill" style={{ width:`${Math.round((cls.confidence || 0) * 100)}%` }}/></div>
+            <span style={{ fontSize:11.5, color:"#6B7280", fontWeight:600, flexShrink:0 }}>
+              {Math.round((cls.confidence || 0) * 100)}%
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* AI Summary */}
+      <div className="ai-card">
+        <div className="ai-card-head">
+          <div className="ai-card-ic" style={{ background:"#F5F3FF" }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2" width="16" height="16"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="18" y2="18"/></svg>
+          </div>
+          <div style={{ flex:1 }}>
+            <div className="ai-card-title">AI-резюме документа</div>
+            <div className="ai-card-sub">Краткое содержание и ключевые тезисы (Claude)</div>
+          </div>
+          <button className="ai-btn ai-btn-violet" onClick={runSummary} disabled={sumLoading}>
+            {sumLoading ? <span className="ai-spin"/> : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" width="13" height="13"><path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2L12 16.6 5.7 21l2.3-7.2-6-4.6h7.6z"/></svg>
+            )}
+            {summary ? "Обновить" : "Создать резюме"}
+          </button>
+        </div>
+        {summary && (
+          <div className="ai-summary-box">
+            <div>{summary.summary || "—"}</div>
+            {summary.key_points?.length > 0 && (
+              <div style={{ marginTop:10 }}>
+                <div style={{ fontWeight:600, color:"#5B21B6", fontSize:12, marginBottom:2 }}>Ключевые тезисы:</div>
+                {summary.key_points.map((kp, i) => (
+                  <div key={i} className="ai-keypoint">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.5" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>{kp}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Versions + AI-diff */}
+      <div className="ai-card">
+        <div className="ai-card-head" style={{ marginBottom:12 }}>
+          <div className="ai-card-ic" style={{ background:"#ECFDF5" }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2" width="16" height="16"><polyline points="12 8 12 12 14 14"/><path d="M3.05 11a9 9 0 1 1 .5 4"/><polyline points="3 16 3 11 8 11"/></svg>
+          </div>
+          <div style={{ flex:1 }}>
+            <div className="ai-card-title">История версий и AI-сравнение</div>
+            <div className="ai-card-sub">Нажмите на версию, чтобы увидеть AI-анализ изменений</div>
+          </div>
+          <input ref={verFileRef} type="file" accept=".pdf,.docx,.xlsx,.odt,.ods" style={{ display:"none" }} onChange={handleVersionUpload}/>
+          <button className="ai-btn ai-btn-ghost" onClick={() => !verUploading && verFileRef.current?.click()} disabled={verUploading}>
+            {verUploading ? <span className="ai-spin violet"/> : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+            )}
+            Новая версия
+          </button>
+        </div>
+        {versions.length === 0
+          ? <div style={{ fontSize:12, color:"#9CA3AF", padding:"4px 2px" }}>Версий пока нет. Загрузите новую версию документа, чтобы сравнить их.</div>
+          : versions.map(v => (
+              <VersionDiffRow key={v.id} docId={docId} version={v} isFirst={v.version_number === 1}/>
+            ))
+        }
+      </div>
+
+      {/* Re-index for AI search */}
+      <div className="ai-card" style={{ marginBottom:0 }}>
+        <div className="ai-card-head" style={{ marginBottom:0 }}>
+          <div className="ai-card-ic" style={{ background:"#FEF3C7" }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" width="16" height="16"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <div style={{ flex:1 }}>
+            <div className="ai-card-title">Индексация для AI-поиска</div>
+            <div className="ai-card-sub">Пересобрать векторные эмбеддинги (RAG-чат и семантический поиск)</div>
+          </div>
+          <button className="ai-btn ai-btn-blue" onClick={runReindex} disabled={reindexing}>
+            {reindexing ? <span className="ai-spin"/> : null}
+            Переиндексировать
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1516,8 +1969,48 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   const [saved,      setSaved]      = useState(false);
   const [saving,     setSaving]     = useState(false);
   const [uploading,  setUploading]  = useState(false);
+  const [approving,  setApproving]  = useState(false);
+  const [showPdfSign, setShowPdfSign] = useState(false);
   const [deletedSubtaskIds, setDeletedSubtaskIds] = useState([]);
   const fileRef = useRef(null);
+
+  const handleApprove = async () => {
+    if (!docId || approving) return;
+    setApproving(true);
+    try {
+      await approveDocument(docId);
+      qc.invalidateQueries({ queryKey: ["document", docId] });
+      qc.invalidateQueries({ queryKey: ["tasks"] });
+      qc.invalidateQueries({ queryKey: ["documents"] });
+      toast.success("Шаг согласования выполнен");
+      setTimeout(onClose, 500);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось согласовать документ");
+    } finally { setApproving(false); }
+  };
+
+  // Подписант подписывает документ своей сохранённой подписью из профиля
+  const handleSign = async () => {
+    if (!docId || approving) return;
+    const sig = user?.signature_data;
+    if (!sig) { toast.error("Сначала создайте свою подпись в разделе «Документы»"); return; }
+    // PDF — открываем экран с перетаскиванием подписи на нужное место
+    const isPdf = (apiDoc?.file_type || doc?.file_type || "").toLowerCase() === "pdf";
+    if (isPdf) { setShowPdfSign(true); return; }
+    // Word (.docx) — впечатываем подпись прямо в файл (документ остаётся .docx)
+    setApproving(true);
+    try {
+      const res = await signDocx(docId, { signature_data: sig });
+      qc.invalidateQueries({ queryKey: ["document", docId] });
+      qc.invalidateQueries({ queryKey: ["signatures", docId] });
+      qc.invalidateQueries({ queryKey: ["tasks"] });
+      qc.invalidateQueries({ queryKey: ["documents"] });
+      toast.success(res?.document_fully_signed ? "Документ полностью подписан" : "Документ подписан");
+      setTimeout(onClose, 500);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось подписать документ");
+    } finally { setApproving(false); }
+  };
 
   // Sync doc metadata from API
   useEffect(() => {
@@ -1676,11 +2169,12 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
     const msg = `${userName} completed subtask: "${subtask.name}"`;
 
     updateSubtask(subtask.id, { status: "done" });
-    setComments(c => [...c, { text: msg, time, isSystem: true }]);
 
     if (subtask._apiId && docId) {
       try {
         await apiUpdateSubtask(docId, subtask._apiId, { status: "done" });
+        // Системное сообщение сохраняем на бэк — оно подтянется из apiComments,
+        // локально не дублируем (иначе сообщения двоятся).
         try { await apiAddComment(docId, { content: msg }); } catch {}
         qc.invalidateQueries({ queryKey: ["subtasks", docId] });
         qc.invalidateQueries({ queryKey: ["comments", docId] });
@@ -1689,6 +2183,9 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
         updateSubtask(subtask.id, { status: "pending" });
         toast.error("Failed to update subtask");
       }
+    } else {
+      // Подзадача ещё не сохранена на бэке — показываем сообщение локально
+      setComments(c => [...c, { text: msg, time, isSystem: true }]);
     }
   };
 
@@ -1722,12 +2219,19 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   const addComment = async (data) => {
     const now = new Date();
     const time = now.toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit" });
-    setComments(c => [...c, { text: data.text || "", images: data.images || [], time }]);
+    // Картинки на бэке не хранятся — показываем их только локально
+    if (data.images?.length) {
+      setComments(c => [...c, { images: data.images, time }]);
+    }
     if (docId && data.text?.trim()) {
+      // Текст сохраняется на бэк и подтянется из apiComments — локально НЕ дублируем
       try {
         await apiAddComment(docId, { content: data.text, document: docId });
         qc.invalidateQueries({ queryKey: ["comments", docId] });
       } catch {}
+    } else if (data.text?.trim()) {
+      // Нет документа (черновик) — показываем локально
+      setComments(c => [...c, { text: data.text, time }]);
     }
   };
 
@@ -1743,6 +2247,24 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
   };
 
   return (
+    <>
+      {showPdfSign && (
+        <PdfSignModal
+          docId={docId}
+          title={title}
+          signatureData={user?.signature_data}
+          onClose={() => setShowPdfSign(false)}
+          onSigned={() => {
+            setShowPdfSign(false);
+            qc.invalidateQueries({ queryKey: ["document", docId] });
+            qc.invalidateQueries({ queryKey: ["signatures", docId] });
+            qc.invalidateQueries({ queryKey: ["versions", docId] });
+            qc.invalidateQueries({ queryKey: ["tasks"] });
+            qc.invalidateQueries({ queryKey: ["documents"] });
+            setTimeout(onClose, 400);
+          }}
+        />
+      )}
     <div className="dm-overlay" onClick={onClose}>
       <style>{css}</style>
 
@@ -2013,6 +2535,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
               </button>
             </div>
 
+            <div key={activeTab} className="app-fade-in">
             {activeTab==="task" && (
               <>
                 {/* Description */}
@@ -2134,14 +2657,23 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                         <div className={`adm-mytask-card${isMyTurn ? " active" : ""}`}>
                           <div>
                             <div className={`adm-mytask-title${isMyTurn ? "" : " muted"}`}>{kind}</div>
-                            <div className="adm-mytask-sub">Waiting for completion of the examination</div>
+                            <div className="adm-mytask-sub">
+                              {isMyTurn ? "Ваша очередь — выполните согласование" : "Waiting for completion of the examination"}
+                            </div>
                           </div>
-                          {isMyTurn && (
-                            <svg viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="1.8" width="18" height="18">
-                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                              <polyline points="15 3 21 3 21 9"/>
-                              <line x1="10" y1="14" x2="21" y2="3"/>
-                            </svg>
+                          {isMyTurn && (kind === "Signing"
+                            ? <button className="ai-btn ai-btn-blue" onClick={handleSign} disabled={approving} style={{ flexShrink:0 }}>
+                                {approving ? <span className="ai-spin"/> : (
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                                )}
+                                Подписать
+                              </button>
+                            : <button className="ai-btn ai-btn-blue" onClick={handleApprove} disabled={approving} style={{ flexShrink:0 }}>
+                                {approving ? <span className="ai-spin"/> : (
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
+                                )}
+                                Согласовать
+                              </button>
                           )}
                         </div>
                       </div>
@@ -2149,8 +2681,9 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                   );
                 })()}
 
-                {/* Subtasks — hidden in readOnly (signer doesn't manage subtasks) */}
-                {!readOnly && <div className="dm-section">
+                {/* Subtasks: показываем редактору всегда (в т.ч. в назначенном
+                   документе, чтобы он мог их выполнять). Скрыты только у подписанта. */}
+                {(!readOnly || isEditor) && <div className="dm-section">
                   <div className="dm-section-title">
                     <svg viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
                     Subtasks
@@ -2219,10 +2752,10 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                             onAddNext={addSubtask}
                             onSaveAndClose={() => { handleSave(); setTimeout(onClose, 300); }}
                             onComplete={handleCompleteSubtask}
-                            members={assignees}
+                            members={membersList}
                             defaultStart={prevDeadline || dueStartDate || null}
-                            minDate={prevDeadline || dueStartDate || null}
-                            maxDate={dueDate}/>
+                            minDate={null}
+                            maxDate={null}/>
                         );
                       })
                   }
@@ -2244,6 +2777,8 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
                 onStatusChange={(newStatus) => setStatus(newStatus)}
               />
             )}
+            </div>
+
           </div>
 
           {/* RIGHT — Activity */}
@@ -2254,6 +2789,7 @@ function DocumentModal({ doc, projectName, onClose, readOnly = false, userRole =
 
       </div>
     </div>
+    </>
   );
 }
 
@@ -2403,6 +2939,10 @@ const prCss = `
   /* overlay */
   .pr-sb-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:15}
 
+  /* spinner (shared, e.g. AI generate) */
+  .ai-spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:aiSpin .7s linear infinite;flex-shrink:0;display:inline-block}
+  @keyframes aiSpin{to{transform:rotate(360deg)}}
+
   @media(max-width:768px){
     .pr-page{ width:100%; height:100svh }
     .pr-sb{display:none}
@@ -2434,11 +2974,22 @@ const prCss = `
   HELPERS
 ══════════════════════════════════════════════════════════ */
 function AvatarStack({ members, extra=0 }) {
+  // Поддерживает строки (инициалы) и объекты { initials, avatar_url }
   return (
     <div className="av-stack">
-      {members.slice(0,3).map((m,i)=>(
-        <div key={i} className="av" style={{ background:AV_COLORS[i%AV_COLORS.length],zIndex:3-i }}>{m}</div>
-      ))}
+      {members.slice(0,3).map((m,i)=>{
+        const isObj = m && typeof m === "object";
+        const url   = isObj ? m.avatar_url : null;
+        const label = isObj ? (m.initials || "?") : m;
+        return (
+          <div key={i} className="av"
+            style={{ background: url ? "#E5E7EB" : AV_COLORS[i%AV_COLORS.length], zIndex:3-i, overflow:"hidden" }}>
+            {url
+              ? <img src={url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+              : label}
+          </div>
+        );
+      })}
       {extra>0 && <div className="av" style={{ background:"#E5E7EB",color:"#6B7280",zIndex:0 }}>+{extra}</div>}
     </div>
   );
@@ -2499,14 +3050,16 @@ function NewProjectModal({ onClose, onCreate }) {
   const [formErr,setFormErr]=useState({});
   const [creating,setCreating]=useState(false);
   const fileRef=useRef(null);
+  const activeOrgId = useOrgStore(s => s.activeOrgId);
   const handleFile=(e)=>{const f=e.dataTransfer?.files[0]||e.target.files?.[0];if(f)setFile(f);};
   const next=()=>{const errs={};if(!form.name.trim())errs.name="Required.";if(!form.docName.trim())errs.docName="Required.";if(Object.keys(errs).length){setFormErr(errs);return;}setStep(2);};
   const create=async()=>{
+    if(!activeOrgId){toast.error("Сначала создайте или выберите организацию в меню слева");return;}
     const errs=members.map(m=>({email:m.email&&!/\S+@\S+\.\S+/.test(m.email)?"Invalid email.":" "}));
     if(errs.some(e=>e.email&&e.email!=" ")){setErrors(errs);return;}
     setCreating(true);
     try {
-      const ws = await createWorkspace({ title: form.name, description: form.desc, type: "corporate" });
+      const ws = await createWorkspace({ title: form.name, description: form.desc, type: "corporate", organization: activeOrgId });
 
       // Upload initial document only if the user actually attached a file.
       // A synthesized text/plain blob with a .docx extension is not a valid
@@ -2561,7 +3114,7 @@ function NewProjectModal({ onClose, onCreate }) {
               {formErr.docName&&<span style={{ fontSize:11,color:"#EF4444" }}>{formErr.docName}</span>}
             </div>
             <div className="pr-dropzone" onClick={()=>fileRef.current?.click()} onDragOver={e=>e.preventDefault()} onDrop={handleFile}>
-              <input ref={fileRef} type="file" accept=".docx,.xlsx" style={{ display:"none" }} onChange={handleFile}/>
+              <input ref={fileRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display:"none" }} onChange={handleFile}/>
               {file?(
                 <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:6 }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.5" width="32" height="32"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -2641,12 +3194,13 @@ function WsMembersAvs({ workspaceId }) {
     staleTime: 60_000,
   });
   const list = data?.results ?? (Array.isArray(data) ? data : []);
-  const initials = list.map(m => {
+  const avatars = list.map(m => {
     const src = m.user_name || m.user_email || "?";
-    return src.split(/\s+/).slice(0, 2).map(p => p[0]).join("").toUpperCase().slice(0, 2) || "?";
+    const initials = src.split(/\s+/).slice(0, 2).map(p => p[0]).join("").toUpperCase().slice(0, 2) || "?";
+    return { initials, avatar_url: m.user_avatar || null };
   });
-  const extra = Math.max(0, initials.length - 3);
-  return <AvatarStack members={initials.slice(0, 3)} extra={extra}/>;
+  const extra = Math.max(0, avatars.length - 3);
+  return <AvatarStack members={avatars.slice(0, 3)} extra={extra}/>;
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -2777,20 +3331,15 @@ function AssignedDocsTable({ docs, onOpen }) {
             {docs.map((d) => {
               const dt = fileTypeInfo(d.file_type);
               const task = d._task;
-              const TASK_INFO = {
-                pending:     { label:"In Progress", cls:"adv2-pill-ip" },
-                in_progress: { label:"In Progress", cls:"adv2-pill-ip" },
-                done:        { label:"Completed",   cls:"adv2-pill-done" },
-                skipped:     { label:"Returned",    cls:"adv2-pill-ret" },
-                returned:    { label:"Returned",    cls:"adv2-pill-ret" },
-                waiting:     { label:"In Progress", cls:"adv2-pill-ip" },
-                urgent:      { label:"Urgent",      cls:"adv2-pill-ret" },
-              };
-              const si = TASK_INFO[task?.status] || { label:"In Progress", cls:"adv2-pill-ip" };
-              const pct = task?.status === "done" ? 100
-                        : task?.status === "in_progress" ? 70
-                        : task?.status === "pending" ? 20
-                        : 0;
+              // Реальный прогресс согласования документа (выполнено шагов / всего)
+              const pct = typeof d.progress === "number"
+                ? d.progress
+                : (task?.status === "done" ? 100 : 0);
+              const si = pct >= 100
+                ? { label:"Completed",   cls:"adv2-pill-done" }
+                : (task?.status === "skipped" || task?.status === "returned")
+                  ? { label:"Returned",  cls:"adv2-pill-ret" }
+                  : { label:"In Progress", cls:"adv2-pill-ip" };
               const dateSrc = d.created_at || task?.created_at;
               const dateLbl = dateSrc
                 ? new Date(dateSrc).toLocaleDateString("en-US", { month:"long", day:"numeric" })
@@ -3052,6 +3601,7 @@ function NewDocModal({ project, onClose }) {
     try {
       await serverUploadDocument(project.id, title.trim(), pickedFile);
       qc.invalidateQueries({ queryKey: ["documents", project.id] });
+      qc.invalidateQueries({ queryKey: ["workspaces"] });
       toast.success("Document created");
       onClose();
     } catch (e) {
@@ -3065,6 +3615,7 @@ function NewDocModal({ project, onClose }) {
     try {
       await copyDocument(selectedDoc.id, project.id);
       qc.invalidateQueries({ queryKey: ["documents", project.id] });
+      qc.invalidateQueries({ queryKey: ["workspaces"] });
       toast.success("Document added to project");
       onClose();
     } catch (e) {
@@ -3120,7 +3671,7 @@ function NewDocModal({ project, onClose }) {
               style={{ border:"1.5px dashed #E5E7EB",borderRadius:10,padding:"16px 12px",textAlign:"center",cursor:"pointer",background:"#FAFAFA",transition:"border-color .15s" }}
               onMouseEnter={e=>e.currentTarget.style.borderColor="#2563EB"}
               onMouseLeave={e=>e.currentTarget.style.borderColor="#E5E7EB"}>
-              <input ref={fileInputRef} type="file" accept=".docx,.xlsx" style={{ display:"none" }}
+              <input ref={fileInputRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display:"none" }}
                 onChange={e=>{ const f=e.target.files?.[0]; if(f) setPickedFile(f); }}/>
               {pickedFile ? (
                 <div style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:"#374151",fontSize:13 }}>
@@ -3135,7 +3686,7 @@ function NewDocModal({ project, onClose }) {
                 <div style={{ color:"#9CA3AF",fontSize:13 }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" width="22" height="22" style={{ display:"block",margin:"0 auto 6px" }}><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
                   {t("documents.dropFileHere")} <span style={{ color:"#9CA3AF",fontSize:11 }}>(optional)</span>
-                  <div style={{ fontSize:11,marginTop:3 }}>docx · xlsx</div>
+                  <div style={{ fontSize:11,marginTop:3 }}>pdf · docx · xlsx</div>
                 </div>
               )}
             </div>
@@ -3155,7 +3706,8 @@ function NewDocModal({ project, onClose }) {
             <div style={{ display:"flex",justifyContent:"flex-end",gap:10,marginTop:4 }}>
               <button onClick={onClose} style={{ padding:"9px 18px",fontSize:13,fontWeight:500,border:"1.5px solid #E5E7EB",borderRadius:8,background:"#fff",color:"#374151",fontFamily:"inherit",cursor:"pointer" }}>{t("common.cancel")}</button>
               <button onClick={handleUpload} disabled={!title.trim()||saving}
-                style={{ padding:"9px 20px",fontSize:13,fontWeight:600,border:"none",borderRadius:8,background:"#2563EB",color:"#fff",fontFamily:"inherit",cursor:(!title.trim()||saving)?"not-allowed":"pointer",opacity:(!title.trim()||saving)?0.5:1 }}>
+                style={{ display:"flex",alignItems:"center",gap:7,padding:"9px 20px",fontSize:13,fontWeight:600,border:"none",borderRadius:8,background:"#2563EB",color:"#fff",fontFamily:"inherit",cursor:(!title.trim()||saving)?"not-allowed":"pointer",opacity:(!title.trim()||saving)?0.5:1 }}>
+                {saving && <span className="ai-spin"/>}
                 {saving?t("projects.uploading"):t("projects.upload")}
               </button>
             </div>
@@ -3221,9 +3773,9 @@ function NewDocModal({ project, onClose }) {
 function ManageMembersModal({ project, onClose }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const [newMembers, setNewMembers] = useState([{ email: "", role: "viewer" }]);
-  const [errors, setErrors] = useState([]);
+  const orgId = project._raw?.organization || project.organization || null;
   const [saving, setSaving] = useState(false);
+  const [selected, setSelected] = useState({}); // { userId: role }
 
   const { data: membersData, isLoading } = useQuery({
     queryKey: ["members", project.id],
@@ -3232,26 +3784,41 @@ function ManageMembersModal({ project, onClose }) {
   });
   const existing = membersData?.results ?? (Array.isArray(membersData) ? membersData : []);
 
+  // Кандидаты на добавление — только участники организации, которых ещё нет в проекте
+  const { data: orgMembersData, isLoading: orgLoading } = useQuery({
+    queryKey: ["org-members", orgId],
+    queryFn: () => getOrgMembers(orgId),
+    enabled: !!orgId,
+  });
+  const orgMembers = orgMembersData?.results ?? (Array.isArray(orgMembersData) ? orgMembersData : []);
+  const existingUserIds = new Set(existing.map(m => String(m.user)));
+  const candidates = orgMembers.filter(u => !existingUserIds.has(String(u.id)));
+
+  const toggle = (u) => setSelected(s => {
+    const next = { ...s };
+    if (next[u.id]) delete next[u.id]; else next[u.id] = "viewer";
+    return next;
+  });
+  const setRole = (uid, role) => setSelected(s => ({ ...s, [uid]: role }));
+
   const handleAdd = async () => {
-    const toInvite = newMembers.filter(m => m.email?.trim());
-    if (toInvite.length === 0) { onClose(); return; }
-    const errs = newMembers.map(m => ({
-      email: m.email && !/\S+@\S+\.\S+/.test(m.email) ? "Invalid email." : " ",
-    }));
-    if (errs.some(e => e.email && e.email !== " ")) { setErrors(errs); return; }
+    const picks = candidates.filter(u => selected[u.id]);
+    if (picks.length === 0) { onClose(); return; }
     setSaving(true);
+    // Участники организации добавляются в проект напрямую — без приглашения
+    // (приглашение/принятие требуется только на уровне организации).
     const results = await Promise.allSettled(
-      toInvite.map(m => inviteToWorkspace(project.id, m.email, m.role || "viewer"))
+      picks.map(u => addMember(project.id, { user_id: u.id, role: selected[u.id] || "viewer" }))
     );
     setSaving(false);
     const failed = results.filter(r => r.status === "rejected");
     if (failed.length) {
-      const msg = failed[0]?.reason?.response?.data?.detail || `${failed.length} invite(s) failed`;
-      toast.error(msg);
+      toast.error(failed[0]?.reason?.response?.data?.detail || `${failed.length} участник(ов) не добавлено`);
     } else {
-      toast.success("Приглашения отправлены! Пользователи увидят их в Inbox.");
+      toast.success("Участники добавлены в проект");
     }
     qc.invalidateQueries({ queryKey: ["members", project.id] });
+    qc.invalidateQueries({ queryKey: ["workspaces"] });
     onClose();
   };
 
@@ -3284,7 +3851,7 @@ function ManageMembersModal({ project, onClose }) {
                       <div style={{ fontSize:13,fontWeight:500,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{m.user_name||"—"}</div>
                       <div style={{ fontSize:11,color:"#9CA3AF" }}>{m.user_email||""}</div>
                     </div>
-                    <span style={{ fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20,background:"#EEF2FF",color:"#4F46E5" }}>
+                    <span style={{ fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:20,background:"#EEF2FF",color:"#4F46E5",flexShrink:0 }}>
                       {roleLabel[m.role]||m.role}
                     </span>
                   </div>
@@ -3292,9 +3859,36 @@ function ManageMembersModal({ project, onClose }) {
           }
         </div>
 
-        {/* Invite new */}
-        <div style={{ fontSize:12,fontWeight:600,color:"#6B7280",textTransform:"uppercase",letterSpacing:.5,marginBottom:10 }}>{t("projects.inviteNew")}</div>
-        <MemberInvite members={newMembers} setMembers={setNewMembers} errors={errors} setErrors={setErrors}/>
+        {/* Add from organization members only */}
+        <div style={{ fontSize:12,fontWeight:600,color:"#6B7280",textTransform:"uppercase",letterSpacing:.5,marginBottom:10 }}>Добавить из участников организации</div>
+        {!orgId ? (
+          <div style={{ fontSize:13,color:"#9CA3AF" }}>Проект не привязан к организации.</div>
+        ) : orgLoading ? (
+          <div style={{ fontSize:13,color:"#9CA3AF" }}>Загрузка…</div>
+        ) : candidates.length === 0 ? (
+          <div style={{ fontSize:13,color:"#9CA3AF" }}>Все участники организации уже в проекте. Чтобы добавить новых людей — пригласите их в организацию на её странице.</div>
+        ) : (
+          <div style={{ display:"flex",flexDirection:"column",gap:6,maxHeight:240,overflowY:"auto" }}>
+            {candidates.map(u => {
+              const sel = !!selected[u.id];
+              return (
+                <div key={u.id} style={{ display:"flex",alignItems:"center",gap:10,padding:"8px 10px",border:`1px solid ${sel?"#BFDBFE":"#F3F4F6"}`,borderRadius:8,background:sel?"#EFF6FF":"#fff" }}>
+                  <input type="checkbox" checked={sel} onChange={()=>toggle(u)} style={{ width:15,height:15,accentColor:"#2563EB",cursor:"pointer",flexShrink:0 }}/>
+                  <div style={{ flex:1,minWidth:0 }}>
+                    <div style={{ fontSize:13,fontWeight:500,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{u.full_name||u.email}</div>
+                    <div style={{ fontSize:11,color:"#9CA3AF" }}>{u.email}</div>
+                  </div>
+                  {sel && (
+                    <select value={selected[u.id]} onChange={e=>setRole(u.id, e.target.value)}
+                      style={{ border:"1px solid #E5E7EB",borderRadius:7,padding:"5px 8px",fontSize:12,fontFamily:"inherit",cursor:"pointer",color:"#374151" }}>
+                      {["viewer","signer","editor","owner"].map(r=><option key={r} value={r}>{roleLabel[r]}</option>)}
+                    </select>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <div style={{ display:"flex",gap:10,justifyContent:"flex-end",marginTop:20 }}>
           <button onClick={onClose} style={{ border:".5px solid #E5E7EB",borderRadius:8,padding:"9px 20px",fontSize:13,background:"#fff",color:"#6B7280",cursor:"pointer",fontFamily:"inherit" }}>{t("common.cancel")}</button>
@@ -3311,7 +3905,7 @@ function ManageMembersModal({ project, onClose }) {
 /* ══════════════════════════════════════════════════════════
    PROJECT DETAIL
 ══════════════════════════════════════════════════════════ */
-function ProjectDetail({ project }) {
+function ProjectDetail({ project, onNavigate }) {
   const { t } = useTranslation();
   const user = useAuthStore(s => s.user);
   const [view,setView]=useState("table");
@@ -3345,7 +3939,7 @@ function ProjectDetail({ project }) {
   const dsc=(s)=>docStatusClass(s);
   return (
     <div style={{ padding:"20px",flex:1,overflow:"auto" }}>
-      {openDoc && <DocumentModal doc={openDoc} projectName={project.name} onClose={()=>setOpenDoc(null)} userRole={currentUserRole}/>}
+      {openDoc && <DocumentModal doc={openDoc} projectName={project.name} onClose={()=>setOpenDoc(null)} userRole={currentUserRole} onNavigate={onNavigate}/>}
       {showNewDoc && <NewDocModal project={project} onClose={()=>setShowNewDoc(false)}/>}
       {showMembers && <ManageMembersModal project={project} onClose={()=>setShowMembers(false)}/>}
       <div style={{ display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:4 }}>
@@ -3625,10 +4219,24 @@ export default function Projects({ onGoToAuth, onNavigate }) {
     queryFn: getWorkspaces,
   });
 
+  // Global hybrid search (FTS + vector via MeiliSearch, Postgres fallback)
+  const [searchFocused, setSearchFocused] = useState(false);
+  const { data: globalResults, isFetching: searching } = useQuery({
+    queryKey: ["global-search", debouncedSearch],
+    queryFn: () => globalSearch(debouncedSearch),
+    enabled: debouncedSearch.trim().length >= 2,
+    staleTime: 15_000,
+  });
+  const gsDocs = globalResults?.documents ?? [];
+  const gsWs   = globalResults?.workspaces ?? [];
+  const showGlobal = searchFocused && debouncedSearch.trim().length >= 2;
+
   // Assigned tab: задачи назначенные текущему пользователю → уникальные документы
   const { data: assignedTasksData, isLoading: assignedLoading } = useQuery({
     queryKey: ["tasks", "assigned-projects"],
-    queryFn: () => getTasks({ status: "in_progress" }),
+    // Все задачи, назначенные мне (любой статус) — чтобы документ оставался
+    // виден с растущим прогрессом, а не исчезал после «Согласовать».
+    queryFn: () => getTasks(),
     enabled: tab === "assigned",
   });
 
@@ -3655,6 +4263,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   });
   const hasUnread = (unreadData?.count ?? 0) > 0;
 
+  const activeOrgId = useOrgStore(s => s.activeOrgId);
   const allWs = wsData?.results ?? (Array.isArray(wsData) ? wsData : []);
   const _orgName = allWs[0]?.title || "Organization";
 
@@ -3662,16 +4271,17 @@ export default function Projects({ onGoToAuth, onNavigate }) {
     const statusMap = { active: "Active", archived: "Archived", closed: "Completed" };
     const membersCount = ws.members_count ?? 0;
     const filesCount   = ws.documents_count ?? 0;
-    // AvatarStack ожидает массив строк (инициалы)
-    const fakeMembers = Array.from({ length: Math.min(membersCount, 3) }, (_, i) =>
-      String.fromCharCode(65 + i) // "A", "B", "C"
-    );
+    // Реальные инициалы участников из members_preview (с бэкенда)
+    const toInitials = (name) =>
+      (name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]).join("").toUpperCase() || "?";
+    const preview = Array.isArray(ws.members_preview) ? ws.members_preview : [];
+    const memberAvatars = preview.slice(0, 3).map(m => ({ initials: toInitials(m.name), avatar_url: m.avatar_url || null }));
     return {
       id:      ws.id,
       name:    ws.title,
       status:  statusMap[ws.status] || "Active",
-      members: fakeMembers,
-      extra:   Math.max(0, membersCount - 3),
+      members: memberAvatars,
+      extra:   Math.max(0, membersCount - memberAvatars.length),
       files:   filesCount,
       updated: ws.created_at
         ? new Date(ws.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })
@@ -3687,6 +4297,8 @@ export default function Projects({ onGoToAuth, onNavigate }) {
   // к ним задачи попадают в Assigned Documents.
   const managedProjects = allWs
     .filter(ws => ws.status === "active" && ws.user_role === "owner")
+    // Показываем проекты только активной организации (если она выбрана)
+    .filter(ws => !activeOrgId || String(ws.organization) === String(activeOrgId))
     .filter(ws => !searchLower || ws.title.toLowerCase().includes(searchLower))
     .map(wsToRow);
 
@@ -3714,6 +4326,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
       organization_id:   t.organization_id || null,
       organization_name: t.organization_name || null,
       role:              taskRoleFromRequest(t.request_type),
+      progress:          typeof t.document_progress === "number" ? t.document_progress : 0,
       _task:             t,
     }));
 
@@ -3814,7 +4427,8 @@ export default function Projects({ onGoToAuth, onNavigate }) {
           projectName={selectedDoc?.uploaded_by_name || "Assigned Documents"}
           onClose={() => setSelectedDoc(null)}
           readOnly={true}
-          userRole="signer"
+          userRole={selectedDoc?.role || "editor"}
+          onNavigate={onNavigate}
         />
       )}
 
@@ -3888,7 +4502,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
           <div className="pr-container">
             {selected ? (
               <div className="pr-inner" style={{ display:"flex",flexDirection:"column" }}>
-                <ProjectDetail project={selected}/>
+                <ProjectDetail project={selected} onNavigate={onNavigate}/>
               </div>
             ) : (
               <>
@@ -3898,19 +4512,73 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                     <p style={{ fontSize:13,color:"#9CA3AF" }}>{t("projects.workspaceDesc")}</p>
                   </div>
                   <div style={{ display:"flex",alignItems:"center",gap:10 }}>
-                    <div style={{ display:"flex",alignItems:"center",gap:6,border:".5px solid #E5E7EB",borderRadius:8,padding:"7px 12px",background:"#F9FAFB",minWidth:220 }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                      <input
-                        placeholder={t("projects.searchHint")}
-                        value={searchQuery}
-                        onChange={e => setSearchQuery(e.target.value)}
-                        style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",width:190,fontFamily:"inherit" }}
-                      />
-                      {searchQuery && (
-                        <button onClick={() => { setSearchQuery(""); setDebouncedSearch(""); }}
-                          style={{ border:"none",background:"none",cursor:"pointer",color:"#9CA3AF",padding:0,display:"flex",alignItems:"center" }}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                        </button>
+                    <div style={{ position:"relative" }}>
+                      <div style={{ display:"flex",alignItems:"center",gap:6,border:".5px solid #E5E7EB",borderRadius:8,padding:"7px 12px",background:"#F9FAFB",minWidth:220 }}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <input
+                          placeholder={t("projects.searchHint")}
+                          value={searchQuery}
+                          onChange={e => setSearchQuery(e.target.value)}
+                          onFocus={() => setSearchFocused(true)}
+                          onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
+                          style={{ border:"none",outline:"none",background:"transparent",fontSize:12.5,color:"#374151",width:190,fontFamily:"inherit" }}
+                        />
+                        {searchQuery && (
+                          <button onClick={() => { setSearchQuery(""); setDebouncedSearch(""); }}
+                            style={{ border:"none",background:"none",cursor:"pointer",color:"#9CA3AF",padding:0,display:"flex",alignItems:"center" }}>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          </button>
+                        )}
+                      </div>
+
+                      {showGlobal && (
+                        <div style={{ position:"absolute",top:"calc(100% + 6px)",right:0,width:340,maxHeight:380,overflowY:"auto",background:"#fff",border:".5px solid #E5E7EB",borderRadius:12,boxShadow:"0 8px 28px rgba(0,0,0,.12)",zIndex:9600,padding:"6px 0" }}>
+                          {searching && <div style={{ padding:"14px 16px",fontSize:12,color:"#9CA3AF" }}>Поиск…</div>}
+                          {!searching && gsDocs.length === 0 && gsWs.length === 0 && (
+                            <div style={{ padding:"14px 16px",fontSize:12,color:"#9CA3AF" }}>Ничего не найдено по «{debouncedSearch}»</div>
+                          )}
+                          {gsDocs.length > 0 && (
+                            <>
+                              <div style={{ padding:"6px 14px 4px",fontSize:10.5,fontWeight:600,color:"#9CA3AF",textTransform:"uppercase",letterSpacing:".04em" }}>Документы</div>
+                              {gsDocs.map(d => {
+                                const dt = fileTypeInfo(d.file_type);
+                                return (
+                                  <div key={d.id} onMouseDown={() => setSelectedDoc({ id:d.id, title:d.title, workspace:d.workspace_id, file_type:d.file_type })}
+                                    style={{ display:"flex",alignItems:"center",gap:10,padding:"8px 14px",cursor:"pointer" }}
+                                    onMouseEnter={e=>e.currentTarget.style.background="#F9FAFB"}
+                                    onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
+                                    <div style={{ width:28,height:32,borderRadius:6,background:dt.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                                      <span style={{ fontSize:8,fontWeight:700,color:dt.color }}>{dt.ext}</span>
+                                    </div>
+                                    <div style={{ flex:1,minWidth:0 }}>
+                                      <div style={{ fontSize:12.5,fontWeight:500,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{d.title}</div>
+                                      {d.workspace_title && <div style={{ fontSize:11,color:"#9CA3AF" }}>{d.workspace_title}</div>}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </>
+                          )}
+                          {gsWs.length > 0 && (
+                            <>
+                              <div style={{ padding:"8px 14px 4px",fontSize:10.5,fontWeight:600,color:"#9CA3AF",textTransform:"uppercase",letterSpacing:".04em" }}>Проекты</div>
+                              {gsWs.map(w => (
+                                <div key={w.id} onMouseDown={() => onNavigate?.("projects")}
+                                  style={{ display:"flex",alignItems:"center",gap:10,padding:"8px 14px",cursor:"pointer" }}
+                                  onMouseEnter={e=>e.currentTarget.style.background="#F9FAFB"}
+                                  onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
+                                  <div style={{ width:28,height:28,borderRadius:7,background:"#EEF2FF",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="#4F46E5" strokeWidth="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                                  </div>
+                                  <div style={{ flex:1,minWidth:0 }}>
+                                    <div style={{ fontSize:12.5,fontWeight:500,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{w.title}</div>
+                                    {w.type && <div style={{ fontSize:11,color:"#9CA3AF" }}>{w.type}</div>}
+                                  </div>
+                                </div>
+                              ))}
+                            </>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -3925,6 +4593,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                 </div>
 
                 <div className="pr-inner" style={{ flex:1 }}>
+                  <div key={tab} className="app-fade-in">
                   {tab==="managed" && (
                     wsLoading
                       ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,padding:60,color:"#9CA3AF",fontSize:13 }}>{t("common.loading")}</div>
@@ -3957,6 +4626,7 @@ export default function Projects({ onGoToAuth, onNavigate }) {
                           </>
                   )}
                   {tab==="archived" && (archivedProjects.length===0 && archivedDocs.length===0 ? <ArchivedEmpty/> : <ArchivedSection projects={archivedProjects} docs={archivedDocs}/>)}
+                  </div>
                 </div>
               </>
             )}

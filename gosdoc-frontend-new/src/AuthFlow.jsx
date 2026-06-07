@@ -3,8 +3,9 @@ import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { login, register, verifyEmail, resendCode, resetPasswordRequest, resetPasswordConfirm, googleAuth } from "./api/auth";
-import { createWorkspace } from "./api/workspaces";
+import { createOrganization } from "./api/organizations";
 import useAuthStore from "./store/authStore";
+import useOrgStore from "./store/orgStore";
 import logoImg from "./assets/Group 2.svg";
 
 /* ═══════════════════════════════════════════════════════
@@ -785,6 +786,10 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const typeRef = useRef(null);
+  const setActiveOrg = useOrgStore(s => s.setActiveOrg);
+
+  // Визуальный тип кабинета → тип организации в БД (individual | corporate)
+  const ORG_TYPE_MAP = { personal: "individual", team: "corporate", organization: "corporate" };
 
   const WORKSPACE_TYPES = [
     { value: "personal",     label: t("auth.wsPersonal")     },
@@ -807,7 +812,11 @@ function SignUpStep3({ onNext, onBack, onSkip }) {
 
     setLoading(true);
     try {
-      await createWorkspace({ title: form.name, type: form.type });
+      const org = await createOrganization({
+        name: form.name.trim(),
+        type: ORG_TYPE_MAP[form.type] || "corporate",
+      });
+      if (org?.id) setActiveOrg(org.id);   // новая организация становится активной
       onNext({});
     } catch (err) {
       toast.error(t("auth.wsCreateFailed"));

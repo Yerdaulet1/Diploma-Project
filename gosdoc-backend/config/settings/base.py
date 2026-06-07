@@ -355,6 +355,8 @@ MEILISEARCH_KEY = config("MEILISEARCH_KEY", default="gosdoc-meili-key-2026")
 DATA_UPLOAD_MAX_MEMORY_SIZE = 104_857_600   # 100 МБ
 FILE_UPLOAD_MAX_MEMORY_SIZE = 104_857_600   # 100 МБ
 
-# Поддерживаемые форматы документов (раздел 2.5 ТЗ)
-ALLOWED_DOCUMENT_EXTENSIONS = ["docx", "xlsx"]
+# Поддерживаемые форматы документов (раздел 2.5 ТЗ).
+# PDF — для документов, которые нельзя редактировать, только подписывать
+# электронной подписью (договоры, акты и т.п.).
+ALLOWED_DOCUMENT_EXTENSIONS = ["pdf", "docx", "xlsx"]
 MAX_DOCUMENT_SIZE_BYTES = 104_857_600  # 100 МБ

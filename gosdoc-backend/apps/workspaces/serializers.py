@@ -15,11 +15,12 @@ class WorkspaceMemberSerializer(serializers.ModelSerializer):
     """Полный сериализатор участника кабинета."""
     user_email = serializers.EmailField(source="user.email", read_only=True)
     user_name = serializers.CharField(source="user.full_name", read_only=True)
+    user_avatar = serializers.CharField(source="user.avatar_url", read_only=True, allow_null=True)
 
     class Meta:
         model = WorkspaceMember
         fields = [
-            "id", "workspace", "user", "user_email", "user_name",
+            "id", "workspace", "user", "user_email", "user_name", "user_avatar",
             "role", "step_order", "joined_at",
         ]
         read_only_fields = ["id", "workspace", "joined_at"]
@@ -140,6 +141,7 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
     organization_name = serializers.CharField(source="organization.name", read_only=True, allow_null=True)
     user_role         = serializers.SerializerMethodField()
     members_count     = serializers.SerializerMethodField()
+    members_preview   = serializers.SerializerMethodField()
     member_limit      = serializers.SerializerMethodField()
     documents_count   = serializers.SerializerMethodField()
     created_by_name   = serializers.CharField(source="created_by.full_name", read_only=True, allow_null=True)
@@ -147,9 +149,9 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Workspace
         fields = [
-            "id", "title", "type", "organization_name",
+            "id", "title", "type", "organization", "organization_name",
             "status", "deadline", "created_at",
-            "user_role", "members_count", "member_limit",
+            "user_role", "members_count", "members_preview", "member_limit",
             "documents_count", "created_by_name",
         ]
         read_only_fields = fields
@@ -165,6 +167,17 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
 
     def get_members_count(self, obj) -> int:
         return obj.members.count()
+
+    def get_members_preview(self, obj) -> list:
+        """Первые участники (имя + аватар) — для отрисовки реальных аватарок в списке."""
+        members = obj.members.select_related("user").all()[:4]
+        return [
+            {
+                "name": m.user.full_name or m.user.email,
+                "avatar_url": getattr(m.user, "avatar_url", None),
+            }
+            for m in members if m.user
+        ]
 
     def get_member_limit(self, obj) -> int | None:
         """Максимально допустимое число участников. None — без ограничения."""

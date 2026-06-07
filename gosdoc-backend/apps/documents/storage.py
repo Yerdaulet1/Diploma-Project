@@ -52,11 +52,19 @@ CONTENT_TYPE_MAP = {
 }
 
 
+_s3_client_cache = None
+
+
 def get_s3_client():
     """
-    Создаёт boto3 S3-клиент.
+    Возвращает boto3 S3-клиент (кэшируется на процесс, чтобы не создавать
+    новое TLS-соединение на каждый запрос — это ускоряет загрузку/скачивание).
     Поддерживает AWS S3 и Yandex Object Storage (через AWS_S3_ENDPOINT_URL).
     """
+    global _s3_client_cache
+    if _s3_client_cache is not None:
+        return _s3_client_cache
+
     endpoint_url = getattr(settings, "AWS_S3_ENDPOINT_URL", None)
     # Если кастомный endpoint не задан — используем региональный AWS endpoint.
     # Это критично для presigned POST: глобальный s3.amazonaws.com делает 307 redirect,
@@ -65,7 +73,7 @@ def get_s3_client():
         region = settings.AWS_S3_REGION_NAME
         endpoint_url = f"https://s3.{region}.amazonaws.com"
 
-    return boto3.client(
+    _s3_client_cache = boto3.client(
         "s3",
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
@@ -73,6 +81,7 @@ def get_s3_client():
         endpoint_url=endpoint_url,
         config=Config(signature_version="s3v4"),
     )
+    return _s3_client_cache
 
 
 def generate_storage_key(workspace_id: str, filename: str) -> str:
@@ -203,9 +212,16 @@ def generate_presigned_post(
 # Presigned GET URL — скачивание документа (раздел 6 ТЗ)
 # ============================================================
 
-def generate_presigned_url(storage_key: str, expiration: int = None, filename: str = None) -> Optional[str]:
+def generate_presigned_url(
+    storage_key: str,
+    expiration: int = None,
+    filename: str = None,
+    disposition: str = "attachment",
+    content_type: str = None,
+) -> Optional[str]:
     """
-    Генерирует presigned GET URL для скачивания файла из S3.
+    Генерирует presigned GET URL для файла из S3.
+    disposition="inline" — открыть в браузере (просмотр PDF), "attachment" — скачать.
     В dev-режиме возвращает URL локального медиа-файла.
     """
     if _is_local_storage():
@@ -216,12 +232,18 @@ def generate_presigned_url(storage_key: str, expiration: int = None, filename: s
     if expiration is None:
         expiration = settings.AWS_QUERYSTRING_EXPIRE
 
+    if disposition not in ("inline", "attachment"):
+        disposition = "attachment"
+
     params = {
         "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
         "Key": storage_key,
     }
     if filename:
-        params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+        params["ResponseContentDisposition"] = f'{disposition}; filename="{filename}"'
+    if content_type:
+        # Заставляем S3 отдать правильный MIME (иначе браузер может скачать вместо показа)
+        params["ResponseContentType"] = content_type
 
     try:
         client = get_s3_client()

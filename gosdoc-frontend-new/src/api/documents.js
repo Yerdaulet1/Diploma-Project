@@ -47,8 +47,24 @@ export const uploadFileToS3 = (presignedData, file, onProgress) => {
 };
 
 // --- Download ---
-export const getDownloadUrl = (id) =>
-  api.get(`/documents/${id}/download/`).then((r) => r.data);
+export const getDownloadUrl = (id, params) =>
+  api.get(`/documents/${id}/download/`, { params }).then((r) => r.data);
+
+// Сырые байты файла через бэкенд (для рендера PDF в pdf.js без CORS)
+export const getDocumentRaw = (id) =>
+  api.get(`/documents/${id}/raw/`, { responseType: "arraybuffer" }).then((r) => r.data);
+
+// Подпись PDF с координатами (впечатывание подписи на странице)
+export const signPdf = (id, data) =>
+  api.post(`/documents/${id}/sign-pdf/`, data).then((r) => r.data);
+
+// Экспорт содержимого Word-документа (с подписью) в PDF (blob)
+export const exportDocumentPdf = (id) =>
+  api.get(`/documents/${id}/export-pdf/`, { responseType: "blob" }).then((r) => r.data);
+
+// Подпись Word (.docx): впечатывает подпись в файл, остаётся .docx
+export const signDocx = (id, data) =>
+  api.post(`/documents/${id}/sign-docx/`, data).then((r) => r.data);
 
 // --- Versions ---
 export const getVersions = (documentId) =>
@@ -68,6 +84,15 @@ export const getVersionDiff = (documentId, versionId) =>
   api
     .get(`/documents/${documentId}/versions/${versionId}/diff/`)
     .then((r) => r.data);
+
+// Server-side new-version upload (no CORS) — Content-Type left to the browser
+export const serverUploadVersion = (documentId, file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api
+    .post(`/documents/${documentId}/versions/server-upload/`, fd, { headers: { "Content-Type": undefined } })
+    .then((r) => r.data);
+};
 
 // --- Workflow ---
 export const startWorkflow = (documentId) =>

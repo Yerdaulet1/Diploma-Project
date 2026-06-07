@@ -520,7 +520,14 @@ class DocumentDownloadView(APIView):
         )
         # Имя файла для Content-Disposition
         filename = f"{document.title}.{document.file_type}"
-        url = generate_presigned_url(document.storage_key, filename=filename)
+        # inline — для просмотра в браузере (PDF), attachment — для скачивания
+        disposition = request.query_params.get("disposition", "attachment")
+        url = generate_presigned_url(
+            document.storage_key,
+            filename=filename,
+            disposition=disposition,
+            content_type=get_content_type(filename),
+        )
 
         if not url:
             return Response(
@@ -534,6 +541,168 @@ class DocumentDownloadView(APIView):
             "file_name": filename,
             "file_type": document.file_type,
         })
+
+
+class DocumentRawView(APIView):
+    """
+    GET /api/v1/documents/{id}/raw/
+    JWT + Member — отдаёт байты файла напрямую через бэкенд (inline).
+    Нужен для рендера PDF через pdf.js без CORS-проблем с S3.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        from django.conf import settings as dj_settings
+        from django.http import HttpResponse
+        document = get_object_or_404(
+            Document.objects.filter(workspace__members__user=request.user),
+            pk=pk,
+        )
+        key = document.storage_key
+        try:
+            from .storage import _is_local_storage, _local_path, get_s3_client
+            if _is_local_storage():
+                with open(_local_path(key), "rb") as f:
+                    data = f.read()
+            else:
+                import io
+                buf = io.BytesIO()
+                get_s3_client().download_fileobj(dj_settings.AWS_STORAGE_BUCKET_NAME, key, buf)
+                data = buf.getvalue()
+        except Exception as exc:
+            logger.error("raw: download error doc=%s: %s", document.id, exc)
+            return Response({"detail": "Файл недоступен."}, status=status.HTTP_404_NOT_FOUND)
+
+        content_type = get_content_type(f"x.{document.file_type}")
+        resp = HttpResponse(data, content_type=content_type)
+        resp["Content-Disposition"] = f'inline; filename="{document.title}.{document.file_type}"'
+        return resp
+
+
+class DocumentExportPdfView(APIView):
+    """
+    GET /api/v1/documents/{id}/export-pdf/
+    JWT + Member — рендерит редактируемое содержимое документа (content.html,
+    включая вставленную подпись) в PDF через WeasyPrint и отдаёт на скачивание.
+    Нужен, чтобы скачанный Word-документ содержал подпись.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        from django.http import HttpResponse
+        document = get_object_or_404(
+            Document.objects.filter(workspace__members__user=request.user),
+            pk=pk,
+        )
+        content = document.content or {}
+        html = content.get("html") if isinstance(content, dict) else None
+        if not html or not html.strip():
+            return Response(
+                {"detail": "У документа нет содержимого для экспорта. Откройте и сохраните его в редакторе."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        full_html = (
+            "<html><head><meta charset='utf-8'><style>"
+            "@page { size: A4; margin: 2.5cm 2cm; }"
+            "body { font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 13px; line-height: 1.6; color: #111827; }"
+            "img { max-width: 100%; }"
+            "table { border-collapse: collapse; width: 100%; }"
+            "td, th { border: 1px solid #D1D5DB; padding: 6px 10px; }"
+            f"</style></head><body>{html}</body></html>"
+        )
+        try:
+            import weasyprint
+            pdf_bytes = weasyprint.HTML(string=full_html).write_pdf()
+        except Exception as exc:
+            logger.error("export-pdf: render error doc=%s: %s", document.id, exc)
+            return Response({"detail": "Не удалось сформировать PDF."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="{document.title}.pdf"'
+        return resp
+
+
+class DocumentToPdfView(APIView):
+    """
+    POST /api/v1/documents/{id}/to-pdf/
+    JWT + Member — финализирует Word/прочий документ в PDF (для подписи):
+    берёт content.html (или извлекает текст из файла), рендерит в PDF через
+    WeasyPrint, сохраняет как новую версию и делает документ PDF.
+    После этого подпись ставится тем же удобным PDF-флоу.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        document = get_object_or_404(
+            Document.objects.filter(workspace__members__user=request.user).select_related("workspace"),
+            pk=pk,
+        )
+        if (document.file_type or "").lower() == "pdf":
+            return Response(DocumentSerializer(document, context={"request": request}).data)
+
+        content = document.content or {}
+        html = content.get("html") if isinstance(content, dict) else None
+        if not html or not html.strip():
+            html = self._extract_html(document)
+        if not html or not html.strip():
+            return Response(
+                {"detail": "Нет содержимого для конвертации. Откройте документ и сохраните его."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        full_html = (
+            "<html><head><meta charset='utf-8'><style>"
+            "@page { size: A4; margin: 2.5cm 2cm; }"
+            "body { font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 13px; line-height: 1.6; color: #111827; }"
+            "img { max-width: 100%; } table { border-collapse: collapse; width: 100%; }"
+            "td, th { border: 1px solid #D1D5DB; padding: 6px 10px; }"
+            f"</style></head><body>{html}</body></html>"
+        )
+        try:
+            import weasyprint
+            pdf_bytes = weasyprint.HTML(string=full_html).write_pdf()
+        except Exception as exc:
+            logger.error("to-pdf: render error doc=%s: %s", document.id, exc)
+            return Response({"detail": "Не удалось сформировать PDF."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        import io
+        from .storage import generate_storage_key, upload_to_s3
+        new_key = generate_storage_key(str(document.workspace_id), f"{document.title}.pdf")
+        if not upload_to_s3(io.BytesIO(pdf_bytes), new_key, content_type="application/pdf"):
+            return Response({"detail": "Не удалось сохранить PDF."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        version_number = document.versions.count() + 1
+        version = DocumentVersion.objects.create(
+            document=document, version_number=version_number,
+            storage_key=new_key, checksum="pending", created_by=request.user,
+        )
+        document.file_type = "pdf"
+        document.storage_key = new_key
+        document.current_version = version
+        document.save(update_fields=["file_type", "storage_key", "current_version", "updated_at"])
+        logger.info("Документ '%s' финализирован в PDF для подписи (by %s)", document.title, request.user.email)
+        return Response(DocumentSerializer(document, context={"request": request}).data)
+
+    def _extract_html(self, document):
+        ft = (document.file_type or "").lower()
+        if ft not in ("docx", "odt"):
+            return None
+        try:
+            import io
+            import mammoth
+            from django.conf import settings as s
+            from .storage import _is_local_storage, _local_path, get_s3_client
+            if _is_local_storage():
+                with open(_local_path(document.storage_key), "rb") as f:
+                    data = f.read()
+            else:
+                obj = get_s3_client().get_object(Bucket=s.AWS_STORAGE_BUCKET_NAME, Key=document.storage_key)
+                data = obj["Body"].read()
+            return mammoth.convert_to_html(io.BytesIO(data)).value
+        except Exception as exc:
+            logger.warning("to-pdf extract failed doc=%s: %s", document.id, exc)
+            return None
 
 
 # ============================================================
@@ -691,6 +860,86 @@ class DocumentVersionCreateView(APIView):
         return Response(DocumentVersionSerializer(version).data, status=status.HTTP_201_CREATED)
 
 
+class DocumentVersionServerUploadView(APIView):
+    """
+    POST /api/v1/documents/{id}/versions/server-upload/
+    JWT + Editor — загрузка новой версии через сервер (без presigned URL).
+
+    Используется, когда S3 недоступен напрямую из браузера (CORS) — аналог
+    DocumentServerUploadView, но добавляет версию к существующему документу.
+    multipart/form-data: file
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        document = get_object_or_404(
+            Document.objects.filter(
+                workspace__members__user=request.user
+            ).select_related("workspace"),
+            pk=pk,
+        )
+
+        if document.status == Document.DocumentStatus.SIGNED:
+            return Response(
+                {"detail": "Подписанный документ нельзя редактировать."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        assert_workspace_role(request.user, document.workspace, ["owner", "editor"])
+
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            return Response({"file": "Файл обязателен."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .storage import validate_file_extension
+        if not validate_file_extension(file_obj.name):
+            from django.conf import settings as django_settings
+            return Response(
+                {"file": f"Недопустимый формат. Разрешены: {', '.join(django_settings.ALLOWED_DOCUMENT_EXTENSIONS)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        storage_key = generate_storage_key(str(document.workspace.id), file_obj.name)
+        content_type = getattr(file_obj, "content_type", None) or get_content_type(file_obj.name)
+        success = upload_to_s3(file_obj, storage_key, content_type=content_type)
+        if not success:
+            return Response(
+                {"detail": "Ошибка загрузки в S3. Проверьте настройки хранилища."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        new_version_number = document.versions.count() + 1
+        version = DocumentVersion.objects.create(
+            document=document,
+            version_number=new_version_number,
+            storage_key=storage_key,
+            checksum="pending",
+            created_by=request.user,
+        )
+        document.current_version = version
+        document.save(update_fields=["current_version", "updated_at"])
+
+        # Запускаем SHA-256 + AI-анализ изменений в фоне (раздел 2.6 ТЗ)
+        try:
+            from apps.documents.tasks import analyze_version_diff_task
+            analyze_version_diff_task.delay(str(version.id))
+        except Exception as exc:
+            logger.warning("AI-diff задача пропущена для версии %s: %s", version.id, exc)
+
+        log_document_action(
+            document=document,
+            user=request.user,
+            action=DocumentAuditLog.Action.VERSION_UPLOADED,
+            details={"version_number": new_version_number, "method": "server-upload"},
+            ip_address=get_client_ip(request),
+        )
+        logger.info(
+            "Версия %d создана (server-upload) для '%s' (by %s)",
+            new_version_number, document.title, request.user.email,
+        )
+        return Response(DocumentVersionSerializer(version).data, status=status.HTTP_201_CREATED)
+
+
 class DocumentVersionDiffView(APIView):
     """
     GET /api/v1/documents/{id}/versions/{vid}/diff/
@@ -756,19 +1005,32 @@ class DocumentWorkflowStartView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Проверяем, что есть участники с step_order
-        members_with_steps = document.workspace.members.filter(
-            step_order__isnull=False
-        ).order_by("step_order")
-
-        if not members_with_steps.exists():
+        # Авто-порядок согласования по ролям: сначала редакторы, затем подписанты.
+        # step_order проставляется автоматически — пользователю не нужно задавать его вручную.
+        from apps.workspaces.models import WorkspaceMember
+        editors = list(
+            document.workspace.members.filter(role=WorkspaceMember.Role.EDITOR).order_by("joined_at")
+        )
+        signers = list(
+            document.workspace.members.filter(role=WorkspaceMember.Role.SIGNER).order_by("joined_at")
+        )
+        ordered = editors + signers
+        # Если ни редакторов, ни подписантов нет — включаем владельца, чтобы цепочка не была пустой
+        if not ordered:
+            ordered = list(
+                document.workspace.members.filter(role=WorkspaceMember.Role.OWNER).order_by("joined_at")
+            )
+        if not ordered:
             return Response(
-                {
-                    "detail": "Нет участников с заданным step_order. "
-                              "Добавьте порядок шагов участникам кабинета перед запуском workflow."
-                },
+                {"detail": "Добавьте в проект редакторов или подписантов перед отправкой на согласование."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Сбрасываем step_order у всех и расставляем заново по вычисленному порядку (редакторы → подписанты)
+        document.workspace.members.update(step_order=None)
+        for idx, member in enumerate(ordered, start=1):
+            member.step_order = idx
+            member.save(update_fields=["step_order"])
 
         # Переводим документ в статус review
         document.status = Document.DocumentStatus.REVIEW

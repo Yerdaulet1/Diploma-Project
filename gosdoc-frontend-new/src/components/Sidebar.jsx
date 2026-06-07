@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import useSidebarOpen from "../hooks/useSidebarOpen";
 import useAuthStore from "../store/authStore";
+import useOrgStore from "../store/orgStore";
 import { getOrganizations } from "../api/organizations";
 import CreateWorkspaceModal from "../CreateWorkspaceModal";
 import NewProjectModal from "./NewProjectModal";
@@ -147,7 +148,16 @@ export default function Sidebar({ active, onNavigate }) {
     staleTime: 30_000,
   });
   const allOrgs = orgData?.results ?? (Array.isArray(orgData) ? orgData : []);
-  const orgName = allOrgs[0]?.name || "Organization";
+  const activeOrgId  = useOrgStore(s => s.activeOrgId);
+  const setActiveOrg = useOrgStore(s => s.setActiveOrg);
+
+  // Если активная организация не выбрана — берём первую доступную.
+  useEffect(() => {
+    if (!activeOrgId && allOrgs.length > 0) setActiveOrg(allOrgs[0].id);
+  }, [activeOrgId, allOrgs, setActiveOrg]);
+
+  const activeOrg = allOrgs.find(o => String(o.id) === String(activeOrgId)) || allOrgs[0];
+  const orgName = activeOrg?.name || "Organization";
 
   useEffect(() => {
     if (!wsDropOpen) return;
@@ -179,10 +189,10 @@ export default function Sidebar({ active, onNavigate }) {
             {user?.avatar_url
               ? <img src={user.avatar_url} alt="avatar" style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
               : (
-                <svg viewBox="0 0 60 60" fill="none" width="60" height="60">
-                  <rect width="60" height="60" fill="#CBD5E1"/>
-                  <circle cx="30" cy="22" r="10" fill="#94A3B8"/>
-                  <ellipse cx="30" cy="52" rx="20" ry="12" fill="#94A3B8"/>
+                <svg viewBox="0 0 24 24" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" style={{ display:"block" }}>
+                  <rect width="24" height="24" fill="#E2E8F0"/>
+                  <circle cx="12" cy="9.5" r="4" fill="#94A3B8"/>
+                  <path d="M4.5 20.5c0-4.2 3.4-6.5 7.5-6.5s7.5 2.3 7.5 6.5z" fill="#94A3B8"/>
                 </svg>
               )}
           </div>
@@ -214,18 +224,24 @@ export default function Sidebar({ active, onNavigate }) {
                   You are not in any organization yet.
                 </div>
               )}
-              {allOrgs.map((org) => (
-                <div key={org.id} className="gs-org-dd-item"
-                     onClick={() => { setWsDropOpen(false); onNavigate?.(`organization/${org.id}`); }}>
-                  <div style={{ width:22, height:22, borderRadius:6, background:"#DBEAFE", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="12" height="12">
-                      <rect x="3" y="3" width="18" height="18" rx="2"/>
-                      <path d="M3 9h18M9 21V9"/>
-                    </svg>
+              {allOrgs.map((org) => {
+                const isActive = String(org.id) === String(activeOrg?.id);
+                return (
+                  <div key={org.id} className="gs-org-dd-item"
+                       onClick={() => { setActiveOrg(org.id); setWsDropOpen(false); onNavigate?.(`organization/${org.id}`); }}>
+                    <div style={{ width:22, height:22, borderRadius:6, background:"#DBEAFE", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2" width="12" height="12">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <path d="M3 9h18M9 21V9"/>
+                      </svg>
+                    </div>
+                    <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{org.name}</span>
+                    {isActive && (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.5" width="13" height="13"><polyline points="20 6 9 17 4 12"/></svg>
+                    )}
                   </div>
-                  <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{org.name}</span>
-                </div>
-              ))}
+                );
+              })}
               <div className="gs-org-dd-add" onClick={() => { setWsDropOpen(false); setShowCreateWs(true); }}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14">
                   <line x1="12" y1="5" x2="12" y2="19"/>
@@ -276,7 +292,7 @@ export default function Sidebar({ active, onNavigate }) {
           onClose={() => setShowCreateWs(false)}
           onCreated={(id) => {
             setShowCreateWs(false);
-            if (id) onNavigate?.(`organization/${id}`);
+            if (id) { setActiveOrg(id); onNavigate?.(`organization/${id}`); }
           }}
         />
       )}
@@ -284,9 +300,9 @@ export default function Sidebar({ active, onNavigate }) {
       {showNewProject && (
         <NewProjectModal
           onClose={() => setShowNewProject(false)}
-          onCreate={(p) => {
+          onCreate={() => {
             setShowNewProject(false);
-            if (p?.id) onNavigate?.(`organization/${p.id}`);
+            onNavigate?.("projects");
           }}
         />
       )}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -8,12 +9,14 @@ import ProfileController, { ProfileMenu } from "./Profile";
 import useAuthStore from "./store/authStore";
 import {
   getDocuments,
+  getDocument,
   deleteDocument,
   getDownloadUrl,
   getDocumentContent,
   extractDocumentContent,
   saveDocumentContent,
   serverUploadDocument,
+  signDocument,
 } from "./api/documents";
 import { getWorkspaces, getMembers } from "./api/workspaces";
 import { getNotifications } from "./api/notifications";
@@ -102,6 +105,8 @@ const css = `
   .dc-editor-pages::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:4px}
   .dc-page-sheet{background:#fff;width:780px;min-height:1050px;box-shadow:0 2px 14px rgba(0,0,0,.13);padding:64px 72px;position:relative;flex-shrink:0}
   .dc-page-content{min-height:920px;outline:none;font-size:13px;font-family:'Gilroy','Segoe UI',sans-serif;color:#111827;line-height:1.75;word-break:break-word}
+  .dc-sig-wrap{outline:1px dashed #BFDBFE;outline-offset:1px;border-radius:2px}
+  .dc-sig-wrap:hover{outline-color:#2563EB}
   .dc-page-content:empty::before{content:"Start typing...";color:#C9C9C9;pointer-events:none;display:block}
   .dc-page-content table{border-collapse:collapse;width:100%;margin:8px 0}
   .dc-page-content table td,.dc-page-content table th{border:1px solid #D1D5DB;padding:6px 10px;font-size:13px}
@@ -318,14 +323,27 @@ function TypeSelectModal({ onSelect, onUpload, onClose }) {
   const [file, setFile] = useState(null);
   const [title, setTitle] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
-  const allowed = ["docx", "xlsx"];
+  const allowed = ["pdf", "docx", "xlsx"];
+
+  const handleSubmit = async () => {
+    if (uploading) return;
+    if (type === "upload") {
+      if (!(file && title.trim())) return;
+      setUploading(true);
+      try { await onUpload(file, title.trim()); }
+      finally { setUploading(false); }
+    } else if (type) {
+      onSelect(type);
+    }
+  };
 
   const handleFile = (f) => {
     if (!f) return;
     const ext = f.name.split(".").pop().toLowerCase();
     if (!allowed.includes(ext)) {
-      toast.error("Only .docx, .xlsx allowed");
+      toast.error("Разрешены только PDF, DOCX, XLSX");
       return;
     }
     setFile(f);
@@ -392,7 +410,7 @@ function TypeSelectModal({ onSelect, onUpload, onClose }) {
           transition: "all .15s",
         }}
         onClick={() => { setType("upload"); if (!file) fileRef.current?.click(); }}>
-          <input ref={fileRef} type="file" accept=".docx,.xlsx" style={{ display: "none" }}
+          <input ref={fileRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display: "none" }}
                  onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }}/>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 36, height: 36, borderRadius: 8, background: "#F3F4F6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -466,24 +484,29 @@ function TypeSelectModal({ onSelect, onUpload, onClose }) {
           )}
         </div>
 
-        <button onClick={() => {
-                  if (type === "upload") { if (file && title.trim()) onUpload(file, title.trim()); }
-                  else if (type) onSelect(type);
-                }}
-                disabled={!canSubmit}
+        <style>{`@keyframes dcSpin{to{transform:rotate(360deg)}}`}</style>
+        <button onClick={handleSubmit}
+                disabled={!canSubmit || uploading}
                 style={{
                   width: "100%", marginTop: 16,
-                  background: canSubmit ? btnColor : "#E5E7EB",
-                  color: canSubmit ? "#fff" : "#9CA3AF",
+                  background: (canSubmit && !uploading) ? btnColor : "#93C5FD",
+                  color: "#fff",
                   border: "none", borderRadius: 9, padding: "11px",
                   fontSize: 13, fontWeight: 600,
-                  cursor: canSubmit ? "pointer" : "not-allowed",
+                  cursor: (canSubmit && !uploading) ? "pointer" : "not-allowed",
                   fontFamily: "inherit", transition: "all .15s",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  opacity: (!canSubmit && !uploading) ? 0.6 : 1,
                 }}>
-          {t(type === "upload" ? "documents.upload"
-            : type === "docs" ? "documents.createDocument"
-            : type === "xls" ? "documents.createSpreadsheet"
-            : "documents.selectOption")}
+          {uploading && (
+            <span style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,.45)", borderTopColor: "#fff", borderRadius: "50%", display: "inline-block", animation: "dcSpin .7s linear infinite" }}/>
+          )}
+          {uploading
+            ? t("documents.uploading", "Загрузка…")
+            : t(type === "upload" ? "documents.upload"
+              : type === "docs" ? "documents.createDocument"
+              : type === "xls" ? "documents.createSpreadsheet"
+              : "documents.selectOption")}
         </button>
       </div>
     </div>
@@ -831,7 +854,14 @@ function DocsEditor({ doc, initialContent, onClose, onSave, onDownload, signatur
     if (!canSign) { toast.error("Only signers can place a signature"); return; }
     if (!signature) return;
     editorRef.current?.focus();
-    exec("insertHTML", `<img src="${signature}" style="max-width:220px;height:auto;display:inline-block;vertical-align:middle;margin:2px 0;" />`);
+    // Подпись в рамке с возможностью изменить размер (тянуть за угол).
+    // resize:horizontal — ширину тянем, картинка масштабируется пропорционально.
+    exec("insertHTML",
+      `<span class="dc-sig-wrap" contenteditable="false" style="display:inline-block;resize:horizontal;overflow:hidden;width:220px;vertical-align:middle;margin:2px 4px;">` +
+      `<img src="${signature}" style="width:100%;height:auto;display:block;pointer-events:none;" />` +
+      `</span>&nbsp;`
+    );
+    toast.success("Подпись добавлена — потяните за угол, чтобы изменить размер");
   };
 
   return (
@@ -1181,6 +1211,7 @@ function XlsEditor({ doc, initialContent, onClose, onSave, onDownload }) {
 export default function Documents({ onGoToAuth, onNavigate }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore(s => s.user);
   const setUser = useAuthStore(s => s.setUser);
 
@@ -1278,7 +1309,8 @@ export default function Documents({ onGoToAuth, onNavigate }) {
     const userRole = await resolveUserRole(c._workspaceId);
     if (c._isPdf) {
       try {
-        const { download_url } = await getDownloadUrl(c._apiId);
+        // inline — чтобы PDF открылся в браузере, а не скачался
+        const { download_url } = await getDownloadUrl(c._apiId, { disposition: "inline" });
         setCurrentDoc({ ...c, _pdfUrl: download_url, _userRole: userRole });
         setView("pdf");
       } catch { toast.error("Failed to open PDF"); }
@@ -1296,6 +1328,21 @@ export default function Documents({ onGoToAuth, onNavigate }) {
     }
   };
 
+  // Deep-link: ?doc=<id> — открыть документ сразу (переход «Подписать» из задачи)
+  useEffect(() => {
+    const did = searchParams.get("doc");
+    if (!did) return;
+    (async () => {
+      try {
+        const d = await getDocument(did);
+        await openDoc(docToCard(d));
+      } catch { toast.error("Документ не найден"); }
+      searchParams.delete("doc");
+      setSearchParams(searchParams, { replace: true });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleDelete = async (c) => {
     if (!confirm(`Delete "${c.name}.${c.ext}"?`)) return;
     try {
@@ -1310,7 +1357,7 @@ export default function Documents({ onGoToAuth, onNavigate }) {
     try {
       const { download_url } = await getDownloadUrl(currentDoc._apiId);
       if (download_url) window.open(download_url, "_blank", "noopener");
-    } catch { toast.error("Download failed"); }
+    } catch { toast.error("Не удалось скачать"); }
   };
 
   const handleSave = async (newName, content, kind) => {
@@ -1334,6 +1381,24 @@ export default function Documents({ onGoToAuth, onNavigate }) {
       try {
         await saveDocumentContent(currentDoc._apiId, payload);
         toast.success("Saved");
+        // If a signer placed their signature into the document, register it on the
+        // backend so a Signature record is created — this powers signature verification,
+        // the "signed X/Y" workflow progress and the blockchain hash chain.
+        if (
+          currentDoc._userRole === "signer" &&
+          signature &&
+          typeof content === "string" &&
+          content.includes(signature)
+        ) {
+          try {
+            const res = await signDocument(currentDoc._apiId, { signature_data: signature });
+            toast.success(res?.document_fully_signed ? "Документ полностью подписан" : "Подпись зафиксирована");
+          } catch (sigErr) {
+            // Non-fatal: e.g. already signed, pending subtasks, or no signer role on this doc
+            const d = sigErr?.response?.data?.detail;
+            if (d) toast.message(d);
+          }
+        }
         queryClient.invalidateQueries({ queryKey: ["documents"] });
         setView("list");
         setCurrentDoc(null);
@@ -1385,16 +1450,28 @@ export default function Documents({ onGoToAuth, onNavigate }) {
   };
 
   const onUploadFile = async (file, title) => {
-    const wsList = queryClient.getQueryData(["workspaces"]);
-    const workspaces = wsList?.results ?? (Array.isArray(wsList) ? wsList : []);
+    let wsList = queryClient.getQueryData(["workspaces"]);
+    let workspaces = wsList?.results ?? (Array.isArray(wsList) ? wsList : []);
+    if (!workspaces.length) {
+      try {
+        const fresh = await getWorkspaces();
+        workspaces = fresh?.results ?? (Array.isArray(fresh) ? fresh : []);
+        queryClient.setQueryData(["workspaces"], fresh);
+      } catch { /* ignore */ }
+    }
     const ws = workspaces[0];
     if (!ws) { toast.error("No workspace available"); return; }
+    const tid = toast.loading("Загрузка документа…");
     try {
       await serverUploadDocument(ws.id, title, file);
-      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      // Ждём обновления списка, чтобы документ появился сразу (без F5)
+      await queryClient.invalidateQueries({ queryKey: ["documents"] });
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      toast.success("Документ загружен", { id: tid });
       setShowTypeModal(false);
-      toast.success("Uploaded");
-    } catch { toast.error("Upload failed"); }
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Не удалось загрузить документ", { id: tid });
+    }
   };
 
   const breadcrumb = view === "list" ? ["Documents"] : ["Documents", currentDoc?.name || "New document"];

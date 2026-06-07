@@ -48,10 +48,15 @@ CACHES = {
 }
 
 # ============================================================
-# Celery — без Redis используем синхронный режим (задачи выполняются сразу)
+# Celery
+#   EAGER=True  — задачи выполняются синхронно в запросе (для локали без Redis).
+#   EAGER=False — задачи уходят в celery-воркер (Docker: есть Redis + воркер).
+# По умолчанию False, чтобы тяжёлые задачи (индексация эмбеддингов, SHA-256,
+# AI-анализ) НЕ блокировали загрузку документа. Для локали без воркера
+# можно выставить CELERY_TASK_ALWAYS_EAGER=true в окружении.
 # ============================================================
-CELERY_TASK_ALWAYS_EAGER = True
-CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_TASK_ALWAYS_EAGER = _os.environ.get("CELERY_TASK_ALWAYS_EAGER", "false").lower() == "true"
+CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
 
 # AI migrations applied manually via SQL (pgvector not installed locally)
 # ChatMessage table created directly, DocumentEmbedding skipped

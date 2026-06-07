@@ -592,7 +592,7 @@ function InvitationCard({ invitation, onAccept, onDecline }) {
         <div style={{ fontSize:11.5, color:"#6B7280", marginTop:2 }}>
           {invitation.inviter_name} ({invitation.inviter_email}) приглашает вас
         </div>
-        {invitation.role && (
+        {invitation._type === "workspace" && invitation.role && (
           <div style={{ fontSize:11, color:"#2563EB", marginTop:2, fontWeight:500 }}>
             Роль: {invitation.role}
           </div>

@@ -1,8 +1,15 @@
 import { useState, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { createWorkspace, addMember } from "./api/workspaces";
+import { createWorkspace } from "./api/workspaces";
+import { createOrganization, inviteToOrg } from "./api/organizations";
+import { serverUploadDocument } from "./api/documents";
+import useOrgStore from "./store/orgStore";
 
 const TOTAL = 4;
+
+// Визуальный тип → тип организации в БД (individual | corporate)
+const ORG_TYPE_MAP = { personal: "individual", team: "corporate", organization: "corporate" };
 
 const ROLE_OPTIONS = ["editor", "signer", "viewer", "owner"];
 
@@ -45,17 +52,19 @@ export default function CreateWorkspaceModal({ onClose, onCreated }) {
   const [step,    setStep]    = useState(1);
   const [wsType,  setWsType]  = useState("");
   const [wsName,  setWsName]  = useState("");
-  const [members, setMembers] = useState([{ email: "", role: "editor" }, { email: "", role: "editor" }]);
+  const [members, setMembers] = useState([{ email: "" }, { email: "" }]);
   const [projName, setProjName] = useState("");
   const [projDesc, setProjDesc] = useState("");
   const [docName,  setDocName]  = useState("");
   const [docFile,  setDocFile]  = useState(null);
   const [loading,  setLoading]  = useState(false);
-  const [createdId, setCreatedId] = useState(null);
+  const [createdId, setCreatedId] = useState(null);   // id созданной организации
   const fileRef = useRef(null);
+  const setActiveOrg = useOrgStore(s => s.setActiveOrg);
+  const qc = useQueryClient();
 
   /* ── member rows ── */
-  const addMemberRow = () => setMembers(m => [...m, { email: "", role: "editor" }]);
+  const addMemberRow = () => setMembers(m => [...m, { email: "" }]);
   const updateMember = (i, field, val) =>
     setMembers(m => m.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
   const removeMember = (i) => setMembers(m => m.filter((_, idx) => idx !== i));
@@ -70,29 +79,34 @@ export default function CreateWorkspaceModal({ onClose, onCreated }) {
     goNext();
   };
 
-  /* Step 2 → 3 */
+  /* Step 2 → 3 — создаём организацию */
   const onStep2Next = async () => {
-    if (!wsName.trim()) { toast.error("Please enter a workspace name"); return; }
+    if (!wsName.trim()) { toast.error("Введите название организации"); return; }
     setLoading(true);
     try {
-      const ws = await createWorkspace({ title: wsName.trim(), type: wsType });
-      setCreatedId(ws.id);
+      const org = await createOrganization({
+        name: wsName.trim(),
+        type: ORG_TYPE_MAP[wsType] || "corporate",
+      });
+      setCreatedId(org.id);
+      setActiveOrg(org.id);   // делаем новую организацию активной
+      qc.invalidateQueries({ queryKey: ["organizations"] });  // свитчер сразу увидит новую орг
       goNext();
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Failed to create workspace");
+      toast.error(err?.response?.data?.detail || "Не удалось создать организацию");
     } finally { setLoading(false); }
   };
 
-  /* Step 3 → 4 (invite) */
+  /* Step 3 → 4 (invite) — приглашаем в организацию */
   const onInvite = async () => {
     const valid = members.filter(m => m.email.trim() && /\S+@\S+\.\S+/.test(m.email));
     if (valid.length && createdId) {
       const results = await Promise.allSettled(
-        valid.map(m => addMember(createdId, { email: m.email.trim(), role: m.role }))
+        valid.map(m => inviteToOrg(createdId, m.email.trim(), null, "viewer"))
       );
       const failed = results.filter(r => r.status === "rejected").length;
-      if (failed) toast.error(`${failed} invite(s) could not be sent`);
-      else if (valid.length) toast.success("Invitations sent!");
+      if (failed) toast.error(`${failed} приглашение(й) не отправлено (нужен зарегистрированный email)`);
+      else if (valid.length) toast.success("Приглашения отправлены!");
     }
     goNext();
   };
@@ -100,16 +114,42 @@ export default function CreateWorkspaceModal({ onClose, onCreated }) {
   /* Step 3 — skip */
   const onSkip3 = () => goNext();
 
-  /* Step 4 — finish */
-  const onFinish = () => {
-    toast.success("Workspace created!");
-    onCreated?.(createdId);
-    onClose();
+  /* Step 4 — finish: создаём первый проект внутри организации */
+  const onFinish = async () => {
+    if (!projName.trim()) {
+      // нет проекта — просто завершаем создание организации
+      toast.success("Организация создана!");
+      onCreated?.(createdId);
+      onClose();
+      return;
+    }
+    setLoading(true);
+    try {
+      const ws = await createWorkspace({
+        title: projName.trim(),
+        description: projDesc.trim() || undefined,
+        type: "corporate",
+        organization: createdId,
+      });
+      if (docFile) {
+        try {
+          await serverUploadDocument(ws.id, docName.trim() || projName.trim(), docFile);
+        } catch {
+          toast.error("Проект создан, но документ не загрузился");
+        }
+      }
+      qc.invalidateQueries({ queryKey: ["workspaces"] });   // проект сразу появится в списках
+      toast.success("Организация и первый проект созданы!");
+      onCreated?.(createdId);
+      onClose();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Не удалось создать проект");
+    } finally { setLoading(false); }
   };
 
-  /* Step 4 — skip */
+  /* Step 4 — skip: организация уже создана, проект пропускаем */
   const onSkip4 = () => {
-    toast.success("Workspace created!");
+    toast.success("Организация создана!");
     onCreated?.(createdId);
     onClose();
   };
@@ -161,7 +201,7 @@ export default function CreateWorkspaceModal({ onClose, onCreated }) {
           {step === 1 && (
             <>
               <h2 style={{ fontSize:20,fontWeight:700,color:"#111827",textAlign:"center",marginBottom:32 }}>
-                What will you use this Workspace for?
+                What type of organization is this?
               </h2>
               <div className="cws-types" style={{ display:"flex",gap:12,justifyContent:"center",marginBottom:32 }}>
                 {WORKSPACE_TYPES.map(t => (
@@ -189,7 +229,7 @@ export default function CreateWorkspaceModal({ onClose, onCreated }) {
           {step === 2 && (
             <>
               <h2 style={{ fontSize:20,fontWeight:700,color:"#111827",textAlign:"center",marginBottom:32 }}>
-                What would you like to name your Workspace?
+                What would you like to name your Organization?
               </h2>
               <input
                 value={wsName} onChange={e => setWsName(e.target.value)}
@@ -217,7 +257,7 @@ export default function CreateWorkspaceModal({ onClose, onCreated }) {
               </p>
 
               {members.map((m, i) => (
-                <div key={i} style={{ display:"flex",gap:10,alignItems:"flex-start",marginBottom:10 }}>
+                <div key={i} style={{ display:"flex",gap:10,alignItems:"flex-end",marginBottom:10 }}>
                   <div style={{ flex:1,display:"flex",flexDirection:"column",gap:4 }}>
                     <label style={{ fontSize:11.5,fontWeight:500,color:"#374151" }}>Team Member Email*</label>
                     <div style={inputRow}>
@@ -226,19 +266,9 @@ export default function CreateWorkspaceModal({ onClose, onCreated }) {
                         value={m.email} onChange={e => updateMember(i, "email", e.target.value)}/>
                     </div>
                   </div>
-                  <div style={{ flex:1,display:"flex",flexDirection:"column",gap:4 }}>
-                    <label style={{ fontSize:11.5,fontWeight:500,color:"#374151" }}>Role*</label>
-                    <div style={inputRow}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.8" width="14" height="14"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                      <select value={m.role} onChange={e => updateMember(i, "role", e.target.value)}
-                        style={{ flex:1,border:"none",outline:"none",fontSize:13,fontFamily:"inherit",background:"transparent",cursor:"pointer",color:"#374151" }}>
-                        {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase()+r.slice(1)}</option>)}
-                      </select>
-                    </div>
-                  </div>
                   {members.length > 1 && (
                     <button onClick={() => removeMember(i)}
-                      style={{ marginTop:22,border:"none",background:"none",cursor:"pointer",color:"#9CA3AF",padding:4 }}>
+                      style={{ width:40,height:40,border:"none",background:"none",cursor:"pointer",color:"#9CA3AF",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,padding:4 }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                   )}

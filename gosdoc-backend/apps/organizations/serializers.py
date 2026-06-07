@@ -27,8 +27,14 @@ class OrganizationSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         # Владелец — текущий пользователь
-        validated_data["owner"] = self.context["request"].user
-        return super().create(validated_data)
+        user = self.context["request"].user
+        validated_data["owner"] = user
+        org = super().create(validated_data)
+        # Владелец сразу становится участником организации, чтобы попадать
+        # в список её участников (org members = users с organization == org).
+        user.organization = org
+        user.save(update_fields=["organization"])
+        return org
 
 
 class OrganizationListSerializer(serializers.ModelSerializer):

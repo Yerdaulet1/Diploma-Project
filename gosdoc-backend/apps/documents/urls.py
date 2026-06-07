@@ -29,7 +29,7 @@
 
 from django.urls import path
 
-from apps.signatures.views import SignDocumentView, SignatureListView
+from apps.signatures.views import SignDocumentView, SignatureListView, SignPdfView, SignDocxView
 from .views import (
     AttachmentDetailView,
     AttachmentDownloadView,
@@ -44,11 +44,15 @@ from .views import (
     DocumentDetailView,
     DocumentDownloadView,
     DocumentExtractContentView,
+    DocumentExportPdfView,
+    DocumentToPdfView,
     DocumentListCreateView,
+    DocumentRawView,
     DocumentServerUploadView,
     DocumentVersionCreateView,
     DocumentVersionDiffView,
     DocumentVersionListView,
+    DocumentVersionServerUploadView,
     DocumentWorkflowStartView,
     RequestUploadView,
     RequestVersionUploadView,
@@ -66,6 +70,9 @@ urlpatterns = [
     path("", DocumentListCreateView.as_view(), name="document-list"),
     path("<uuid:pk>/", DocumentDetailView.as_view(), name="document-detail"),
     path("<uuid:pk>/download/", DocumentDownloadView.as_view(), name="document-download"),
+    path("<uuid:pk>/raw/", DocumentRawView.as_view(), name="document-raw"),
+    path("<uuid:pk>/export-pdf/", DocumentExportPdfView.as_view(), name="document-export-pdf"),
+    path("<uuid:pk>/to-pdf/", DocumentToPdfView.as_view(), name="document-to-pdf"),
 
     # ---- Версии ----
     path("<uuid:pk>/versions/", DocumentVersionListView.as_view(), name="document-version-list"),
@@ -79,6 +86,12 @@ urlpatterns = [
         "<uuid:pk>/versions/confirm/",
         DocumentVersionCreateView.as_view(),
         name="document-version-confirm",
+    ),
+    # Серверная загрузка новой версии (без presigned URL — без CORS)
+    path(
+        "<uuid:pk>/versions/server-upload/",
+        DocumentVersionServerUploadView.as_view(),
+        name="document-version-server-upload",
     ),
     # AI-diff конкретной версии
     path(
@@ -100,6 +113,8 @@ urlpatterns = [
 
     # ---- Подписи ----
     path("<uuid:pk>/sign/", SignDocumentView.as_view(), name="document-sign"),
+    path("<uuid:pk>/sign-pdf/", SignPdfView.as_view(), name="document-sign-pdf"),
+    path("<uuid:pk>/sign-docx/", SignDocxView.as_view(), name="document-sign-docx"),
     path("<uuid:pk>/signatures/", SignatureListView.as_view(), name="document-signatures"),
 
     # ---- Копирование в другой кабинет ----

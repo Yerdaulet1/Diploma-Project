@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { createWorkspace, addMember } from "../api/workspaces";
 import { serverUploadDocument } from "../api/documents";
 import EmailAutocomplete from "./EmailAutocomplete";
+import useOrgStore from "../store/orgStore";
 
 const CSS = `
   .npm-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:9999;display:flex;align-items:center;justify-content:center;font-family:'Gilroy','Segoe UI',sans-serif}
@@ -105,6 +106,7 @@ export default function NewProjectModal({ onClose, onCreate }) {
   const [formErr, setFormErr] = useState({});
   const [creating, setCreating] = useState(false);
   const fileRef = useRef(null);
+  const activeOrgId = useOrgStore(s => s.activeOrgId);
 
   const handleFile = (e) => {
     const f = e.dataTransfer?.files[0] || e.target.files?.[0];
@@ -121,11 +123,15 @@ export default function NewProjectModal({ onClose, onCreate }) {
   };
 
   const create = async () => {
+    if (!activeOrgId) {
+      toast.error("Сначала создайте или выберите организацию в меню слева");
+      return;
+    }
     const errs = members.map(m => ({ email: m.email && !/\S+@\S+\.\S+/.test(m.email) ? "Invalid email." : " " }));
     if (errs.some(e => e.email && e.email !== " ")) { setErrors(errs); return; }
     setCreating(true);
     try {
-      const ws = await createWorkspace({ title: form.name, description: form.desc, type: "corporate" });
+      const ws = await createWorkspace({ title: form.name, description: form.desc, type: "corporate", organization: activeOrgId });
 
       // Only upload a document when the user actually picked a file.
       // Previously we synthesized a placeholder text/plain blob with a .docx
@@ -188,7 +194,7 @@ export default function NewProjectModal({ onClose, onCreate }) {
               </div>
               <div className="npm-dropzone" onClick={() => fileRef.current?.click()}
                    onDragOver={e => e.preventDefault()} onDrop={handleFile}>
-                <input ref={fileRef} type="file" accept=".docx,.xlsx" style={{ display:"none" }} onChange={handleFile}/>
+                <input ref={fileRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display:"none" }} onChange={handleFile}/>
                 {file ? (
                   <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.5" width="32" height="32">

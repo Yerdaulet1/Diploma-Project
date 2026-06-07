@@ -36,16 +36,22 @@ class OrganizationListCreateView(generics.ListCreateAPIView):
         ).distinct().order_by("-created_at")
 
 
-class OrganizationDetailView(generics.RetrieveUpdateAPIView):
+class OrganizationDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Organization.objects.prefetch_related("users")
 
     def get_permissions(self):
-        if self.request.method in ("PATCH", "PUT"):
+        if self.request.method in ("PATCH", "PUT", "DELETE"):
             return [permissions.IsAuthenticated(), IsOrganizationOwner()]
         return [permissions.IsAuthenticated(), IsOrganizationMember()]
 
     def get_serializer_class(self):
         return OrganizationSerializer
+
+    def perform_destroy(self, instance):
+        # Отвязываем участников от удаляемой организации, чтобы не остались
+        # висящие ссылки (organization FK у пользователей — SET_NULL по факту удаления).
+        User.objects.filter(organization=instance).update(organization=None)
+        instance.delete()
 
 
 class OrganizationMembersView(generics.ListAPIView):

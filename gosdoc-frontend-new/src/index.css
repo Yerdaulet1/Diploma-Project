@@ -117,6 +117,90 @@ h2 {
   color: var(--text-h);
 }
 
+/* ═══════════════════════════════════════════════════════
+   Глобальная плавность интерфейса (motion)
+   Добавляет естественные переходы без правки каждой страницы.
+   ═══════════════════════════════════════════════════════ */
+
+/* Плавные ховеры/состояния у интерактивных элементов.
+   Перечисляем конкретные свойства (не transition:all), чтобы не мешать
+   существующим анимациям ширины сайдбара и т.п. */
+button,
+a,
+summary,
+[role="button"],
+input,
+select,
+textarea,
+.gs-navitem, .pr-navitem, .org-navitem,
+.dm-tab, .pr-tab,
+.hs-faq, .hs-card,
+.dc-type-card, .ai-ver-row, .sig-row, .dm-attach-item {
+  transition:
+    background-color .18s ease,
+    color .18s ease,
+    border-color .18s ease,
+    box-shadow .2s ease,
+    opacity .18s ease,
+    transform .12s ease;
+}
+
+/* Тактильный отклик на нажатие */
+button:active,
+[role="button"]:active,
+.gs-navitem:active, .pr-navitem:active, .org-navitem:active,
+.dc-type-card:active, .hs-card:active {
+  transform: scale(0.97);
+}
+
+/* Появление страниц при смене маршрута (только opacity — чтобы не ломать
+   position:fixed у модалок и не создавать containing block) */
+.pr-page, .dc-page, .hs-page, .org-page,
+.ib-page, .nt-page, .an-page, .ad-page, .auth-page {
+  animation: appPageIn .3s ease both;
+}
+@keyframes appPageIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Плавное появление оверлеев и модальных окон */
+.dm-overlay, .pr-overlay, .dc-overlay, .cws-overlay,
+.npm-overlay, .dm-att-overlay {
+  animation: appOverlayIn .2s ease both;
+}
+@keyframes appOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.dm-modal, .pr-modal, .dc-modal, .cws-modal, .npm-modal,
+.dm-att-box, .hs-ai-modal {
+  animation: appModalIn .26s cubic-bezier(.16, 1, .3, 1) both;
+}
+@keyframes appModalIn {
+  from { opacity: 0; transform: translateY(10px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Плавное появление контента вкладок / списков (применяется по классу) */
+.app-fade-in {
+  animation: appFadeIn .24s ease both;
+}
+@keyframes appFadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Уважение к системной настройке «уменьшить движение» */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
 h1 {
   font-size: 56px;
   letter-spacing: -1.68px;
